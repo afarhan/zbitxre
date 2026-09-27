@@ -23,8 +23,8 @@
 // clock's control register, each group as one I2C transfer. The PLL is not
 // reset, so the output keeps running while it moves.
 //
-// The arithmetic is that of the radio's earlier si5351v2.c, register for
-// register; tests/test_si5351_math.c holds values captured from it.
+// The arithmetic gives the same registers as zbitxv2's si5351v2.c;
+// tests/test_si5351_math.c holds values captured from it.
 
 #include <unistd.h>
 

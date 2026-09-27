@@ -1,9 +1,9 @@
 // gpio.c — the Pi's GPIO pins, reached through their registers.
 //
-// Thanks to wiringPi (Gordon Henderson), which the radio used until now and
-// whose way of reaching the pins this is: /dev/gpiomem mapped into the
-// program, and the registers of the BCM2835 family read and written in place.
-// Only the calls the radio needs are here, and no library is linked in.
+// Thanks to wiringPi (Gordon Henderson), whose way of reaching the pins this
+// is: /dev/gpiomem mapped into the program, and the registers of the BCM2835
+// family read and written in place. Only the calls the radio needs are here,
+// and no library is linked in.
 //
 // A pin is known by its BCM number, the one printed beside "GPIO" on a pinout
 // chart. It is not the pin's place on the header and not a wiringPi number.

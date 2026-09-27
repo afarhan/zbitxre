@@ -15,8 +15,8 @@ over. Nothing here changes it.
 | Si5351 clock generator (`hw/si5351.c`) | done, tested on a zbitx |
 | GPIO pins (`hw/gpio.c`) and what each does (`hw/board.c`) | done, tested on a zbitx |
 | Clock chip | the kernel's own driver keeps it; no code here |
-| Sound (`hw/audio.c`) | next |
-| The DSP of `sbitx.c` as `dsp/sdr.c` | after that |
+| Sound card (`hw/audio.c`) | done, tested on a zbitx |
+| The DSP of `sbitx.c` as `dsp/sdr.c` | next |
 | Controls, keyer, clients | after that |
 
 ## Setting up the radio
@@ -55,6 +55,10 @@ To watch the key and PTT lines while you press them:
 
     build/test_board watch 20
 
+To hear the sound card, a one second tone in the speaker:
+
+    build/test_audio tone
+
 ## What was measured
 
 On a zbitx (Pi Zero 2W, kernel 5.10.63), retuning the receiver's oscillator
@@ -70,12 +74,29 @@ range, the two drivers wrote the same bytes to the same registers.
 
 Reading a pin takes 81 ns and writing one 17 ns.
 
+The sound card, run for 20 seconds with all four processors kept busy:
+
+| | |
+|---|---|
+| blocks delivered | 1874 of 1875 |
+| longest wait for a block | 10.98 ms, a block being 10.67 ms |
+| times the card overflowed or ran dry | 0 |
+| writing one level | 0.32 ms |
+
+The four levels, speaker, transmitter, receiver and microphone, are separate
+channels of the chip. Each was moved alone and the other three stayed put, so
+no level changes when the radio goes between receive and transmit.
+
 ## Thanks
 
 To JJ (W9JES) and his team, whose version of the zbitx software at
 [drexjj/zbitx](https://github.com/drexjj/zbitx) found and fixed problems that
 this one learns from. Every file that borrows their code or their technique
 says so at its top.
+
+To Rafael Diniz and Rhizomatica, whose
+[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
+showed how to start the card playing without it running dry.
 
 To Gordon Henderson, whose wiringPi the radio used for its pins until now.
 `hw/gpio.c` reaches the pins the way wiringPi does.

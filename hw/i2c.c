@@ -4,15 +4,12 @@
 // which moved the radio's Si5351 onto the kernel's bus with I2C_RDWR requests.
 // The technique here is theirs.
 //
-// The radio used to toggle the two bus pins itself, from whichever thread
-// wanted the bus, with nothing to stop two threads doing so at once. Here the
-// kernel owns the pins and lets one transfer finish before the next begins, so
-// callers on different threads need no lock of their own.
+// The kernel owns the bus's two pins and lets one transfer finish before the
+// next begins, so callers on different threads need no lock of their own.
 //
-// The kernel still makes each bit by waiting in a loop, as the old code did. A
-// transfer holds a processor for its whole length, roughly 0.6 ms for eight
-// registers, so it belongs on a thread that can afford that and never on the
-// one that carries the audio.
+// The kernel makes each bit by waiting in a loop. A transfer holds a processor
+// for its whole length, roughly 0.6 ms for eight registers, so it belongs on a
+// thread that can afford that and never on the one that carries the audio.
 //
 // Every transfer is a single I2C_RDWR request that carries the device address
 // inside it. The open descriptor therefore holds no "current device", and two
@@ -22,8 +19,8 @@
 // back, all inside one transfer, so nothing else on the bus can come between
 // naming the register and reading it.
 //
-// On the zbitx the bus is a kernel bit-banged one on the pins the Si5351 and
-// the clock chip were always wired to. This line in /boot/config.txt makes
+// On the zbitx the bus is a kernel bit-banged one on the two pins the Si5351
+// and the clock chip are wired to. This line in /boot/config.txt makes
 // it, and hands the clock chip to the kernel's own driver:
 //
 //     dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6
