@@ -49,6 +49,13 @@ On a zbitx (Pi Zero 2W, kernel 5.10.63), retuning the receiver's oscillator
 The register values are the original's. Over 4,966,055 retunes across the
 range, the two drivers wrote the same bytes to the same registers.
 
+## Thanks
+
+To JJ (W9JES) and his team, whose version of the zbitx software at
+[drexjj/zbitx](https://github.com/drexjj/zbitx) found and fixed problems that
+this one learns from. Every file that borrows their code or their technique
+says so at its top.
+
 ## Layout
 
     hw/       the radio's hardware: buses and chips

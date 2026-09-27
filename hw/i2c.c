@@ -1,5 +1,9 @@
 // i2c.c — one I2C bus, reached through the kernel's /dev/i2c-N.
 //
+// Thanks to JJ's version of the zbitx software (W9JES, github.com/drexjj/zbitx),
+// which moved the radio's Si5351 onto the kernel's bus with I2C_RDWR requests.
+// The technique here is theirs.
+//
 // The radio used to toggle the two bus pins itself, from whichever thread
 // wanted the bus, with nothing to stop two threads doing so at once. Here the
 // kernel owns the pins and lets one transfer finish before the next begins, so
