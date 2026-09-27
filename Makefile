@@ -19,7 +19,7 @@ HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c
 DSP         = dsp/sdr.c dsp/filter.c dsp/vfo.c
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
-HOST_TESTS  = $(BUILD)/test_si5351_math
+HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio
 TOOLS       = $(BUILD)/sdr
 
@@ -29,6 +29,7 @@ all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
 
 check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
+	$(BUILD)/test_am
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -44,6 +45,9 @@ $(BUILD)/sdr: tools/sdr.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_si5351_math.c hw/si5351.c
+
+$(BUILD)/test_am: tests/test_am.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(HW) $(RADIO_LIBS)
 
 $(BUILD)/test_si5351: tests/test_si5351.c hw/si5351.c hw/i2c.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)

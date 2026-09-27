@@ -9,8 +9,10 @@
 // because they have the same names. Each program writes a file, and the two
 // files must be the same, byte for byte. run.sh does all of it.
 //
-// The script goes through the five modes the radio receives, the four
-// speeds of the AGC and four passbands. For each it plays a quiet, a usual
+// The script goes through USB, LSB, CW and CWR, the four speeds of the AGC
+// and four passbands. AM is left out because there the two differ, and are
+// meant to: zbitxv2 filters AM around 24 kHz whatever bin the radio works
+// at, and zbitxre around the tuned bin. tests/test_am.c looks after AM. For each it plays a quiet, a usual
 // and a very loud stretch of a made-up band: three carriers, an AM station
 // and noise, all between 24 and 30 kHz, where the radio's IF is.
 //
@@ -41,7 +43,7 @@
 #define ANSWER_MAX 1000
 #define REQUEST_MAX 200
 
-#define MODES 5
+#define MODES 4
 #define SPEEDS 4
 #define PASSBANDS 4
 
@@ -215,7 +217,7 @@ static void play(int count, double level) {
 }
 
 static void every_setting(void) {
-	static const char *modes[MODES] = { "USB", "LSB", "CW", "CWR", "AM" };
+	static const char *modes[MODES] = { "USB", "LSB", "CW", "CWR" };
 	static const char *speeds[SPEEDS] = { "SLOW", "MED", "FAST", "OFF" };
 	static const char *lows[PASSBANDS] = { "300", "50", "400", "100" };
 	static const char *highs[PASSBANDS] = { "3000", "2400", "900", "4500" };

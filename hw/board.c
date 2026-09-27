@@ -38,6 +38,20 @@
 // the middle. A board with a different filter or a better modulator may
 // want a different one, which is why it is the board's and not the radio's.
 //
+// WHY ONE POWER LINE GOES OFF BEFORE THE OTHER COMES ON
+//
+// These radios are bidirectional: the same mixers, filters and amplifiers
+// carry the signal one way on receive and the other way on transmit, and the
+// two power lines decide which way. The circuits hold their charge for a
+// while after their line goes low. If the receiver's line is raised while the
+// capacitors of the transmitter's circuits are still charged, both directions
+// have gain at once and the radio oscillates by itself.
+//
+// So going to receive, the transmitter's line is switched off first, then
+// there is a wait long enough for its capacitors to discharge fully, and only
+// then is the receiver's line switched on. The wait may be made longer. It
+// must not be made shorter or left out to make the radio switch faster.
+//
 // To support another board, add its table here and name it in board.h. A
 // table's list of filters ends at the first one with no name.
 //

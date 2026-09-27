@@ -18,6 +18,16 @@
 // center_bin, which the board decides. hw/board.c says why the zbitx works
 // at bin 600.
 //
+// AM
+//
+// AM is not brought down to baseband. It is filtered where it is, at the IF,
+// and then rectified. The carrier of the station tuned in lands on the tuned
+// bin like any other signal, so the filter is put around that bin, as wide as
+// r1:high on either side. On the zbitx that is around 28.125 kHz, bin 600,
+// and on a board that works at bin 512 it is around 24 kHz. The filter has to
+// follow the bin: a filter left at 24 kHz on a radio that works at bin 600
+// passes what is 4 kHz below the station and cuts the station off.
+//
 // WHO CHANGES WHAT
 //
 // The audio thread runs sound_block(), and from it sound_process(),
@@ -606,10 +616,12 @@ void sound_block(struct audio_block *block){
 
 void set_rx_filter(){
 	//on AM filter at the IF level, instead of the baseband
+	//the carrier is at the tuned bin, the filter goes around it
 	if (rx_wanted->mode == MODE_AM){
+		double carrier_hz = 46.875 * (1.0 * rx_wanted->tuned_bin);
 		filter_tune(rx_wanted->filter,
-			(1.0 * (24000 - rx_wanted->high_hz))/96000.0 ,
-			(1.0 * (24000 + rx_wanted->high_hz))/96000.0 ,
+			(1.0 * (carrier_hz - rx_wanted->high_hz))/96000.0 ,
+			(1.0 * (carrier_hz + rx_wanted->high_hz))/96000.0 ,
 			5);
 	}
 	else if(rx_wanted->mode == MODE_LSB || rx_wanted->mode == MODE_CWR)

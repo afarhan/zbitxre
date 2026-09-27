@@ -146,10 +146,16 @@ channels of the chip. Each was moved alone and the other three stayed put, so
 no level changes when the radio goes between receive and transmit.
 
 The receiver was run beside zbitxv2's (commit 2726c57) on the same samples:
-6500 blocks, through USB, LSB, CW, CWR and AM, the four speeds of the AGC and
+5220 blocks, through USB, LSB, CW and CWR, the four speeds of the AGC and
 four passbands, quiet, usual and very loud. The samples for the speaker, the
 spectrum, the S meter and the oscillator's frequency were the same throughout,
 byte for byte.
+
+AM is where zbitxre differs from zbitxv2 on purpose. The AM filter goes
+around the carrier of the station tuned in, which is on the board's centre
+bin: 28.125 kHz on the zbitx. zbitxv2 has it around 24 kHz on every board.
+`make check` plays a station at each place and hears only the one on the
+centre bin.
 
 ## Thanks
 
