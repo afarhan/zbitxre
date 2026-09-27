@@ -1,26 +1,41 @@
-// board.h — the zbitx board: what each of the Pi's pins does. See board.c.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
+// board.h — a radio board: which of the Pi's pins does what. See board.c.
 
 #pragma once
 
 #include <stdint.h>
 
-#define BOARD_PIN_PTT          4
-#define BOARD_PIN_KEY          5
-#define BOARD_PIN_RECEIVER     15
-#define BOARD_PIN_TRANSMITTER  23
-#define BOARD_PIN_FILTER_A     24
-#define BOARD_PIN_FILTER_B     25
-#define BOARD_PIN_FILTER_C     8
-#define BOARD_PIN_FILTER_D     7
+#define BOARD_FILTERS_MAX 8
+#define BOARD_NO_PIN      (-1)
+#define BOARD_NO_BAND     0u
 
-#define BOARD_FILTERS          4
-#define BOARD_HIGHEST_HZ       30000000u
+struct board_filter {
+	const char *name;
+	int pin;
+	uint32_t below_hz;
+};
 
-int board_open(void);
+struct board {
+	const char *name;
+	int transmitter_pin;
+	int receiver_pin;
+	int ptt_pin;
+	int key_pin;
+	struct board_filter filter[BOARD_FILTERS_MAX + 1];
+};
+
+extern const struct board board_zbitx_1;
+
+int board_open(const struct board *which);
 void board_close(void);
+const struct board *board_in_use(void);
+int board_filters(void);
+
 void board_receiver_power(int on);
 void board_transmitter_power(int on);
-int board_filter_pin_for(uint32_t hz);
+const struct board_filter *board_filter_for(uint32_t hz);
 void board_select_filter(uint32_t hz);
 void board_release_filters(void);
 int board_ptt_closed(void);

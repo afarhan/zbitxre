@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // si5351.c — the Si5351 clock generator: three outputs from two PLLs.
 //
 // An output is a PLL divided by an even integer, and the PLL is the crystal
@@ -23,7 +26,12 @@
 // clock's control register, each group as one I2C transfer. The PLL is not
 // reset, so the output keeps running while it moves.
 //
-// The arithmetic gives the same registers as zbitxv2's si5351v2.c;
+// The PLLs are reset when the chip is set up and whenever the caller asks.
+// hermes-radio-daemon asks once more after the BFO has first been set, and
+// the radio's start-up should do the same.
+//
+// The arithmetic gives the same registers as zbitxv2's si5351v2.c, which
+// hermes-radio-daemon's sbitx/sbitx_si5351.c also carries;
 // tests/test_si5351_math.c holds values captured from it.
 
 #include <unistd.h>
@@ -116,11 +124,15 @@ int si5351_clock_off(int clock) {
 	return write_register(REG_CLOCK_CONTROL + clock, CLOCK_POWERED_DOWN);
 }
 
+int si5351_reset_plls(void) {
+	return write_register(REG_PLL_RESET, RESET_BOTH_PLLS);
+}
+
 int si5351_init(void) {
 	int clock;
 
 	usleep(SETTLE_US);
-	if (write_register(REG_PLL_RESET, RESET_BOTH_PLLS) < 0)
+	if (si5351_reset_plls() < 0)
 		return -1;
 	usleep(SETTLE_US);
 	for (clock = 0; clock < SI5351_CLOCKS; clock++) {

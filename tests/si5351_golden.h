@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // si5351_golden.h — what the radio's original si5351v2.c wrote to the chip.
 //
 // Each row is one retune, captured on a zbitx by running the original driver

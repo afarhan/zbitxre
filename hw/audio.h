@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // audio.h — the sound card: samples in and out, and the four levels.
 // See audio.c.
 
@@ -28,9 +31,11 @@ struct audio_levels {
 
 struct audio_report {
 	unsigned long blocks;
+	unsigned long blocks_dropped;
 	unsigned long capture_overruns;
-	unsigned long playback_underruns;
+	unsigned long playback_gaps;
 	long longest_wait_us;
+	long queued_frames;
 	int is_realtime;
 	int is_running;
 };

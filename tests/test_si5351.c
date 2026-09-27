@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // test_si5351.c — the Si5351 on the radio, driven through the kernel's I2C bus.
 //
 // Stop the radio program first; this test owns the chip while it runs.
@@ -152,6 +155,8 @@ int main(void) {
 	expect(si5351_init() == 0, "the chip accepts a reset and all clocks off");
 	set_and_read_back(&golden[BFO_ROW], "the BFO");
 	set_and_read_back(&golden[OSCILLATOR_ROW], "the oscillator");
+	check_lock();
+	expect(si5351_reset_plls() == 0, "the chip accepts a reset of its PLLs");
 	check_lock();
 	time_retunes(golden[OSCILLATOR_ROW].hz);
 	check_lock();

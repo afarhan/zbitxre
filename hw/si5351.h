@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // si5351.h — the Si5351 clock generator. See si5351.c.
 
 #pragma once
@@ -14,6 +17,7 @@
 #define SI5351_STATUS_PLL_A_NO_LOCK 0x20
 
 int si5351_init(void);
+int si5351_reset_plls(void);
 void si5351_set_crystal(uint32_t hz);
 int si5351_set_freq(int clock, uint32_t hz);
 int si5351_clock_off(int clock);

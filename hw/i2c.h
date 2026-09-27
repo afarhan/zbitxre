@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // i2c.h — one I2C bus, reached through the kernel. See i2c.c.
 
 #pragma once

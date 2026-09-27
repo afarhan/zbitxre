@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // gpio.h — the Pi's GPIO pins, by BCM number. See gpio.c.
 
 #pragma once

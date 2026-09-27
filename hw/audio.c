@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // audio.c — the sound card: samples in and out, and the four levels.
 //
-// Thanks to JJ's version of the zbitx software (W9JES, github.com/drexjj/zbitx),
-// which found that the radio asked the card for a period several times the
-// size of the block it read, so that a read waited for far more than a block.
-// Here the period is the block.
-//
-// Thanks to hermes-radio-daemon (Rafael Diniz, github.com/Rhizomatica), from
-// which comes the way playing is started: silence is queued first, and the
-// card begins to play only when the first real block has joined it.
+// Thanks to hermes-radio-daemon (Rafael Diniz, Rhizomatica). This file follows
+// its sbitx/sbitx_alsa.c, Copyright (C) 2023-2024 Rhizomatica, in four things:
+// a period no larger than a block, a level for each channel, playing that
+// starts only when silence and the first real block are both queued, and
+// playing that carries on through a late block instead of stopping.
 //
 // The WM8731 has two inputs and two outputs and the radio uses each for a
 // different thing:
@@ -40,10 +40,24 @@
 // The thread asks for real-time priority and a processor to itself. The
 // priority is under 95, the most the system allows the audio group; a request
 // above the limit is refused outright and leaves the thread an ordinary one.
-// When a block comes so late that the card runs dry, or so late that the card
-// has nowhere to put what it hears, the card is set going again and the event
-// is counted. If the card cannot be set going the thread stops, and the
-// report says so.
+//
+// A late block does not stop the card. The card is told never to stop and to
+// play silence where nothing was written, so a block that comes late is heard
+// as a gap of exactly its lateness. hermes-radio-daemon keeps four periods
+// queued ahead; this keeps one block, which is half the delay and half the
+// margin.
+//
+// After a hold-up the delay through the radio must come back to what it was.
+// A thread that was held up finds blocks waiting for it, and working through
+// them would leave that much more queued to play for good. So it drops every
+// block that was waiting and waits for the next one, which arrives on the
+// card's own beat. Then, before writing, it moves its place in the card's
+// buffer to exactly one block ahead of what is being played, forward if the
+// card has run past it and back if too much is queued. That is the state the
+// thread starts in. Gaps and dropped blocks are counted.
+//
+// If the card fails in some other way it is prepared again. If it cannot be
+// prepared the thread stops, and the report says so.
 //
 // The radio's block function runs on the audio thread. It must not wait for
 // anything. The level functions are for one other thread.
@@ -68,9 +82,11 @@
 #define PRIMED_PERIODS       1
 #define SAMPLES_PER_BLOCK    (AUDIO_BLOCK_FRAMES * CHANNELS)
 
+#define PLAYBACK_FRAMES      (AUDIO_BLOCK_FRAMES * PLAYBACK_PERIODS)
+#define PRIMED_FRAMES        (AUDIO_BLOCK_FRAMES * PRIMED_PERIODS)
+
 #define AUDIO_PRIORITY       90
 #define AUDIO_PROCESSOR      3
-#define RECOVER_QUIETLY      1
 #define FAILURES_TO_STOP     50
 
 #define LEFT                 SND_MIXER_SCHN_FRONT_LEFT
@@ -80,6 +96,7 @@
 #define TRANSMITTER_AT_OPEN  95
 #define LINE_IN              0
 #define NO_BOOST             0
+#define NO_SIDETONE          0
 
 #define US_PER_SECOND        1000000L
 #define NS_PER_US            1000L
@@ -94,9 +111,13 @@ static int opened;
 static atomic_int running;
 static atomic_int is_realtime;
 static atomic_ulong blocks;
+static atomic_ulong blocks_dropped;
 static atomic_ulong capture_overruns;
-static atomic_ulong playback_underruns;
+static atomic_ulong playback_gaps;
 static atomic_long longest_wait_us;
+static atomic_long queued_frames;
+
+static int fell_behind;
 
 static int32_t captured[SAMPLES_PER_BLOCK];
 static int32_t to_play[SAMPLES_PER_BLOCK];
@@ -243,8 +264,6 @@ static int open_mixer(void) {
 }
 
 static int route_the_chip(void) {
-	if (set_choice("Input Mux", LINE_IN) < 0)
-		return -1;
 	if (set_switch("Line", 1) < 0)
 		return -1;
 	if (set_switch("Mic", 0) < 0)
@@ -253,13 +272,21 @@ static int route_the_chip(void) {
 		return -1;
 	if (set_switch("Playback Deemphasis", 0) < 0)
 		return -1;
+	if (set_choice("Input Mux", LINE_IN) < 0)
+		return -1;
 	if (set_switch("ADC High Pass Filter", 0) < 0)
 		return -1;
 	if (set_switch("Output Mixer HiFi", 1) < 0)
 		return -1;
-	if (set_switch("Output Mixer Line Bypass", 0) < 0)
+	if (set_switch("Master Playback ZC", 0) < 0)
+		return -1;
+	if (set_joined_volume("Sidetone", NO_SIDETONE) < 0)
 		return -1;
 	if (set_switch("Output Mixer Mic Sidetone", 0) < 0)
+		return -1;
+	if (set_switch("Output Mixer Line Bypass", 0) < 0)
+		return -1;
+	if (set_switch("Store DC Offset", 0) < 0)
 		return -1;
 	if (audio_set_speaker(SPEAKER_AT_OPEN) < 0)
 		return -1;
@@ -298,21 +325,36 @@ static int open_stream(snd_pcm_t **stream, snd_pcm_stream_t direction,
 	return 0;
 }
 
-static int start_playing_when_primed(void) {
+static int play_without_stopping(void) {
 	snd_pcm_sw_params_t *wanted;
+	snd_pcm_uframes_t never;
 
 	snd_pcm_sw_params_alloca(&wanted);
 	if (snd_pcm_sw_params_current(playback, wanted) < 0)
 		return -1;
+	if (snd_pcm_sw_params_get_boundary(wanted, &never) < 0)
+		return -1;
 	if (snd_pcm_sw_params_set_start_threshold(playback, wanted,
-			(PRIMED_PERIODS + 1) * AUDIO_BLOCK_FRAMES) < 0)
+			PRIMED_FRAMES + AUDIO_BLOCK_FRAMES) < 0)
 		return -1;
 	if (snd_pcm_sw_params_set_avail_min(playback, wanted,
 			AUDIO_BLOCK_FRAMES) < 0)
 		return -1;
+	if (snd_pcm_sw_params_set_stop_threshold(playback, wanted, never) < 0)
+		return -1;
+	if (snd_pcm_sw_params_set_silence_threshold(playback, wanted, 0) < 0)
+		return -1;
+	if (snd_pcm_sw_params_set_silence_size(playback, wanted, never) < 0)
+		return -1;
 	if (snd_pcm_sw_params(playback, wanted) < 0)
 		return -1;
 	return 0;
+}
+
+static void make_ready(snd_pcm_t *stream) {
+	snd_pcm_prepare(stream);
+	snd_pcm_drop(stream);
+	snd_pcm_prepare(stream);
 }
 
 static void prime(void) {
@@ -357,22 +399,71 @@ static void note_the_wait(struct timespec *last_block) {
 	clock_gettime(CLOCK_MONOTONIC, last_block);
 }
 
-static int gather(void) {
+static int read_a_block(void) {
 	snd_pcm_sframes_t got;
-	int frame;
 
 	got = snd_pcm_readi(capture, captured, AUDIO_BLOCK_FRAMES);
-	if (got != AUDIO_BLOCK_FRAMES) {
-		atomic_fetch_add(&capture_overruns, 1);
-		if (got < 0)
-			snd_pcm_recover(capture, (int)got, RECOVER_QUIETLY);
+	if (got == AUDIO_BLOCK_FRAMES)
+		return 0;
+	atomic_fetch_add(&capture_overruns, 1);
+	snd_pcm_prepare(capture);
+	return -1;
+}
+
+static int wait_for_a_fresh_block(void) {
+	atomic_fetch_add(&blocks_dropped, 1);
+	while (snd_pcm_avail_update(capture) >= AUDIO_BLOCK_FRAMES) {
+		if (read_a_block() < 0)
+			return -1;
+		atomic_fetch_add(&blocks_dropped, 1);
+	}
+	fell_behind = 1;
+	return read_a_block();
+}
+
+static int gather(void) {
+	int frame;
+
+	if (read_a_block() < 0)
 		return -1;
+	if (snd_pcm_avail_update(capture) >= AUDIO_BLOCK_FRAMES) {
+		if (wait_for_a_fresh_block() < 0)
+			return -1;
 	}
 	for (frame = 0; frame < AUDIO_BLOCK_FRAMES; frame++) {
 		from_receiver[frame] = captured[frame * CHANNELS];
 		from_microphone[frame] = captured[frame * CHANNELS + 1];
 	}
 	return 0;
+}
+
+static void stay_one_block_ahead(void) {
+	snd_pcm_sframes_t room;
+	snd_pcm_sframes_t queued;
+	int card_ran_dry;
+
+	room = snd_pcm_avail_update(playback);
+	if (room < 0)
+		return;
+	card_ran_dry = room > PLAYBACK_FRAMES;
+	if (card_ran_dry)
+		atomic_fetch_add(&playback_gaps, 1);
+	if (!card_ran_dry && !fell_behind)
+		return;
+	fell_behind = 0;
+
+	queued = PLAYBACK_FRAMES - room;
+	if (queued < PRIMED_FRAMES)
+		snd_pcm_forward(playback, PRIMED_FRAMES - queued);
+	if (queued > PRIMED_FRAMES)
+		snd_pcm_rewind(playback, queued - PRIMED_FRAMES);
+}
+
+static void note_what_is_queued(void) {
+	snd_pcm_sframes_t queued;
+
+	if (snd_pcm_delay(playback, &queued) == 0 && queued >= 0)
+		atomic_store(&queued_frames, queued);
 }
 
 static void play(void) {
@@ -383,12 +474,14 @@ static void play(void) {
 		to_play[frame * CHANNELS] = to_speaker[frame];
 		to_play[frame * CHANNELS + 1] = to_transmitter[frame];
 	}
+	stay_one_block_ahead();
 	put = snd_pcm_writei(playback, to_play, AUDIO_BLOCK_FRAMES);
-	if (put == AUDIO_BLOCK_FRAMES)
+	if (put == AUDIO_BLOCK_FRAMES) {
+		note_what_is_queued();
 		return;
-	atomic_fetch_add(&playback_underruns, 1);
-	if (put < 0)
-		snd_pcm_recover(playback, (int)put, RECOVER_QUIETLY);
+	}
+	atomic_fetch_add(&playback_gaps, 1);
+	snd_pcm_prepare(playback);
 	prime();
 }
 
@@ -407,6 +500,8 @@ static void *audio_thread(void *unused) {
 	block.frames = AUDIO_BLOCK_FRAMES;
 
 	failures = 0;
+	make_ready(capture);
+	make_ready(playback);
 	prime();
 	while (atomic_load(&running)) {
 		if (gather() < 0) {
@@ -444,9 +539,11 @@ int audio_open(audio_block_fn radio_block) {
 	block_fn = radio_block;
 
 	atomic_store(&blocks, 0);
+	atomic_store(&blocks_dropped, 0);
 	atomic_store(&capture_overruns, 0);
-	atomic_store(&playback_underruns, 0);
+	atomic_store(&playback_gaps, 0);
 	atomic_store(&longest_wait_us, 0);
+	atomic_store(&queued_frames, 0);
 	atomic_store(&is_realtime, 0);
 
 	if (open_mixer() < 0 || route_the_chip() < 0) {
@@ -456,7 +553,7 @@ int audio_open(audio_block_fn radio_block) {
 	if (open_stream(&capture, SND_PCM_STREAM_CAPTURE, CAPTURE_PERIODS) < 0
 			|| open_stream(&playback, SND_PCM_STREAM_PLAYBACK,
 				PLAYBACK_PERIODS) < 0
-			|| start_playing_when_primed() < 0) {
+			|| play_without_stopping() < 0) {
 		close_everything();
 		return -1;
 	}
@@ -482,9 +579,11 @@ void audio_close(void) {
 
 void audio_get_report(struct audio_report *report) {
 	report->blocks = atomic_load(&blocks);
+	report->blocks_dropped = atomic_load(&blocks_dropped);
 	report->capture_overruns = atomic_load(&capture_overruns);
-	report->playback_underruns = atomic_load(&playback_underruns);
+	report->playback_gaps = atomic_load(&playback_gaps);
 	report->longest_wait_us = atomic_load(&longest_wait_us);
+	report->queued_frames = atomic_load(&queued_frames);
 	report->is_realtime = atomic_load(&is_realtime);
 	report->is_running = atomic_load(&running);
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // test_si5351_math.c — the Si5351 driver's arithmetic, with no chip attached.
 //
 // The driver is linked against the two I2C functions below instead of hw/i2c.c.

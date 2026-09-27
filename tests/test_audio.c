@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // test_audio.c — the sound card, on the radio.
 //
 // Stop the radio program first; this test owns the card while it runs.
@@ -14,6 +17,12 @@
 // asks how many blocks went through, how long the longest wait for one was,
 // and whether the card ever ran dry or overflowed. A block is 10.67 ms, so a
 // wait much longer than that means the thread was held up.
+//
+// A late block. The block function is then made to hold one block back for
+// 25 ms, longer than anything queued to play. The card must carry on, the gap
+// must be counted, the blocks that piled up must be dropped, and what is
+// queued to play must come back to where it was, so that one hold-up does not
+// leave the radio's delay longer for good.
 //
 // With "tone" the block function also plays a 700 Hz tone in the speaker for
 // the first second of that run, which is the only check here that a person
@@ -56,8 +65,12 @@
 #define US_PER_SECOND       1000000L
 #define NS_PER_US           1000L
 #define TIMED_LEVEL_WRITES  20
+#define HELD_BACK_US        25000
+#define SECONDS_AFTER       2
+#define MOST_QUEUED         (2 * AUDIO_BLOCK_FRAMES)
 
 static atomic_long tone_frames_left;
+static atomic_int hold_one_back;
 static atomic_long receiver_peak;
 static atomic_long microphone_peak;
 static atomic_long transmitter_peak;
@@ -92,6 +105,9 @@ static long largest(const int32_t *samples, int count, long so_far) {
 static void measure_and_play(struct audio_block *block) {
 	double angle;
 	int i;
+
+	if (atomic_exchange(&hold_one_back, 0))
+		usleep(HELD_BACK_US);
 
 	atomic_store(&receiver_peak, largest(block->from_receiver,
 		block->frames, atomic_load(&receiver_peak)));
@@ -210,14 +226,43 @@ static void check_stream(int seconds) {
 	expect(after.is_realtime, "the audio thread has real-time priority");
 	expect(labs(went_through - expected) <= BLOCKS_TOLERANCE,
 		"the card delivered the blocks its clock promises");
+	printf("          queued to play after a write: %ld frames; a block is %d\n",
+		after.queued_frames, AUDIO_BLOCK_FRAMES);
 	expect(after.capture_overruns == 0, "the card never overflowed");
-	expect(after.playback_underruns == 0, "the card never ran dry");
+	expect(after.playback_gaps == 0, "the card never ran dry");
+	expect(after.blocks_dropped == 0, "no block was dropped");
+	expect(after.queued_frames <= MOST_QUEUED,
+		"no more than two blocks are queued to play");
 	expect(after.longest_wait_us < LONGEST_WAIT_OK_US,
 		"no block was more than half a block late");
 	expect(atomic_load(&receiver_peak) > 0, "the receiver's input is alive");
 	expect(atomic_load(&microphone_peak) > 0, "the microphone's input is alive");
 	expect(atomic_load(&transmitter_peak) == 0,
 		"nothing was sent to the transmitter");
+}
+
+static void check_a_late_block(void) {
+	struct audio_report before;
+	struct audio_report after;
+
+	audio_get_report(&before);
+	atomic_store(&hold_one_back, 1);
+	sleep(SECONDS_AFTER);
+	audio_get_report(&after);
+
+	printf("          one block held back %d us: %lu gaps, %lu blocks dropped, "
+		"%ld frames queued afterwards\n", HELD_BACK_US,
+		after.playback_gaps - before.playback_gaps,
+		after.blocks_dropped - before.blocks_dropped, after.queued_frames);
+	expect(after.is_running, "the card carried on through a late block");
+	expect(after.playback_gaps > before.playback_gaps,
+		"the gap was noticed and counted");
+	expect(after.blocks_dropped > before.blocks_dropped,
+		"the blocks that piled up were dropped");
+	expect(after.capture_overruns == before.capture_overruns,
+		"the card did not overflow");
+	expect(after.queued_frames <= MOST_QUEUED,
+		"what is queued to play came back to two blocks or fewer");
 }
 
 static void put_back(const struct audio_levels *levels) {
@@ -256,6 +301,7 @@ int main(int argc, char **argv) {
 		atomic_store(&tone_frames_left, (long)TONE_SECONDS * AUDIO_RATE_HZ);
 	}
 	check_stream(seconds);
+	check_a_late_block();
 
 	put_back(&at_open);
 	audio_close();

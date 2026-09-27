@@ -13,11 +13,40 @@ over. Nothing here changes it.
 |---|---|
 | I2C through the kernel (`hw/i2c.c`) | done, tested on a zbitx |
 | Si5351 clock generator (`hw/si5351.c`) | done, tested on a zbitx |
-| GPIO pins (`hw/gpio.c`) and what each does (`hw/board.c`) | done, tested on a zbitx |
+| GPIO pins (`hw/gpio.c`) | done, tested on a zbitx |
+| What each pin does on a board (`hw/board.c`) | done for the zbitx's first board |
 | Clock chip | the kernel's own driver keeps it; no code here |
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
 | The DSP of `sbitx.c` as `dsp/sdr.c` | next |
 | Controls, keyer, clients | after that |
+
+## How it relates to hermes-radio-daemon
+
+[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon) by
+Rafael Diniz of Rhizomatica runs the same radios, headless, for the HERMES
+network. zbitxre is a separate program with a different aim: an operator's
+radio, with a keyer, in code small enough to read in an evening.
+
+The hardware layer here is written to follow theirs. Where the two programs
+meet the outside world they are meant to agree: the same rigctld behaviour,
+and the same names for the controls wherever one name will do. A client
+written for one should work with the other.
+
+## Boards
+
+Boards differ, so a board is a table in `hw/board.c`: a line for the
+transmitter's power, one for the receiver's if the board has it, the low-pass
+filters with the frequency each serves below, and the two inputs from the
+jacks. Nothing else in the code knows how many lines a board has.
+
+| Board | State |
+|---|---|
+| zbitx, first board | described and tested |
+| zbitx, second board, which has one more filter | to be added |
+| original sbitx, which has no receiver line | to be added |
+
+The zbitx's first board has no encoder or switch on the Pi's pins. A board
+that has them, as the sbitx does, will need them added to its table.
 
 ## Setting up the radio
 
@@ -38,18 +67,15 @@ code of its own. To see the chip's time:
 
     sudo hwclock -r
 
-This board is the only one supported so far: the zbitx, `hw=4` in the old
-`hw_settings.ini`. It has no encoders or switches on the Pi's pins.
-
 ## Building and testing
 
     make          build everything into build/
     make check    run the tests that need no radio; works on a PC too
     make radio    run the tests that need the radio
 
-Stop the radio program before `make radio`. Those tests take over the Si5351
-and the pins while they run. They leave the clocks switched off and the radio
-receiving, and they never turn the transmitter on.
+Stop the radio program before `make radio`. Those tests take over the Si5351,
+the pins and the sound card while they run. They leave the clocks switched off
+and the radio receiving, and they never turn the transmitter on.
 
 To watch the key and PTT lines while you press them:
 
@@ -64,24 +90,31 @@ To hear the sound card, a one second tone in the speaker:
 On a zbitx (Pi Zero 2W, kernel 5.10.63), retuning the receiver's oscillator
 300 times in 10 Hz steps:
 
-| Driver | One retune |
+| How the retune is sent | One retune |
 |---|---|
-| original, pins toggled from the program | 3.3 ms |
-| this one, through the kernel | 1.5 ms |
+| zbitxv2: pins toggled from the program, a transfer for each register | 3.3 ms |
+| through the kernel, a transfer for each register | 3.7 ms |
+| zbitxre: through the kernel, a transfer for each group of registers | 1.5 ms |
 
-The register values are the original's. Over 4,966,055 retunes across the
-range, the two drivers wrote the same bytes to the same registers.
+The register values are zbitxv2's. Over 4,966,055 retunes across the range,
+the two drivers wrote the same bytes to the same registers.
 
-Reading a pin takes 81 ns and writing one 17 ns.
+Reading a pin takes about 80 ns and writing one about 20 ns.
 
-The sound card, run for 20 seconds with all four processors kept busy:
+The sound card, run with all four processors kept busy:
 
 | | |
 |---|---|
-| blocks delivered | 1874 of 1875 |
-| longest wait for a block | 10.98 ms, a block being 10.67 ms |
+| blocks delivered in 10 s | 936 of 937 |
+| longest wait for a block | 10.74 ms, a block being 10.67 ms |
+| queued to play after a write | 2028 frames, a block being 1024 |
 | times the card overflowed or ran dry | 0 |
 | writing one level | 0.32 ms |
+
+Then one block was held back for 25 ms, longer than anything queued. The card
+carried on, the gap was counted once, the blocks that had piled up were
+dropped, and 2032 frames were queued afterwards: the delay through the radio
+came back to what it was.
 
 The four levels, speaker, transmitter, receiver and microphone, are separate
 channels of the chip. Each was moved alone and the other three stayed put, so
@@ -89,21 +122,27 @@ no level changes when the radio goes between receive and transmit.
 
 ## Thanks
 
-To JJ (W9JES) and his team, whose version of the zbitx software at
-[drexjj/zbitx](https://github.com/drexjj/zbitx) found and fixed problems that
-this one learns from. Every file that borrows their code or their technique
-says so at its top.
-
 To Rafael Diniz and Rhizomatica, whose
-[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon)
-showed how to start the card playing without it running dry.
+[hermes-radio-daemon](https://github.com/Rhizomatica/hermes-radio-daemon) the
+hardware layer follows: the kernel's I2C bus, the way the pins are set up, the
+sound card's periods and levels, and playing that carries on through a late
+block. Every file that follows theirs says so at its top.
 
-To Gordon Henderson, whose wiringPi the radio used for its pins until now.
-`hw/gpio.c` reaches the pins the way wiringPi does.
+To Raspberry Pi Ltd, whose gpiolib gives the order in which the pin registers
+are written, and to Gordon Henderson, whose wiringPi the radio used for its
+pins until now.
+
+To JJ (W9JES), whose version of the zbitx software at
+[drexjj/zbitx](https://github.com/drexjj/zbitx) gave the form of the I2C
+request used in `hw/i2c.c`.
+
+## Licence
+
+GPL version 3 or later. See `LICENSE`.
 
 ## Layout
 
-    hw/       the radio's hardware: buses and chips
+    hw/       the radio's hardware: buses, chips and boards
     tests/    one program per piece, each with its own main()
 
 ## Conventions

@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // gpio.c — the Pi's GPIO pins, reached through their registers.
 //
-// Thanks to wiringPi (Gordon Henderson), whose way of reaching the pins this
-// is: /dev/gpiomem mapped into the program, and the registers of the BCM2835
-// family read and written in place. Only the calls the radio needs are here,
-// and no library is linked in.
+// Thanks to hermes-radio-daemon (Rafael Diniz, Rhizomatica), which reaches the
+// pins through Raspberry Pi's gpiolib. The registers and the order they are
+// written in follow gpiolib's BCM2835 part, Copyright (C) Raspberry Pi Ltd,
+// BSD-3-Clause. wiringPi (Gordon Henderson) reaches the pins the same way:
+// /dev/gpiomem mapped into the program, and the registers read and written in
+// place. Only the calls the radio needs are here, and no library is linked in.
 //
 // A pin is known by its BCM number, the one printed beside "GPIO" on a pinout
 // chart. It is not the pin's place on the header and not a wiringPi number.
@@ -16,9 +21,9 @@
 // share, and setting a pull takes two waits, so both are for start-up only.
 //
 // A pull is set the way the BCM2835 asks: name the pull, wait, clock it into
-// the pin, wait, then clear both registers. That holds for every Pi up to the
-// 3 and for the Zero 2W. The Pi 4 and 5 set pulls differently and are not
-// handled here.
+// the pin, wait, then clear each register with a wait after it. That holds for
+// every Pi up to the 3 and for the Zero 2W. The Pi 4 and 5 set pulls
+// differently; gpiolib handles them and this file does not.
 //
 // Every function that can fail returns 0, or -1 with errno set.
 
@@ -46,7 +51,7 @@
 #define FUNCTION_INPUT    0u
 #define FUNCTION_OUTPUT   1u
 
-#define PULL_SETTLE_US    5
+#define PULL_SETTLE_US    10
 
 static volatile uint32_t *registers;
 
@@ -102,7 +107,9 @@ static void set_pull(int pin, int pull) {
 	registers[REG_PULL_CLOCK] = 1u << pin;
 	usleep(PULL_SETTLE_US);
 	registers[REG_PULL] = 0;
+	usleep(PULL_SETTLE_US);
 	registers[REG_PULL_CLOCK] = 0;
+	usleep(PULL_SETTLE_US);
 }
 
 int gpio_make_output(int pin) {
@@ -119,8 +126,8 @@ int gpio_make_input(int pin, int pull) {
 		errno = EINVAL;
 		return -1;
 	}
-	set_function(pin, FUNCTION_INPUT);
 	set_pull(pin, pull);
+	set_function(pin, FUNCTION_INPUT);
 	return 0;
 }
 

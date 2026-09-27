@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
 // i2c.c — one I2C bus, reached through the kernel's /dev/i2c-N.
 //
-// Thanks to JJ's version of the zbitx software (W9JES, github.com/drexjj/zbitx),
-// which moved the radio's Si5351 onto the kernel's bus with I2C_RDWR requests.
-// The technique here is theirs.
+// Thanks to hermes-radio-daemon (Rafael Diniz, Rhizomatica), which reaches the
+// radio's Si5351 through the kernel's I2C bus; this file follows its
+// sbitx/sbitx_i2c.c, Copyright (C) 2023-2024 Rhizomatica. The form of the
+// request, I2C_RDWR, is as in JJ's version (W9JES, github.com/drexjj/zbitx).
 //
 // The kernel owns the bus's two pins and lets one transfer finish before the
 // next begins, so callers on different threads need no lock of their own.
