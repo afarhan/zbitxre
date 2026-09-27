@@ -48,8 +48,10 @@
 //       4     7    PTT                     ring of the KEY and MIC jacks
 //       5    29    R-DASH                  tip of the KEY jack
 //
-// Its band edges are zbitxv2's. hermes-radio-daemon draws them at 5.7, 8,
-// 18.5 and 35 MHz, which puts the 30 m band on filter B instead of C.
+// Where zbitxv2 and hermes-radio-daemon differ about the radio itself, the
+// radio follows zbitxv2. The band edges are one such place: hermes-radio-daemon
+// draws them at 5.7, 8, 18.5 and 35 MHz, which would put the 30 m band on
+// filter B instead of C.
 
 #include <stddef.h>
 
