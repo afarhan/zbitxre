@@ -17,7 +17,7 @@ over. Nothing here changes it.
 | What each pin does on a board (`hw/board.c`) | done for the zbitx's first board |
 | Clock chip | the kernel's own driver keeps it; no code here |
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
-| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx; not yet compared with zbitxv2 sample for sample |
+| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; not yet compared with zbitxv2 sample for sample |
 | The transmitter and the T/R sequence | next |
 | Controls, keyer, clients | after that |
 
@@ -51,22 +51,17 @@ that has them, as the sbitx does, will need them added to its table.
 
 ## Setting up the radio
 
-The Si5351 and the DS3231 clock chip sit on two GPIO pins, not on the Pi's own
-I2C pins. Add this line to `/boot/config.txt` and reboot:
+`setup/README.md` says what a radio's Raspberry Pi needs before zbitxre will
+run, why, and how to check it. `setup/config.txt` is the whole boot
+configuration of a working radio.
+
+zbitxre adds one line to the boot configuration:
 
     dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6
 
-The numbers are BCM GPIO numbers: header pins 33 and 31, which wiringPi calls
-23 and 22.
-
-That one line does two things. It makes a kernel I2C bus of the two pins, on
-which the radio finds the Si5351 by asking each bus in turn, so no bus number
-is written anywhere. And it gives the clock chip to the kernel's driver: the
-kernel sets the system's time from the chip when it starts, and writes the
-time back to the chip while the network keeps it right. The radio has no clock
-code of its own. To see the chip's time:
-
-    sudo hwclock -r
+It gives the Si5351 and the clock chip to the kernel, which makes an I2C bus
+of their two pins and keeps the clock itself. `setup/add-overlay.sh` adds the
+line and keeps a copy of the file as it was.
 
 ## Building and testing
 
@@ -165,6 +160,7 @@ GPL version 3 or later. See `LICENSE`.
 
 ## Layout
 
+    setup/    what the radio's Pi needs, and its boot configuration
     hw/       the radio's hardware: buses, chips and boards
     dsp/      the radio itself: tuning, modes, filters, the receiver
     tools/    programs to run the radio by hand
