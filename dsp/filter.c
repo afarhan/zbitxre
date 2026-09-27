@@ -4,165 +4,218 @@
 // filter.c — the shape of a filter, as one number for each FFT bin.
 //
 // Thanks to Phil Karn, KA9Q. The method is his, and so is the code that
-// makes the Kaiser window and shortens and tapers the impulse: it comes from
-// filter.c of his ka9q-radio, Copyright 2017-2023, Phil Karn, KA9Q, by way of
-// zbitxv2's fft_filter.c. The arithmetic is unchanged.
+// makes the Kaiser window and windows the filter: it comes from filter.c of
+// his ka9q-radio, Copyright 2017-2023, Phil Karn, KA9Q, by way of zbitxv2's
+// fft_filter.c. The functions keep the names they have there and the
+// arithmetic is unchanged.
 //
 // The radio filters in the frequency domain: it turns a block of samples
 // into bins, multiplies each bin by a number, and turns the bins back into
-// samples. This file makes those numbers.
+// samples. This file makes those numbers, the fir_coeff of a struct filter.
 //
 // The obvious shape, one inside the passband and zero outside, is a bad
 // filter. A signal that falls between two bins, or any sharp edge, rings
-// and clicks. So the shape is made in four steps:
+// and clicks. So filter_tune() makes the shape in four steps:
 //
-//   1. Draw the obvious shape in the bins.
-//   2. Turn it into samples. That is the filter's impulse response, and it
-//      is as long as the block and does not die away.
-//   3. Keep only the middle of it, FILTER_IMPULSE samples, and taper those
-//      to nothing at both ends with a Kaiser window. Now it is short.
-//   4. Turn it back into bins. The edges have become smooth.
+//   1. It draws the obvious shape in the bins.
+//   2. window_filter() turns it into samples. That is the filter's impulse
+//      response, and it is as long as the block and does not die away.
+//   3. It keeps only the middle of it, M samples, and tapers those to
+//      nothing at both ends with a Kaiser window. Now it is short.
+//   4. It turns it back into bins. The edges have become smooth.
 //
-// A filter shaped this way is what makes overlap-and-save work: with an
-// impulse of FILTER_IMPULSE samples in a transform of FILTER_BINS, the last
-// FILTER_BLOCK samples of every transform are clean and the rest are thrown
-// away.
+// L is the length of a block of samples, M the length of the impulse, and
+// N = L + M - 1 the length of the transform. The radio uses L = 1024 and
+// M = 1025, so N = 2048. With an impulse of M samples in a transform of N,
+// the last L samples of every transform are clean and the rest are thrown
+// away, which is what makes overlap and save work.
 //
 // Frequencies are given as a fraction of the sample rate, from -0.5 to 0.5.
 // The first half of the bins are the positive frequencies and the second
 // half the negative ones, so a passband of -3000 to -300 Hz is a lower
 // sideband.
 //
-// The Kaiser window's beta sets how hard the taper is; zbitxv2 uses 5
+// The Kaiser window's beta sets how hard the taper is; the radio uses 5
 // throughout.
 //
-// The two transforms are planned once, in filter_open(). Shaping a filter
-// afterwards plans nothing, and is for one thread at a time.
+// What FFTW learns about the fastest way to do these transforms is read from
+// wisdom_file_f before the first filter is made and written back after it.
+//
+// filter_tune() is for one thread at a time. It plans transforms, and FFTW's
+// planner must not be entered twice at once.
 //
 // complex.h is included before fftw3.h so that FFTW's complex numbers are
 // C's own.
 
+#define _GNU_SOURCE 1
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <memory.h>
 #include <complex.h>
 #include <math.h>
-#include <string.h>
 #include <fftw3.h>
 
-#include "filter.h"
+#include "sdr.h"
 
-#define BESSEL_TERMS   40
-#define BESSEL_ENOUGH  1e-12
+// Options for WISDOM_MODE from least to most rigorous are FFTW_ESTIMATE,
+// FFTW_MEASURE, FFTW_PATIENT, and FFTW_EXHAUSTIVE. FFTW_ESTIMATE seems to
+// make completely incorrect plan choices sometimes, and is not recommended.
+#define WISDOM_MODE FFTW_MEASURE
+#define PLANTIME -1		// no cap on the time spent finding the best FFT algorithm
 
-static fftwf_plan to_samples;
-static fftwf_plan to_bins;
-static float complex *work;
-static float taper[FILTER_IMPULSE];
+char wisdom_file_f[WISDOM_PATH_MAX] = "data/sbitx_wisdom_f.wis";
+static int wisdom_is_read = 0;
+static int wisdom_is_written = 0;
 
-static float bessel_i0(float z) {
-	float t;
-	float sum;
-	float term;
-	int k;
-
-	t = (z * z) / 4;
-	sum = 1 + t;
-	term = t;
-	for (k = 2; k < BESSEL_TERMS; k++) {
-		term *= t / (k * k);
+// Modified Bessel function of the 0th kind, used by the Kaiser window
+float i0(float const z){
+	const float t = (z*z)/4;
+	float sum = 1 + t;
+	float term = t;
+	for(int k=2; k<40; k++){
+		term *= t/(k*k);
 		sum += term;
-		if (term < BESSEL_ENOUGH * sum)
+		if(term < 1e-12 * sum)
 			break;
 	}
 	return sum;
 }
 
-static void make_kaiser(float *window, unsigned int count, float beta) {
-	float numerator;
-	float one_over_denominator;
-	float step;
-	float p;
-	int n;
+// Compute an entire Kaiser window
+// More efficient than repeatedly calling kaiser(n,M,beta)
+int make_kaiser(float * const window,unsigned int const M,float const beta){
+	assert(window != NULL);
+	if(window == NULL)
+		return -1;
+	// Precompute unchanging partial values
+	float const numc = M_PI * beta;
+	float const inv_denom = 1. / i0(numc); // Inverse of denominator
+	float const pc = 2.0 / (M-1);
 
-	numerator = M_PI * beta;
-	one_over_denominator = 1. / bessel_i0(numerator);
-	step = 2.0 / (count - 1);
-
-	for (n = 0; n < (int)(count / 2); n++) {
-		p = step * n - 1;
-		window[n] = bessel_i0(numerator * sqrtf(1 - p * p))
-			* one_over_denominator;
-		window[count - 1 - n] = window[n];
+	// The window is symmetrical, so compute only half of it and mirror
+	// this won't compute the middle value in an odd-length sequence
+	for(unsigned int n = 0; n < M/2; n++){
+		float const p = pc * n  - 1;
+		window[n] = i0(numc * sqrtf(1-p*p)) * inv_denom;
+		window[M-1-n] = window[n];
 	}
-	if (count & 1)
-		window[(count - 1) / 2] = 1;
-}
+	// If sequence length is odd, middle value is unity
+	if(M & 1)
+		window[(M-1)/2] = 1; // The -1 is actually unnecessary
 
-void filter_hann(float *window, int count) {
-	int n;
-
-	for (n = 0; n < count; n++)
-		window[n] = 0.5 - 0.5 * cos(2 * M_PI * n / (count - 1));
-}
-
-int filter_open(void) {
-	if (work != NULL)
-		return 0;
-	work = fftwf_alloc_complex(FILTER_BINS);
-	if (work == NULL)
-		return -1;
-	to_bins = fftwf_plan_dft_1d(FILTER_BINS, work, work, FFTW_FORWARD,
-		FFTW_MEASURE);
-	to_samples = fftwf_plan_dft_1d(FILTER_BINS, work, work, FFTW_BACKWARD,
-		FFTW_MEASURE);
-	if (to_bins == NULL || to_samples == NULL)
-		return -1;
 	return 0;
 }
 
-static void draw_the_obvious_shape(float complex *shape, float low,
-		float high) {
-	float inside;
-	float at;
-	int n;
-
-	inside = 1. / ((float)FILTER_BINS);
-	for (n = 0; n < FILTER_BINS; n++) {
-		if (n <= FILTER_BINS / 2)
-			at = (float)n / FILTER_BINS;
-		else
-			at = (float)(n - FILTER_BINS) / FILTER_BINS;
-
-		if (at >= low && at <= high)
-			shape[n] = inside;
-		else
-			shape[n] = 0;
-	}
+static float hann(int const n,int const M){
+	return 0.5 - 0.5 * cos(2*M_PI*n/(M-1));
 }
 
-static void shorten_and_taper(float complex *shape, float beta) {
-	int n;
-
-	memcpy(work, shape, FILTER_BINS * sizeof(*work));
-	fftwf_execute(to_samples);
-
-	make_kaiser(taper, FILTER_IMPULSE, beta);
-
-	for (n = FILTER_IMPULSE - 1; n >= 0; n--)
-		work[n] = work[(n - FILTER_IMPULSE / 2 + FILTER_BINS) % FILTER_BINS];
-	for (n = FILTER_IMPULSE - 1; n >= 0; n--)
-		work[n] = work[n] * taper[n] * 1.f;
-	memset(work + FILTER_IMPULSE, 0,
-		(FILTER_BINS - FILTER_IMPULSE) * sizeof(*work));
-
-	fftwf_execute(to_bins);
-	memcpy(shape, work, FILTER_BINS * sizeof(*shape));
-}
-
-int filter_shape(float complex *shape, float low, float high, float beta) {
-	if (work == NULL)
-		return -1;
-	if (isnan(low) || isnan(high) || isnan(beta))
-		return -1;
-	draw_the_obvious_shape(shape, low, high);
-	shorten_and_taper(shape, beta);
+int make_hann_window(float *window, int max_count){
+	//apply to the entire fft (MAX_BINS)
+	for (int i = 0; i < max_count; i++)
+		window[i] = hann(i, max_count);
 	return 0;
+}
+
+// Apply Kaiser window to filter frequency response
+// "response" is SIMD-aligned array of N complex floats
+// Impulse response will be limited to first M samples in the time domain
+// Phase is adjusted so "time zero" (center of impulse response) is at M/2
+// L and M refer to the decimated output
+int window_filter(int const L,int const M,complex float * const response,float const beta){
+
+	//total length of the convolving samples
+	int const N = L + M - 1;
+
+	// fftw_plan can overwrite its buffers, so we're forced to make a temp. Ugh.
+	complex float * const buffer = fftwf_alloc_complex(N);
+
+	fftw_set_timelimit(PLANTIME);
+	fftwf_set_timelimit(PLANTIME);
+	if (!wisdom_is_read){
+		fftwf_import_wisdom_from_filename(wisdom_file_f);
+		wisdom_is_read = 1;
+	}
+	fftwf_plan fwd_filter_plan = fftwf_plan_dft_1d(N,buffer,buffer,FFTW_FORWARD, WISDOM_MODE);
+	fftwf_plan rev_filter_plan = fftwf_plan_dft_1d(N,buffer,buffer,FFTW_BACKWARD, WISDOM_MODE);
+	if (!wisdom_is_written){
+		fftwf_export_wisdom_to_filename(wisdom_file_f);
+		wisdom_is_written = 1;
+	}
+
+	// Convert to time domain
+	memcpy(buffer,response,N*sizeof(*buffer));
+	fftwf_execute(rev_filter_plan);
+	fftwf_destroy_plan(rev_filter_plan);
+
+	float kaiser_window[M];
+	make_kaiser(kaiser_window,M,beta);
+
+	// Round trip through FFT/IFFT scales by N
+	float const gain = 1.;
+
+	//shift the buffer to make it causal
+	for(int n = M - 1; n >= 0; n--)
+		buffer[n] = buffer[ (n-M/2+N) % N];
+
+	// apply window and gain
+	for(int n = M - 1; n >= 0; n--)
+		buffer[n] = buffer[n] * kaiser_window[n] * gain;
+
+	// Pad with zeroes on right side
+	memset(buffer+M,0,(N-M)*sizeof(*buffer));
+
+	// Now back to frequency domain
+	fftwf_execute(fwd_filter_plan);
+	fftwf_destroy_plan(fwd_filter_plan);
+
+	memcpy(response,buffer,N*sizeof(*response));
+
+	fftwf_free(buffer);
+	return 0;
+}
+
+struct filter *filter_new(int input_length, int impulse_length){
+
+	struct filter *f = malloc(sizeof(struct filter));
+	f->L = input_length;
+	f->M = impulse_length;
+	f->N = f->L + f->M - 1;
+	f->fir_coeff = fftwf_alloc_complex(f->N);
+
+	return f;
+}
+
+int filter_tune(struct filter *f, float const low,float const high,float const kaiser_beta){
+
+	if(isnan(low) || isnan(high) || isnan(kaiser_beta))
+		return -1;
+
+	float gain = 1./((float)f->N);
+
+	for(int n = 0; n < f->N; n++){
+		float s;
+		//the first half is +ve frequencies in frequency domain
+		if(n <= f->N/2)
+			s = (float)n / f->N;
+		else	//the second half is -ve frequencies, inverted
+			s = (float)(n-f->N) / f->N;
+
+		if(s >= low && s <= high)
+			f->fir_coeff[n] = gain;
+		else
+			f->fir_coeff[n] = 0;
+	}
+
+	window_filter(f->L, f->M, f->fir_coeff, kaiser_beta);
+	return 0;
+}
+
+void filter_print(struct filter *f){
+
+	printf("#Filter windowed FIR frequency coefficients\n");
+	for(int n=0;n<f->N;n++){
+		printf("%d,%.17f,%.17f\n", n, crealf(f->fir_coeff[n]), cimagf(f->fir_coeff[n]));
+	}
 }

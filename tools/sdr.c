@@ -13,7 +13,9 @@
 //
 //     sdr [hz] [mode] [volume]
 //
-// Without arguments it opens on 7040 kHz, LSB, at a volume of 75.
+// Without arguments it opens on 7040 kHz, LSB, at a volume of 75, with a
+// passband of 300 to 3000 Hz. The passband does not follow the mode; ask for
+// r1:low and r1:high after changing it.
 //
 // The first run takes a while to start, because the transforms are timed to
 // find the fastest way of doing them. What it learns is kept in data/ and
@@ -30,14 +32,17 @@
 #define DEFAULT_HZ      "7040000"
 #define DEFAULT_MODE    "LSB"
 #define DEFAULT_VOLUME  "75"
+#define DEFAULT_LOW     "300"
+#define DEFAULT_HIGH    "3000"
 #define LINE_MAX_LENGTH 128
+#define RESPONSE_MAX    100
 
 static void ask(const char *key, const char *value) {
 	char request[LINE_MAX_LENGTH];
-	char response[SDR_RESPONSE_MAX];
+	char response[RESPONSE_MAX];
 
 	snprintf(request, sizeof(request), "%s=%s", key, value);
-	sdr_request(request, response, sizeof(response));
+	sdr_request(request, response);
 	printf("%s: %s\n", request, response);
 }
 
@@ -61,7 +66,7 @@ static void strip_the_line_end(char *line) {
 
 static void obey(void) {
 	char line[LINE_MAX_LENGTH];
-	char response[SDR_RESPONSE_MAX];
+	char response[RESPONSE_MAX];
 
 	while (fgets(line, sizeof(line), stdin) != NULL) {
 		strip_the_line_end(line);
@@ -74,14 +79,13 @@ static void obey(void) {
 			fflush(stdout);
 			continue;
 		}
-		sdr_request(line, response, sizeof(response));
+		sdr_request(line, response);
 		printf("%s\n", response);
 		fflush(stdout);
 	}
 }
 
 int main(int argc, char **argv) {
-	struct sdr_setup setup;
 	const char *hz;
 	const char *mode;
 	const char *volume;
@@ -96,22 +100,21 @@ int main(int argc, char **argv) {
 	if (argc > 3)
 		volume = argv[3];
 
-	setup.board = &board_zbitx_1;
-	setup.wisdom = "data/fftw.wis";
-	setup.wisdom_float = "data/fftwf.wis";
-	if (sdr_open(&setup) < 0) {
+	if (setup(&board_zbitx_1) < 0) {
 		printf("the radio did not open\n");
 		return 1;
 	}
-	printf("radio open on the %s\n", setup.board->name);
+	printf("radio open on the %s\n", board_zbitx_1.name);
 
-	ask("r1:mode", mode);
 	ask("r1:freq", hz);
+	ask("r1:mode", mode);
+	ask("r1:low", DEFAULT_LOW);
+	ask("r1:high", DEFAULT_HIGH);
 	ask("r1:volume", volume);
 	fflush(stdout);
 
 	obey();
 	report();
-	sdr_close();
+	teardown();
 	return 0;
 }

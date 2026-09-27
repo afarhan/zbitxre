@@ -129,7 +129,7 @@ zbitxv2 still works with the overlay line in place.
 
 ## What zbitxre keeps on the radio
 
-`data/fftw.wis` and `data/fftwf.wis`, made on the first run. They record the
+`data/sbitx_wisdom.wis` and `data/sbitx_wisdom_f.wis`, made on the first run. They record the
 fastest way this processor does the radio's transforms, so that later runs
 start at once. They belong to the machine they were made on and are not kept
 in the repository.

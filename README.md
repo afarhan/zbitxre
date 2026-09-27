@@ -17,7 +17,7 @@ over. Nothing here changes it.
 | What each pin does on a board (`hw/board.c`) | done for the zbitx's first board |
 | Clock chip | the kernel's own driver keeps it; no code here |
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
-| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; not yet compared with zbitxv2 sample for sample |
+| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
 | Controls, keyer, clients | after that |
 
@@ -81,12 +81,19 @@ To hear the sound card, a one second tone in the speaker:
 
     build/test_audio tone
 
+To show that the receiver gives the same samples as zbitxv2's, with a copy of
+zbitxv2's source at hand:
+
+    tests/against_zbitxv2/run.sh ~/zbitxv2
+
+It needs no radio. `tests/against_zbitxv2/script.c` says what is compared.
+
 ## Running the radio
 
     build/sdr 7040000 LSB 75
 
-opens the receiver on 7040 kHz, lower sideband, at a volume of 75, and then
-takes one request to a line:
+opens the receiver on 7040 kHz, lower sideband, at a volume of 75, with a
+passband of 300 to 3000 Hz, and then takes one request to a line:
 
     r1:freq=7030000
     r1:mode=CW
@@ -99,6 +106,9 @@ takes one request to a line:
 
 These are the requests of zbitxv2's `sdr_request()`, with the same names. A
 request it does not know is answered `error unknown`.
+
+As in zbitxv2, the passband does not follow the mode. After changing the
+mode, ask for `r1:low` and `r1:high` again.
 
 ## What was measured
 
@@ -135,6 +145,12 @@ The four levels, speaker, transmitter, receiver and microphone, are separate
 channels of the chip. Each was moved alone and the other three stayed put, so
 no level changes when the radio goes between receive and transmit.
 
+The receiver was run beside zbitxv2's (commit 2726c57) on the same samples:
+6500 blocks, through USB, LSB, CW, CWR and AM, the four speeds of the AGC and
+four passbands, quiet, usual and very loud. The samples for the speaker, the
+spectrum, the S meter and the oscillator's frequency were the same throughout,
+byte for byte.
+
 ## Thanks
 
 To Rafael Diniz and Rhizomatica, whose
@@ -168,7 +184,14 @@ GPL version 3 or later. See `LICENSE`.
 
 ## Conventions
 
-Plain C. Tabs. No `?:`. One statement per line, and the body of an `if` on the
+What is carried from zbitxv2 keeps its names. `dsp/sdr.c` is `sbitx.c`,
+`dsp/filter.c` is `fft_filter.c` and `dsp/vfo.c` is `vfo.c`, with the
+functions, the arrays and the variables called what they have been called for
+years: `rx_linear()`, `sound_process()`, `fft_in`, `fft_out`, `fft_m`,
+`rx_list`, `tuned_bin`. Anyone who knows the old code, or has read what was
+written about it, will find their way.
+
+The rest is for code that is new. Plain C. Tabs. No `?:`. One statement per line, and the body of an `if` on the
 line below it. A file's header comment explains how the file works; functions
 carry no comments, because their names say what they do. Headers use
 `#pragma once`. Every number that means something has a name. The code builds

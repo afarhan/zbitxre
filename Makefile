@@ -14,9 +14,9 @@ CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -Ihw -Idsp -Itests
 BUILD  = build
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h
-DSP_HEADERS = dsp/sdr.h dsp/filter.h dsp/tone.h
+DSP_HEADERS = dsp/sdr.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c
-DSP         = dsp/sdr.c dsp/filter.c dsp/tone.c
+DSP         = dsp/sdr.c dsp/filter.c dsp/vfo.c
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math
