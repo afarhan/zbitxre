@@ -4,8 +4,7 @@
 //
 // It does four things, in order:
 //
-//   1. Finds the chips. The Si5351 must answer; the DS3231 clock chip shares
-//      the bus and is reported, but the test does not depend on it.
+//   1. Finds the bus the Si5351 is on, by asking each bus in turn.
 //   2. Sets the BFO on clock 1 and the receiver's oscillator on clock 2, reads
 //      the registers back from the chip, and compares them with the rows of
 //      si5351_golden.h.
@@ -16,7 +15,8 @@
 // Both clocks are switched off at the end, which is how the driver's init
 // leaves them. Exits 0 when every check passes.
 //
-//     test_si5351 [bus]        the bus defaults to 3
+// The clock chip shares the bus but belongs to the kernel's driver, so this
+// test leaves it alone.
 
 #include <errno.h>
 #include <stdio.h>
@@ -29,9 +29,6 @@
 #include "si5351.h"
 #include "si5351_golden.h"
 
-#define DEFAULT_BUS        3
-#define SI5351_ADDRESS     0x60
-#define DS3231_ADDRESS     0x68
 #define REG_PLL_A          26
 #define REG_PLL_B          34
 #define REG_DIVIDER        42
@@ -54,12 +51,6 @@ static void expect(int ok, const char *what) {
 	}
 	printf("  FAILED  %s\n", what);
 	checks_failed++;
-}
-
-static int answers(uint8_t address) {
-	uint8_t value;
-
-	return i2c_read(address, 0, &value, 1) == 0;
 }
 
 static int group_on_chip_matches(int first_reg, const uint8_t *wanted) {
@@ -148,24 +139,15 @@ static void time_retunes(uint32_t start_hz) {
 		TIMED_RETUNES, total / TIMED_RETUNES, worst);
 }
 
-int main(int argc, char **argv) {
+int main(void) {
 	int bus;
 
-	bus = DEFAULT_BUS;
-	if (argc > 1)
-		bus = atoi(argv[1]);
-
-	if (i2c_open(bus) < 0) {
-		printf("cannot open /dev/i2c-%d: %s\n", bus, strerror(errno));
+	bus = i2c_open_bus_of(SI5351_ADDRESS);
+	if (bus < 0) {
+		printf("no bus has a Si5351 on it: %s\n", strerror(errno));
 		return 1;
 	}
-	printf("bus /dev/i2c-%d\n", bus);
-
-	expect(answers(SI5351_ADDRESS), "the Si5351 answers at 0x60");
-	if (answers(DS3231_ADDRESS))
-		printf("          the DS3231 clock chip answers at 0x68\n");
-	else
-		printf("          no DS3231 clock chip at 0x68\n");
+	printf("the Si5351 answers on /dev/i2c-%d\n", bus);
 
 	expect(si5351_init() == 0, "the chip accepts a reset and all clocks off");
 	set_and_read_back(&golden[BFO_ROW], "the BFO");

@@ -31,8 +31,6 @@
 #include "i2c.h"
 #include "si5351.h"
 
-#define SI5351_ADDRESS       0x60
-
 #define REG_STATUS           0
 #define REG_CLOCK_CONTROL    16
 #define REG_PLL_A            26

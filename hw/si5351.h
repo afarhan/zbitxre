@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#define SI5351_ADDRESS 0x60
 #define SI5351_CLOCKS 3
 #define SI5351_MIN_HZ 500000u
 #define SI5351_MAX_HZ 125000000u

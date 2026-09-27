@@ -23,12 +23,17 @@
 // naming the register and reading it.
 //
 // On the zbitx the bus is a kernel bit-banged one on the pins the Si5351 and
-// the clock chip were always wired to. This line in /boot/config.txt makes it
-// /dev/i2c-3:
+// the clock chip were always wired to. This line in /boot/config.txt makes
+// it, and hands the clock chip to the kernel's own driver:
 //
-//     dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=13,i2c_gpio_scl=6
+//     dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6
 //
-// Every function returns 0, or -1 with errno set.
+// The kernel numbers such a bus as it pleases, so the radio does not name a
+// number. i2c_open_bus_of() tries each bus in turn and keeps the first on
+// which a chip answers at the address given; the radio asks for the Si5351.
+//
+// Every function returns 0, or -1 with errno set, except i2c_open_bus_of(),
+// which returns the number of the bus it opened.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -44,6 +49,7 @@
 #define DEVICE_PATH_MAX 32
 #define NOT_OPEN (-1)
 #define REGISTER_BYTES 1
+#define HIGHEST_BUS 31
 
 static int bus_fd = NOT_OPEN;
 static int bus_number = NOT_OPEN;
@@ -131,4 +137,23 @@ int i2c_read(uint8_t address, uint8_t reg, uint8_t *values, int count) {
 	messages[1].len = count;
 	messages[1].buf = values;
 	return transfer(messages, 2);
+}
+
+int i2c_open_bus_of(uint8_t address) {
+	uint8_t answer;
+	int bus;
+
+	if (bus_fd != NOT_OPEN) {
+		errno = EBUSY;
+		return -1;
+	}
+	for (bus = 0; bus <= HIGHEST_BUS; bus++) {
+		if (i2c_open(bus) < 0)
+			continue;
+		if (i2c_read(address, 0, &answer, 1) == 0)
+			return bus;
+		i2c_close();
+	}
+	errno = ENODEV;
+	return -1;
 }
