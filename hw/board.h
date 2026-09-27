@@ -23,6 +23,8 @@ struct board {
 	int receiver_pin;
 	int ptt_pin;
 	int key_pin;
+	uint32_t bfo_hz;
+	int centre_bin;
 	struct board_filter filter[BOARD_FILTERS_MAX + 1];
 };
 

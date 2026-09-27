@@ -13,6 +13,31 @@
 // transmitter's. It has low-pass filters to follow the power amplifier, as
 // many as its designer fitted. And it has two inputs from the jacks.
 //
+// A board also fixes two numbers the radio works from. The BFO frequency is
+// where the second oscillator sits. The centre bin says how far from the BFO
+// the radio works: the wanted signal is placed that many bins below the BFO,
+// each bin being 46.875 Hz, and that is where it passes through the crystal
+// filter. Both are the board's nominal values; a radio's own calibration may
+// replace them.
+//
+// WHY THE ZBITX'S CENTRE BIN IS 600
+//
+// The middle of the band the sound card sees is bin 512, which is 24 kHz
+// from the BFO, and the radio first worked there. It does not any more, and
+// the reason is in the transmitter.
+//
+// The modulator does not suppress the BFO enough. At bin 512 the BFO lay
+// inside the crystal filter's passband, so what leaked from the modulator
+// went straight through the filter and out as a carrier.
+//
+// At bin 600 the radio works 28.125 kHz from the BFO. The BFO is then 4.125
+// kHz further from where the radio works, off the passband and on the skirt
+// of the filter, and the filter takes out what the modulator lets through.
+//
+// So this number is not a tuning convenience and must not be set back to
+// the middle. A board with a different filter or a better modulator may
+// want a different one, which is why it is the board's and not the radio's.
+//
 // To support another board, add its table here and name it in board.h. A
 // table's list of filters ends at the first one with no name.
 //
@@ -64,6 +89,8 @@ const struct board board_zbitx_1 = {
 	.receiver_pin = 15,
 	.ptt_pin = 4,
 	.key_pin = 5,
+	.bfo_hz = 40048000u,
+	.centre_bin = 600,
 	.filter = {
 		{ "D", 7, 5500000u },
 		{ "C", 8, 10500000u },

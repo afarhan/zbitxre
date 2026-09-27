@@ -17,7 +17,8 @@ over. Nothing here changes it.
 | What each pin does on a board (`hw/board.c`) | done for the zbitx's first board |
 | Clock chip | the kernel's own driver keeps it; no code here |
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
-| The DSP of `sbitx.c` as `dsp/sdr.c` | next |
+| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx; not yet compared with zbitxv2 sample for sample |
+| The transmitter and the T/R sequence | next |
 | Controls, keyer, clients | after that |
 
 ## How it relates to hermes-radio-daemon
@@ -85,6 +86,25 @@ To hear the sound card, a one second tone in the speaker:
 
     build/test_audio tone
 
+## Running the radio
+
+    build/sdr 7040000 LSB 75
+
+opens the receiver on 7040 kHz, lower sideband, at a volume of 75, and then
+takes one request to a line:
+
+    r1:freq=7030000
+    r1:mode=CW
+    r1:low=400
+    r1:high=900
+    r1:agc=FAST
+    smeter=0
+    report
+    quit
+
+These are the requests of zbitxv2's `sdr_request()`, with the same names. A
+request it does not know is answered `error unknown`.
+
 ## What was measured
 
 On a zbitx (Pi Zero 2W, kernel 5.10.63), retuning the receiver's oscillator
@@ -132,6 +152,9 @@ To Raspberry Pi Ltd, whose gpiolib gives the order in which the pin registers
 are written, and to Gordon Henderson, whose wiringPi the radio used for its
 pins until now.
 
+To Phil Karn, KA9Q, whose ka9q-radio is where the filter comes from, and
+whose method of filtering by fast convolution the receiver follows.
+
 To JJ (W9JES), whose version of the zbitx software at
 [drexjj/zbitx](https://github.com/drexjj/zbitx) gave the form of the I2C
 request used in `hw/i2c.c`.
@@ -143,6 +166,8 @@ GPL version 3 or later. See `LICENSE`.
 ## Layout
 
     hw/       the radio's hardware: buses, chips and boards
+    dsp/      the radio itself: tuning, modes, filters, the receiver
+    tools/    programs to run the radio by hand
     tests/    one program per piece, each with its own main()
 
 ## Conventions
