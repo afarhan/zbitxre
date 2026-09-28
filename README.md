@@ -19,8 +19,8 @@ over. Nothing here changes it.
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
 | The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
-| Front panel firmware (`front_panel/`) | begun: the frequency, the volume, the spectrum and its waterfall |
-| The link between the radio and the panel, over I2C | the panel's knob tunes the receiver, and the radio sends the panel the spectrum |
+| Front panel firmware (`front_panel/`) | begun: the frequency, the volume, the spectrum and its waterfall; the hash it made in the receiver is cured |
+| The link between the radio and the panel, over I2C | the panel's knob tunes the receiver, and the radio sends the panel the spectrum; it makes no noise in the receiver |
 | Controls, keyer, clients | after that |
 
 ## How it relates to hermes-radio-daemon
@@ -214,7 +214,9 @@ found 24 MHz the least irritating, because at the slower rates each burst of
 the hash lasts longer, and chose 24 MHz at 2 mA with a shallower waterfall,
 which shortens the burst further. It was 160 lines deep. At 48 lines the hash
 was gone, and at 96 it was barely to be heard above the radio's own static
-with the antenna out. Sending each slice of the
+with the antenna out. The author settled on 96. With the antenna in, on
+21.074 MHz, the waterfall showed the FT8 signals and the band's noise was
+above what was left of the hash. Sending each slice of the
 painting as one unbroken stream, in place of stopping after every row, made
 no difference that could be measured.
 

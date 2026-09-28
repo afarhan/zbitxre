@@ -49,8 +49,9 @@
 // out. A slower port measured quieter on average, but its bursts are four
 // times as long, and the ear minds the length.
 //
-// WATERFALL_ALL_ROWS is the depth being tried now. It is not to be raised
-// to fill the screen without listening again.
+// The author settled on 96 lines. With an antenna in, the band's own noise
+// is above what is left of the hash. WATERFALL_ALL_ROWS is that depth, and
+// it is not to be raised to fill the screen without listening again.
 //
 // waterfall_set_painting(false) stops the painting and leaves everything
 // else going, so that what the painting puts in the receiver can be told by
