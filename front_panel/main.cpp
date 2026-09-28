@@ -71,6 +71,7 @@ struct shown {
 
 lv_obj_t *main_screen = NULL;
 static lv_obj_t *note = NULL;
+static bool note_is_large = false;
 
 struct field main_list[] = {
 	{FIELD_FREQ, FREQ_LEFT, CONTROLS_TOP, FREQ_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
@@ -96,6 +97,8 @@ static void field_show_value(struct field *f){
 	char text[SHOWN_MAX];
 	int v = atoi(f->value);
 
+	if (f->type == FIELD_FREQ && note_is_large)
+		return;
 	if (f->type == FIELD_FREQ)
 		snprintf(text, sizeof(text), "%d.%03d.%03d", v / HZ_PER_MHZ,
 			(v % HZ_PER_MHZ) / HZ_PER_KHZ, v % HZ_PER_KHZ);
@@ -196,6 +199,23 @@ void main_radio_says(int control, int32_t value){
 void main_note(const char *text){
 	if (note)
 		lv_label_set_text(note, text);
+}
+
+//a few words in place of the frequency, as large as the frequency, for a test
+//that is to be followed by eye while it is listened to. Nothing brings the
+//frequency back
+void main_note_large(const char *text){
+	struct shown *s = shown_list;
+
+	if (text[0] == 0){
+		note_is_large = false;
+		lv_obj_set_style_text_color(s->value, lv_color_hex(COLOUR_VALUE), 0);
+		field_show_value(main_list);
+		return;
+	}
+	note_is_large = true;
+	lv_obj_set_style_text_color(s->value, lv_color_hex(COLOUR_WITH_FOCUS), 0);
+	lv_label_set_text(s->value, text);
 }
 
 void main_knob_turned(int steps){

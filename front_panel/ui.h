@@ -68,6 +68,7 @@ void main_ui();
 void main_knob_turned(int steps);
 void main_knob_pressed();
 void main_note(const char *text);
+void main_note_large(const char *text);
 
 #ifndef FIELDS_H
 #define FIELDS_H

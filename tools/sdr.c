@@ -35,6 +35,23 @@
 // each makes in the receiver can be told by ear from the rest. "quit", or
 // the end of the input, closes the radio.
 //
+// "vfo=off" and "bfo=off" switch off the radio's first oscillator and its
+// second, and "vfo=on" and "bfo=on" switch them on again. They are for
+// finding where a noise gets into the receiver. With both off, nothing from
+// the antenna or the first IF can reach the sound card, so a noise that is
+// still heard is getting in at the second IF or after it. While an
+// oscillator is off, tuning switches it on again, since tuning sets it.
+// Switching one on resets the chip's PLLs, as the radio does when it starts.
+//
+// "measure=5" measures for five seconds how strong what reaches the sound
+// card is, within 3 kHz either side of the tuned frequency, and then prints
+// it in dB. It looks at the spectrum twenty times a second and averages the
+// power in each bin. It prints the mean over the bins, and the middle one
+// of them by size, which a few steady carriers do not move. With both
+// oscillators off, what is measured is what the radio makes for itself, and
+// that is how the panel's hash is given a number. The number is for
+// comparing one setting with another; it is not referred to any standard.
+//
 //     sdr [hz] [mode] [volume]
 //
 // Without arguments it opens on 7088 kHz, LSB, at a volume of 75, with a
@@ -49,6 +66,7 @@
 // find the fastest way of doing them. What it learns is kept in data/ and
 // later runs start at once.
 
+#include <math.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,7 +77,11 @@
 #include "audio.h"
 #include "board.h"
 #include "panel.h"
+#include "si5351.h"
 #include "sdr.h"
+
+#define BFO_CLOCK       1
+#define VFO_CLOCK       2
 
 #define DEFAULT_HZ      "7088000"
 #define DEFAULT_MODE    "LSB"
@@ -83,12 +105,26 @@
 #define SPECTRUM_ADDED_DB 30
 #define SPECTRUM_HIGHEST 255
 
+// what is measured: 3 kHz either side of the tuned frequency, which is bin
+// 1536 of the spectrum, a bin being 46.875 Hz
+#define MEASURE_FOR     "measure="
+#define MEASURED_FIRST_BIN 1472
+#define MEASURED_BINS   128
+#define MEASURE_EVERY_MS 50
+#define SMALLEST_POWER  1e-30
+
 static int hz_now;
 static int volume_now;
 static int is_done;
 static int is_sending_spectrum = 1;
 static long next_spectrum_ms;
 static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
+
+static double measured_power[MEASURED_BINS];
+static int measured_times;
+static int is_measuring;
+static long next_measure_ms;
+static long measure_until_ms;
 
 static long now_ms(void) {
 	struct timespec now;
@@ -178,6 +214,62 @@ static void send_the_spectrum(long now) {
 	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
 }
 
+static void begin_to_measure(int seconds, long now) {
+	int i;
+
+	for (i = 0; i < MEASURED_BINS; i++)
+		measured_power[i] = 0;
+	measured_times = 0;
+	next_measure_ms = now;
+	measure_until_ms = now + seconds * MS_PER_SECOND;
+	is_measuring = 1;
+}
+
+static int by_size(const void *a, const void *b) {
+	double first = *(const double *)a;
+	double second = *(const double *)b;
+
+	if (first < second)
+		return -1;
+	if (first > second)
+		return 1;
+	return 0;
+}
+
+static void say_what_was_measured(void) {
+	double mean = 0;
+	int i;
+
+	for (i = 0; i < MEASURED_BINS; i++) {
+		measured_power[i] /= measured_times;
+		mean += measured_power[i];
+	}
+	mean /= MEASURED_BINS;
+	qsort(measured_power, MEASURED_BINS, sizeof(double), by_size);
+	printf("measured: mean %.1f dB, middle %.1f dB, over %d bins and %d looks\n",
+		10 * log10(mean + SMALLEST_POWER),
+		10 * log10(measured_power[MEASURED_BINS / 2] + SMALLEST_POWER),
+		MEASURED_BINS, measured_times);
+	fflush(stdout);
+}
+
+static void measure(long now) {
+	int i;
+
+	if (!is_measuring || now < next_measure_ms)
+		return;
+	if (now >= measure_until_ms) {
+		is_measuring = 0;
+		say_what_was_measured();
+		return;
+	}
+	next_measure_ms = now + MEASURE_EVERY_MS;
+	for (i = 0; i < MEASURED_BINS; i++)
+		measured_power[i] += (double)fft_bins[MEASURED_FIRST_BIN + i]
+			* fft_bins[MEASURED_FIRST_BIN + i];
+	measured_times++;
+}
+
 static void tell_the_panel(void) {
 	panel_set(LINK_FREQ, hz_now);
 	panel_set(LINK_VOLUME, volume_now);
@@ -249,6 +341,33 @@ static void obey_a_line(char *line) {
 		printf("ok\n");
 		return;
 	}
+	if (begins_with(line, MEASURE_FOR)) {
+		begin_to_measure(atoi(line + strlen(MEASURE_FOR)), now_ms());
+		printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "vfo=off") == 0) {
+		si5351_clock_off(VFO_CLOCK);
+		printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "vfo=on") == 0) {
+		si5351_set_freq(VFO_CLOCK, oscillator_frequency());
+		si5351_reset_plls();
+		printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "bfo=off") == 0) {
+		si5351_clock_off(BFO_CLOCK);
+		printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "bfo=on") == 0) {
+		si5351_set_freq(BFO_CLOCK, bfo_freq);
+		si5351_reset_plls();
+		printf("ok\n");
+		return;
+	}
 	sdr_request(line, response);
 	printf("%s\n", response);
 	note_what_the_terminal_changed(line);
@@ -284,6 +403,7 @@ static void obey(void) {
 	terminal.events = POLLIN;
 	while (!is_done) {
 		send_the_spectrum(now_ms());
+		measure(now_ms());
 		panel_poll(now_ms(), on_panel_took);
 		terminal.revents = 0;
 		if (poll(&terminal, 1, WAIT_ON_TERMINAL_MS) <= 0)

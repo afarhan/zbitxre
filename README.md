@@ -150,6 +150,11 @@ request to a line from the terminal:
     panel=on
     spectrum=off
     spectrum=on
+    vfo=off
+    vfo=on
+    bfo=off
+    bfo=on
+    measure=20
     quit
 
 These are the requests of zbitxv2's `sdr_request()`, with the same names. A
@@ -187,6 +192,28 @@ painting while the radio went on sending the spectrum. So it is the painting
 of the display that makes it, and not the I2C bus. Driving the display's pins
 at 2 mA with slow edges was some 3 dB quieter than 12 mA with sharp ones, and
 the panel now uses 2 mA. Painting fewer rows was quieter still.
+
+The radio can give the hash a number. With both oscillators off nothing
+reaches the sound card but what the radio makes for itself, and `measure=20`
+to the radio program averages that for 20 seconds, within 3 kHz of the tuned
+frequency. `tools/panel_hash.py` runs through a list of settings and measures
+each. On a zbitx, painting all of the waterfall four times a second:
+
+| The display's pins | The display's port | Rise over the quiet radio | The hash, against the radio's own noise |
+|---|---|---|---|
+| not painting | | none | |
+| 2 mA, slow edges | 24 MHz | 0.2 dB | 13 dB below |
+| 2 mA, slow edges | 12 MHz | 0.1 dB | 16 dB below |
+| 2 mA, slow edges | 6 MHz | too small to measure | |
+| 12 mA, sharp edges | 24 MHz | 0.5 dB | 9 dB below |
+| 12 mA, sharp edges | 12 MHz | 0.3 dB | 11 dB below |
+| 12 mA, sharp edges | 6 MHz | 0.1 dB | 16 dB below |
+
+Readings of the quiet radio agree with each other within 0.1 dB. The link
+itself, polling and sending the spectrum, adds nothing that can be measured.
+Switching both oscillators off does not change the hash, and turning the
+sound card's input gain to nothing makes it go: it gets in on the line from
+the second IF to the sound card, around 28 kHz.
 
 More letters on the panel's serial port, for finding what quietens it: `2`,
 `4` and `9` drive the display's pins at 2 mA, 4 mA, and 12 mA with sharp

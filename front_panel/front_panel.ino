@@ -94,6 +94,9 @@
 #define RATE_FULL_HZ 37500000u
 #define RATE_HALF_HZ 12000000u
 #define RATE_QUARTER_HZ 6000000u
+#define A_NOTE_FOLLOWS '#'
+#define NOTE_MAX 24
+#define NOTE_WAITED_FOR_MS 200
 
 void setup() {
   Serial.begin();
@@ -106,7 +109,22 @@ void setup() {
   i2c_link_init();
 }
 
+//a line that begins with '#' is a note: the rest of it, up to the end of
+//the line, is shown in place of the frequency, as large. An empty note
+//brings the frequency back
+void take_a_note() {
+  char text[NOTE_MAX];
+  size_t count;
+
+  Serial.setTimeout(NOTE_WAITED_FOR_MS);
+  count = Serial.readBytesUntil('\n', text, sizeof(text) - 1);
+  text[count] = 0;
+  main_note_large(text);
+}
+
 void on_serial(int c) {
+  if (c == A_NOTE_FOLLOWS)
+    take_a_note();
   if (c == ASK_ABOUT_LINK) {
     i2c_link_report();
     waterfall_report();
