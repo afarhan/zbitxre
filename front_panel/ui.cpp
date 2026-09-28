@@ -4,6 +4,7 @@
 #include "ili9488.h"
 #include "touch.h"
 #include "testcard.h"
+#include "waterfall.h"
 #include <EEPROM.h>
 #include "ui.h"
 
@@ -176,7 +177,7 @@ void ui_init(){
   block_read();
   ili_init();
   touch_init();
-  Serial.printf("the display's port runs at %u Hz\n", ili_spi_hz);
+  Serial.printf("the display's port runs at %u Hz, from a clock of %u Hz\n", ili_spi_hz, ili_peri_hz);
   testcard_show();
     
   if (touch_read(&x, &y)){
@@ -225,6 +226,7 @@ void ui_screen_to_serial(){
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(NULL);
   copying_to_serial = false;
+  waterfall_to_serial();
   Serial.printf("END\n");
   Serial.flush();
 }

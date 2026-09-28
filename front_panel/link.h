@@ -30,15 +30,24 @@ extern "C" {
 #define LINK_HELLO 0
 #define LINK_FREQ 1
 #define LINK_VOLUME 2
+#define LINK_SPECTRUM 3
+
+// one line of the spectrum: a byte for each point, left to right on the
+// screen, the lowest frequency first. A byte is the strength in dB above
+// the bottom of the display.
+#define LINK_SPECTRUM_POINTS 240
+#define LINK_COUNTED_MAX 250
 
 #define LINK_NOTHING_NEW 0
 #define LINK_TOOK_RECORDS 1
 #define LINK_SPOILED (-1)
 
 typedef void (*link_took_fn)(int control, int32_t value);
+typedef void (*link_took_bytes_fn)(int control, const uint8_t *bytes, int count);
 
 struct link_control {
 	int32_t value;
+	const uint8_t *counted;
 	uint8_t bytes;
 	uint8_t is_waiting;
 	uint8_t went_under;
@@ -60,11 +69,13 @@ uint8_t link_crc(const uint8_t *bytes, int count);
 
 void link_start(struct link_end *end, int room);
 void link_offer(struct link_end *end, int control, int32_t value);
+void link_offer_bytes(struct link_end *end, int control, const uint8_t *bytes,
+	int count);
 int link_has_something_to_say(const struct link_end *end);
 int link_make_frame(struct link_end *end, uint8_t *frame);
 int link_make_answer(struct link_end *end, uint8_t *answer);
 int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
-	link_took_fn took);
+	link_took_fn took, link_took_bytes_fn took_bytes);
 
 #ifdef __cplusplus
 }

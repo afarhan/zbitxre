@@ -17,14 +17,20 @@
 // Every transfer on this bus is heard in the receiver, the panel and its
 // cable being where they are. So the radio polls no more than it must.
 //
-//   While something has passed in the last two seconds, every 20 ms. The
-//   knob is being turned, and the radio has to follow it.
+//   While the panel has sent something in the last two seconds, every
+//   20 ms. The knob is being turned, and the radio has to follow it. What
+//   the radio sends does not count: the spectrum goes out all the time,
+//   and it must not keep the radio polling fast.
 //
 //   Otherwise every 100 ms. A poll with nothing to say is four bytes on
 //   the bus, so an idle link is on the bus for 4 ms in every second.
 //
 //   When the panel has not answered ten times running it is taken to be
 //   absent, and it is looked for once a second.
+//
+// What the radio has to say goes out at the next poll, so a line of the
+// spectrum may wait 100 ms. The bytes given to panel_set_bytes() are not
+// copied and must be left alone until then.
 //
 // panel_set_polling(0) stops the polling altogether. It is there so that
 // the hash of the link can be told from everything else, by ear.
@@ -70,6 +76,10 @@ void panel_set(int control, int32_t value) {
 	link_offer(&radio_end, control, value);
 }
 
+void panel_set_bytes(int control, const uint8_t *bytes, int count) {
+	link_offer_bytes(&radio_end, control, bytes, count);
+}
+
 void panel_set_polling(int on) {
 	is_polling = on;
 }
@@ -95,7 +105,7 @@ static int read_the_answer(link_took_fn took) {
 	}
 	counted.answers++;
 	misses = 0;
-	return link_take_frame(&radio_end, answer + 1, answer[0], took);
+	return link_take_frame(&radio_end, answer + 1, answer[0], took, NULL);
 }
 
 static void say_what_there_is(void) {
@@ -117,10 +127,8 @@ int panel_poll(long now_ms, link_took_fn took) {
 	counted.polls++;
 	if (read_the_answer(took) == LINK_TOOK_RECORDS)
 		took_records = 1;
-	if (misses == 0 && link_has_something_to_say(&radio_end)) {
+	if (misses == 0 && link_has_something_to_say(&radio_end))
 		say_what_there_is();
-		busy_until_ms = now_ms + BUSY_LASTS_MS;
-	}
 	if (took_records)
 		busy_until_ms = now_ms + BUSY_LASTS_MS;
 

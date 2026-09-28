@@ -42,8 +42,14 @@
 //     value      low byte first
 //
 // The size is in the record, so a control that is not known can be stepped
-// over. Counted values are for text and the spectrum. Nothing here makes one
-// yet; one that arrives is stepped over.
+// over.
+//
+// A counted value is for what does not fit in four bytes. The spectrum is
+// one: a line of it is 240 bytes. A counted value is said once and not
+// again. If its frame is lost, it is lost, and that is right for a
+// spectrum: by the time it could be sent again there is a newer one. The
+// bytes offered are not copied. They must stay as they are until the frame
+// has been made, which is at the next poll.
 //
 // NUMBERS
 //
@@ -143,12 +149,8 @@ static int bytes_of_size_code(int code) {
 }
 
 void link_start(struct link_end *end, int room) {
-	int i;
-
 	memset(end, 0, sizeof(*end));
 	end->room = room;
-	for (i = 0; i < LINK_CONTROLS; i++)
-		end->control[i].bytes = bytes_of(i);
 	link_offer(end, LINK_HELLO, LINK_VERSION);
 }
 
@@ -159,6 +161,23 @@ void link_offer(struct link_end *end, int control, int32_t value) {
 		return;
 	c = &end->control[control];
 	c->value = value;
+	c->counted = NULL;
+	c->bytes = bytes_of(control);
+	c->is_waiting = 1;
+	c->went_under = 0;
+}
+
+void link_offer_bytes(struct link_end *end, int control, const uint8_t *bytes,
+		int count) {
+	struct link_control *c;
+
+	if (control < 0 || control >= LINK_CONTROLS)
+		return;
+	if (bytes == NULL || count < 0 || count > LINK_COUNTED_MAX)
+		return;
+	c = &end->control[control];
+	c->counted = bytes;
+	c->bytes = (uint8_t)count;
 	c->is_waiting = 1;
 	c->went_under = 0;
 }
@@ -191,10 +210,22 @@ static uint8_t number_after(uint8_t number) {
 	return number + 1;
 }
 
+static int length_to_put(const struct link_control *c) {
+	if (c->counted != NULL)
+		return 2 + c->bytes;
+	return 1 + c->bytes;
+}
+
 static int put_record(uint8_t *at, int control, const struct link_control *c) {
 	uint32_t value = (uint32_t)c->value;
 	int i;
 
+	if (c->counted != NULL) {
+		at[0] = (uint8_t)((SIZE_COUNTED << SIZE_SHIFT) | control);
+		at[1] = c->bytes;
+		memcpy(at + 2, c->counted, c->bytes);
+		return 2 + c->bytes;
+	}
 	at[0] = (uint8_t)((size_code_of(c->bytes) << SIZE_SHIFT) | control);
 	for (i = 0; i < c->bytes; i++)
 		at[1 + i] = (uint8_t)(value >> (BITS_IN_A_BYTE * i));
@@ -225,10 +256,12 @@ int link_make_frame(struct link_end *end, uint8_t *frame) {
 		c = &end->control[i];
 		if (!goes_in_this_frame(c, end->number, is_new_frame))
 			continue;
-		if (used + 1 + c->bytes + CHECK_BYTES > end->room)
+		if (used + length_to_put(c) + CHECK_BYTES > end->room)
 			continue;
 		used += put_record(frame + used, i, c);
 		c->went_under = end->number;
+		if (c->counted != NULL)
+			c->is_waiting = 0;
 	}
 
 	frame[0] = (uint8_t)((end->number << NUMBER_SHIFT) | end->taken);
@@ -288,23 +321,27 @@ static int records_are_whole(const uint8_t *records, int count) {
 	return at == count;
 }
 
-static void take_records(const uint8_t *records, int count, link_took_fn took) {
+static void take_records(const uint8_t *records, int count, link_took_fn took,
+		link_took_bytes_fn took_bytes) {
 	int at = 0;
 	int length;
-	int code;
+	int control;
+	int is_counted;
 
 	while (at < count) {
 		length = length_of_record(records + at, count - at);
-		code = records[at] >> SIZE_SHIFT;
-		if (code != SIZE_COUNTED && took != NULL)
-			took(records[at] & CONTROL_MASK,
-				value_at(records + at + 1, length - 1));
+		control = records[at] & CONTROL_MASK;
+		is_counted = (records[at] >> SIZE_SHIFT) == SIZE_COUNTED;
+		if (is_counted && took_bytes != NULL)
+			took_bytes(control, records + at + 2, length - 2);
+		if (!is_counted && took != NULL)
+			took(control, value_at(records + at + 1, length - 1));
 		at += length;
 	}
 }
 
 int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
-		link_took_fn took) {
+		link_took_fn took, link_took_bytes_fn took_bytes) {
 	const uint8_t *records = frame + NUMBERS_BYTES;
 	int records_count = count - NUMBERS_BYTES - CHECK_BYTES;
 	uint8_t number;
@@ -332,6 +369,6 @@ int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
 	end->taken = number;
 	end->owes_a_word = 1;
 	end->frames_taken++;
-	take_records(records, records_count, took);
+	take_records(records, records_count, took, took_bytes);
 	return LINK_TOOK_RECORDS;
 }

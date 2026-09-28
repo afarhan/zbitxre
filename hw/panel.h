@@ -24,6 +24,7 @@ struct panel_report {
 
 void panel_open(void);
 void panel_set(int control, int32_t value);
+void panel_set_bytes(int control, const uint8_t *bytes, int count);
 void panel_set_polling(int on);
 int panel_poll(long now_ms, link_took_fn took);
 void panel_get_report(struct panel_report *report);

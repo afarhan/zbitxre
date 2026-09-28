@@ -25,7 +25,8 @@
 //
 //   What the radio said is only noted in the interrupt. It is shown on the
 //   screen from loop(), by i2c_link_slice(), because the screen is not for
-//   an interrupt to draw on.
+//   an interrupt to draw on. A line of the spectrum is handed to the
+//   waterfall, which keeps it until loop() comes to paint it.
 //
 // loop() and the interrupt both use the link's book-keeping, so loop() holds
 // interrupts off while it does. That is for the time it takes to offer a
@@ -34,6 +35,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "link.h"
+#include "waterfall.h"
 #include "ui.h"
 
 #define LINK_SDA 6
@@ -71,6 +73,11 @@ static void on_took(int control, int32_t value){
 	said_count = said_count + 1;
 }
 
+static void on_took_bytes(int control, const uint8_t *bytes, int count){
+	if (control == LINK_SPECTRUM && count == WATERFALL_POINTS)
+		waterfall_update(bytes);
+}
+
 static void on_request(){
 	times_read = times_read + 1;
 	Wire1.write(ready, ready_count);
@@ -88,7 +95,7 @@ static void on_receive(int count){
 			frame[kept++] = (uint8_t)b;
 		count--;
 	}
-	link_take_frame(&panel_end, frame, kept, on_took);
+	link_take_frame(&panel_end, frame, kept, on_took, on_took_bytes);
 	make_the_answer_ready();
 }
 

@@ -20,6 +20,12 @@
 // The pressure is read again and again until it stops rising, because a
 // finger arriving is still pressing harder each time.
 //
+// Most of the time nothing is touching the screen, and the panel asks thirty
+// times a second. So touch_read() first reads the pressure once, and if
+// there is none it says so at once. Believing a touch takes five tries and
+// some 15 ms, which is time and traffic on the port not to be spent on
+// nothing.
+//
 // A reading is a number from 0 to 4095 along each edge of the glass, and the
 // glass is not lined up with the display. The calibration says which reading
 // is across and which is down, where each begins, how far it runs, and
@@ -220,6 +226,8 @@ bool touch_read(uint16_t *x, uint16_t *y) {
 	int good = 0;
 	int i;
 
+	if (read_pressure() <= PRESSED_HARDER_THAN)
+		return false;
 	for (i = 0; i < TRIES; i++) {
 		if (read_if_pressed(&across, &down, PRESSED_HARDER_THAN))
 			good++;

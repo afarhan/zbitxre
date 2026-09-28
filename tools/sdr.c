@@ -20,11 +20,20 @@
 // and whenever they are changed from the terminal, so that the panel's dial
 // shows what the radio is tuned to.
 //
+// Four times a second it sends the panel a line of the spectrum, for the
+// panel's graph and waterfall. The line is 240 points across 25 kHz, the
+// tuned frequency in the middle, as zbitxv2 shows it: each point is the
+// strongest of the two or three bins it stands for, in dB, with 30 added so
+// that the noise sits a little above the bottom. spectrum_plot runs from
+// the highest frequency down, so the line is turned round to have the
+// lowest frequency first.
+//
 // Some words are the program's own. "report" prints how the sound card and
 // the link have been doing. "panel=off" stops the radio polling the panel
-// and "panel=on" starts it again, so that the noise the link makes in the
-// receiver can be told by ear from the rest. "quit", or the end of the
-// input, closes the radio.
+// and "panel=on" starts it again. "spectrum=off" stops the spectrum being
+// sent and "spectrum=on" starts it again. They are there so that the noise
+// each makes in the receiver can be told by ear from the rest. "quit", or
+// the end of the input, closes the radio.
 //
 //     sdr [hz] [mode] [volume]
 //
@@ -68,9 +77,18 @@
 #define FREQ_IS         "r1:freq="
 #define VOLUME_IS       "r1:volume="
 
+#define SPECTRUM_EVERY_MS 250
+#define SPECTRUM_FIRST_BIN 1269
+#define SPECTRUM_BINS   534
+#define SPECTRUM_ADDED_DB 30
+#define SPECTRUM_HIGHEST 255
+
 static int hz_now;
 static int volume_now;
 static int is_done;
+static int is_sending_spectrum = 1;
+static long next_spectrum_ms;
+static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
 
 static long now_ms(void) {
 	struct timespec now;
@@ -119,6 +137,45 @@ static void report(void) {
 		printf("the panel is not being polled\n");
 	else if (!link.is_present)
 		printf("the panel does not answer\n");
+}
+
+static int strongest_of(int first_bin, int after_last_bin) {
+	int strongest = spectrum_plot[first_bin];
+	int bin;
+
+	for (bin = first_bin + 1; bin < after_last_bin; bin++) {
+		if (spectrum_plot[bin] > strongest)
+			strongest = spectrum_plot[bin];
+	}
+	return strongest;
+}
+
+static void make_the_spectrum_line(void) {
+	int first_bin;
+	int after_last_bin;
+	int level;
+	int point;
+
+	for (point = 0; point < LINK_SPECTRUM_POINTS; point++) {
+		first_bin = SPECTRUM_FIRST_BIN
+			+ (point * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
+		after_last_bin = SPECTRUM_FIRST_BIN
+			+ ((point + 1) * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
+		level = strongest_of(first_bin, after_last_bin) + SPECTRUM_ADDED_DB;
+		if (level < 0)
+			level = 0;
+		if (level > SPECTRUM_HIGHEST)
+			level = SPECTRUM_HIGHEST;
+		spectrum_line[LINK_SPECTRUM_POINTS - 1 - point] = (uint8_t)level;
+	}
+}
+
+static void send_the_spectrum(long now) {
+	if (!is_sending_spectrum || now < next_spectrum_ms)
+		return;
+	next_spectrum_ms = now + SPECTRUM_EVERY_MS;
+	make_the_spectrum_line();
+	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
 }
 
 static void tell_the_panel(void) {
@@ -182,6 +239,16 @@ static void obey_a_line(char *line) {
 		printf("ok\n");
 		return;
 	}
+	if (strcmp(line, "spectrum=off") == 0) {
+		is_sending_spectrum = 0;
+		printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "spectrum=on") == 0) {
+		is_sending_spectrum = 1;
+		printf("ok\n");
+		return;
+	}
 	sdr_request(line, response);
 	printf("%s\n", response);
 	note_what_the_terminal_changed(line);
@@ -216,6 +283,7 @@ static void obey(void) {
 	terminal.fd = TERMINAL;
 	terminal.events = POLLIN;
 	while (!is_done) {
+		send_the_spectrum(now_ms());
 		panel_poll(now_ms(), on_panel_took);
 		terminal.revents = 0;
 		if (poll(&terminal, 1, WAIT_ON_TERMINAL_MS) <= 0)

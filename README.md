@@ -19,8 +19,8 @@ over. Nothing here changes it.
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
 | The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
-| Front panel firmware (`front_panel/`) | begun: two controls, the frequency and the volume |
-| The link between the radio and the panel, over I2C | the panel's knob tunes the receiver |
+| Front panel firmware (`front_panel/`) | begun: the frequency, the volume, the spectrum and its waterfall |
+| The link between the radio and the panel, over I2C | the panel's knob tunes the receiver, and the radio sends the panel the spectrum |
 | Controls, keyer, clients | after that |
 
 ## How it relates to hermes-radio-daemon
@@ -148,6 +148,8 @@ request to a line from the terminal:
     report
     panel=off
     panel=on
+    spectrum=off
+    spectrum=on
     quit
 
 These are the requests of zbitxv2's `sdr_request()`, with the same names. A
@@ -165,8 +167,18 @@ bring a new frequency. `front_panel/link.c` says how, and both the radio and
 the panel's firmware are built with that one file. `hw/panel.c` says when the
 radio polls.
 
-`panel=off` stops the radio polling the panel and `panel=on` starts it again,
-so that the noise of the link can be told by ear from everything else.
+Four times a second the radio sends the panel a line of the spectrum, 240
+points across 25 kHz, which the panel shows as a graph and a waterfall. A
+line is 245 bytes on the bus, about 22 ms.
+
+Three things can be stopped and started one at a time, so that the noise each
+makes in the receiver can be told by ear from the rest:
+
+| What | Stopped by | Started by |
+|---|---|---|
+| the radio polling the panel | `panel=off` to the radio | `panel=on` |
+| the radio sending the spectrum | `spectrum=off` to the radio | `spectrum=on` |
+| the panel painting the waterfall | the letter `n` on the panel's serial port | the letter `w` |
 
 To try the link without the radio running:
 

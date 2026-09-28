@@ -17,8 +17,8 @@
 // it costs in bytes; many changes between two polls going as one; an answer
 // lost; an answer spoiled; the radio's word lost; each end restarted while
 // the other carries on; a value going from the radio to the panel; more
-// waiting than one answer holds; and frames made by hand that are wrong or
-// hold what this version does not know.
+// waiting than one answer holds; a line of the spectrum; and frames made by
+// hand that are wrong or hold what this version does not know.
 //
 // Exits 0 when every check passes.
 
@@ -51,6 +51,11 @@ static struct took radio_took[TOOK_MAX];
 static struct took panel_took[TOOK_MAX];
 static int radio_took_count;
 static int panel_took_count;
+
+static uint8_t line_taken[LINK_COUNTED_MAX];
+static int lines_taken;
+static int line_control;
+static int line_count;
 
 static int lose_the_answer;
 static int lose_the_word;
@@ -89,9 +94,18 @@ static void on_panel_took(int control, int32_t value) {
 	panel_took_count++;
 }
 
+static void on_panel_took_bytes(int control, const uint8_t *bytes, int count) {
+	lines_taken++;
+	line_control = control;
+	line_count = count;
+	if (count <= LINK_COUNTED_MAX)
+		memcpy(line_taken, bytes, count);
+}
+
 static void forget_what_was_taken(void) {
 	radio_took_count = 0;
 	panel_took_count = 0;
+	lines_taken = 0;
 }
 
 static void one_turn(void) {
@@ -106,7 +120,7 @@ static void one_turn(void) {
 	if (spoil_the_answer)
 		answer[count / 2] ^= 0x10;
 	if (!lose_the_answer)
-		link_take_frame(&radio, answer + 1, answer[0], on_radio_took);
+		link_take_frame(&radio, answer + 1, answer[0], on_radio_took, NULL);
 
 	last_word_bytes = 0;
 	if (!link_has_something_to_say(&radio))
@@ -114,7 +128,7 @@ static void one_turn(void) {
 	count = link_make_frame(&radio, word);
 	last_word_bytes = count;
 	if (!lose_the_word)
-		link_take_frame(&panel, word, count, on_panel_took);
+		link_take_frame(&panel, word, count, on_panel_took, on_panel_took_bytes);
 }
 
 static void turns(int count) {
@@ -318,6 +332,36 @@ static void check_more_than_fits(void) {
 		"twenty controls changed at once all arrive, over several polls");
 }
 
+static void check_a_spectrum(void) {
+	static uint8_t line[LINK_SPECTRUM_POINTS];
+	int i;
+
+	for (i = 0; i < LINK_SPECTRUM_POINTS; i++)
+		line[i] = (uint8_t)(i / 3);
+
+	start_both();
+	forget_what_was_taken();
+	link_offer_bytes(&radio, LINK_SPECTRUM, line, sizeof(line));
+	link_offer(&radio, LINK_FREQ, 7088000);
+	turns(3);
+	expect(lines_taken == 1 && line_control == LINK_SPECTRUM
+		&& line_count == LINK_SPECTRUM_POINTS
+		&& memcmp(line, line_taken, sizeof(line)) == 0,
+		"a line of the spectrum reaches the panel whole, once");
+	expect(panel_took_count == 1 && panel_took[0].value == 7088000,
+		"a frequency in the same frame arrives with it");
+	expect(last_word_bytes == 0, "and then the radio has no more to say");
+
+	forget_what_was_taken();
+	link_offer_bytes(&radio, LINK_SPECTRUM, line, sizeof(line));
+	lose_the_word = 1;
+	one_turn();
+	lose_the_word = 0;
+	turns(3);
+	expect(lines_taken == 0,
+		"a line that is lost is not sent again");
+}
+
 static int put_check(uint8_t *frame, int count) {
 	frame[count] = link_crc(frame, count);
 	return count + 1;
@@ -332,17 +376,17 @@ static void check_frames_made_by_hand(void) {
 	start_both();
 	forget_what_was_taken();
 	count = put_check(counted, sizeof(counted) - 1);
-	expect(link_take_frame(&radio, counted, count, on_radio_took) == LINK_TOOK_RECORDS
+	expect(link_take_frame(&radio, counted, count, on_radio_took, NULL) == LINK_TOOK_RECORDS
 		&& radio_took_only(LINK_VOLUME, 33),
 		"a counted record is stepped over and the record after it is taken");
 
 	forget_what_was_taken();
 	count = put_check(runs_past, sizeof(runs_past) - 1);
-	expect(link_take_frame(&radio, runs_past, count, on_radio_took) == LINK_SPOILED
+	expect(link_take_frame(&radio, runs_past, count, on_radio_took, NULL) == LINK_SPOILED
 		&& radio_took_count == 0,
 		"a record that runs past the end of its frame spoils the frame");
-	expect(link_take_frame(&radio, too_short, sizeof(too_short), on_radio_took)
-		== LINK_SPOILED, "a frame of one byte is spoiled");
+	expect(link_take_frame(&radio, too_short, sizeof(too_short), on_radio_took,
+		NULL) == LINK_SPOILED, "a frame of one byte is spoiled");
 }
 
 int main(void) {
@@ -357,6 +401,7 @@ int main(void) {
 	check_the_radio_restarting();
 	check_the_radio_setting();
 	check_more_than_fits();
+	check_a_spectrum();
 	check_frames_made_by_hand();
 
 	if (checks_failed > 0) {
