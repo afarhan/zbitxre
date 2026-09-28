@@ -23,6 +23,11 @@
 #define PULLUPS_SETTLE_MS 10
 #define KNOB_COUNTS_IGNORED 1
 
+//the pins to the display are driven as gently as they can be. Painting the
+//display puts a hash in the receiver, and at 2 mA with slow edges it was
+//heard some 3 dB lower than at 12 mA with sharp ones
+#define DISPLAY_DRIVE_MA 2
+
 #define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 10 * (LV_COLOR_DEPTH / 8))
 
 void ui_init();
@@ -62,6 +67,7 @@ struct saved {
 void main_ui();
 void main_knob_turned(int steps);
 void main_knob_pressed();
+void main_note(const char *text);
 
 #ifndef FIELDS_H
 #define FIELDS_H

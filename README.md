@@ -180,6 +180,20 @@ makes in the receiver can be told by ear from the rest:
 | the radio sending the spectrum | `spectrum=off` to the radio | `spectrum=on` |
 | the panel painting the waterfall | the letter `n` on the panel's serial port | the letter `w` |
 
+What was heard on a zbitx, the antenna unplugged so that the AGC brought the
+radio's own noise up: no hash from the link alone, with the knob being
+turned. The hash came with the waterfall, and it went when the panel stopped
+painting while the radio went on sending the spectrum. So it is the painting
+of the display that makes it, and not the I2C bus. Driving the display's pins
+at 2 mA with slow edges was some 3 dB quieter than 12 mA with sharp ones, and
+the panel now uses 2 mA. Painting fewer rows was quieter still.
+
+More letters on the panel's serial port, for finding what quietens it: `2`,
+`4` and `9` drive the display's pins at 2 mA, 4 mA, and 12 mA with sharp
+edges; `a`, `b` and `c` paint all of the waterfall, 40 rows of it, or the
+graph alone; `F`, `H` and `Q` run the display's port at its full rate, 12 MHz
+and 6 MHz. The panel shows which is chosen.
+
 To try the link without the radio running:
 
     build/test_panel 20

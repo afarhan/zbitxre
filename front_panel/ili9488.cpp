@@ -11,6 +11,10 @@
 //   4. The display's chip select is not held low for ever. ili_release()
 //      lets go of it so that touch.cpp can talk to the touch controller, and
 //      ili_select() takes it back.
+//   5. ili_set_drive() and ili_set_rate() change how hard the pins that go
+//      to the display are driven, how sharp their edges are, and how fast
+//      the port runs. Painting the display puts a hash in the receiver, and
+//      these are there to find what quietens it.
 //
 // The Pico W of the zbitx has a peripheral clock of 125 MHz, not 150, so the
 // rates the port can run at are 62.5, 31.25 and 20.8 MHz. Asking for 37.5
@@ -132,6 +136,8 @@ void ili_init(void) {
 
 // ---- ZBITX: sharing the port with the touch controller ----------------------
 
+static uint32_t rate_wanted = SPI_HZ;
+
 void ili_release(void) {
 	spi_wait_idle();
 	gpio_put(PIN_CS, 1);
@@ -139,8 +145,36 @@ void ili_release(void) {
 
 void ili_select(void) {
 	spi_wait_idle();
-	spi_set_baudrate(SPI_PORT, SPI_HZ);
+	ili_spi_hz = spi_set_baudrate(SPI_PORT, rate_wanted);
 	gpio_put(PIN_CS, 0);
+}
+
+// ---- ZBITX: how the pins to the display are driven --------------------------
+
+void ili_set_drive(int milliamps, bool sharp_edges) {
+	static const uint pins[] = { PIN_SCK, PIN_MOSI, PIN_DC, PIN_CS };
+	enum gpio_drive_strength strength = GPIO_DRIVE_STRENGTH_4MA;
+	enum gpio_slew_rate slew = GPIO_SLEW_RATE_SLOW;
+
+	if (milliamps <= 2)
+		strength = GPIO_DRIVE_STRENGTH_2MA;
+	else if (milliamps >= 12)
+		strength = GPIO_DRIVE_STRENGTH_12MA;
+	else if (milliamps >= 8)
+		strength = GPIO_DRIVE_STRENGTH_8MA;
+	if (sharp_edges)
+		slew = GPIO_SLEW_RATE_FAST;
+
+	for (unsigned i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+		gpio_set_drive_strength(pins[i], strength);
+		gpio_set_slew_rate(pins[i], slew);
+	}
+}
+
+void ili_set_rate(uint32_t hz) {
+	rate_wanted = hz;
+	spi_wait_idle();
+	ili_spi_hz = spi_set_baudrate(SPI_PORT, rate_wanted);
 }
 
 // ---- address window ---------------------------------------------------------

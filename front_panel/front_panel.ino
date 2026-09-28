@@ -45,6 +45,17 @@
 // stops the waterfall being painted and 'w' starts it again, so that the
 // hash of the painting can be told by ear from the rest.
 //
+// Painting the display is what puts the hash in the receiver. To find what
+// quietens it, '2' and '4' drive the display's pins at 2 and 4 mA with slow
+// edges, the Pico's own choice being 4, and '9' drives them at 12 mA with
+// sharp edges. 'F', 'H' and 'Q' run the display's port at its full rate, at
+// 12 MHz and at 6 MHz. 'a' paints the graph and all of the waterfall for
+// each new line, 'b' the graph and 40 rows of it, 'c' the graph alone. What
+// is chosen is shown in the corner of the frequency's box.
+//
+// What was heard: 2 mA with slow edges is some 3 dB quieter than 12 mA with
+// sharp ones, so the panel starts with 2 mA.
+//
 // WHICH PICO CORE
 //
 // The sketch this comes from notes that it worked only with version 4.7 of
@@ -56,6 +67,7 @@
 #include <WiFi.h>
 #include <EEPROM.h>
 #include <lvgl.h>
+#include "ili9488.h"
 #include "waterfall.h"
 #include "ui.h"
 
@@ -69,6 +81,19 @@
 #define ASK_ABOUT_LINK 'i'
 #define ASK_TO_PAINT 'w'
 #define ASK_NOT_TO_PAINT 'n'
+#define DRIVE_2MA '2'
+#define DRIVE_4MA '4'
+#define DRIVE_12MA_SHARP '9'
+#define PAINT_ALL_ROWS 'a'
+#define PAINT_SOME_ROWS 'b'
+#define PAINT_GRAPH_ONLY 'c'
+#define SOME_ROWS 40
+#define RATE_FULL 'F'
+#define RATE_HALF 'H'
+#define RATE_QUARTER 'Q'
+#define RATE_FULL_HZ 37500000u
+#define RATE_HALF_HZ 12000000u
+#define RATE_QUARTER_HZ 6000000u
 
 void setup() {
   Serial.begin();
@@ -86,10 +111,50 @@ void on_serial(int c) {
     i2c_link_report();
     waterfall_report();
   }
-  if (c == ASK_TO_PAINT)
+  if (c == ASK_TO_PAINT) {
     waterfall_set_painting(true);
-  if (c == ASK_NOT_TO_PAINT)
+    main_note("");
+  }
+  if (c == ASK_NOT_TO_PAINT) {
     waterfall_set_painting(false);
+    main_note("not painting");
+  }
+  if (c == DRIVE_2MA) {
+    ili_set_drive(2, false);
+    main_note("2 mA slow");
+  }
+  if (c == DRIVE_4MA) {
+    ili_set_drive(4, false);
+    main_note("4 mA slow");
+  }
+  if (c == DRIVE_12MA_SHARP) {
+    ili_set_drive(12, true);
+    main_note("12 mA sharp");
+  }
+  if (c == PAINT_ALL_ROWS) {
+    waterfall_set_rows(WATERFALL_ALL_ROWS);
+    main_note("all rows");
+  }
+  if (c == PAINT_SOME_ROWS) {
+    waterfall_set_rows(SOME_ROWS);
+    main_note("40 rows");
+  }
+  if (c == PAINT_GRAPH_ONLY) {
+    waterfall_set_rows(0);
+    main_note("graph only");
+  }
+  if (c == RATE_FULL) {
+    ili_set_rate(RATE_FULL_HZ);
+    main_note("24 MHz");
+  }
+  if (c == RATE_HALF) {
+    ili_set_rate(RATE_HALF_HZ);
+    main_note("12 MHz");
+  }
+  if (c == RATE_QUARTER) {
+    ili_set_rate(RATE_QUARTER_HZ);
+    main_note("6 MHz");
+  }
   if (c == ASK_FOR_SCREEN)
     ui_screen_to_serial();
   if (c == ASK_TO_RESTART)

@@ -8,11 +8,13 @@
 #include <stdint.h>
 
 #define WATERFALL_POINTS 240
+#define WATERFALL_ALL_ROWS 160
 
 void waterfall_init(void);
 void waterfall_update(const uint8_t *points);
 void waterfall_slice(void);
 void waterfall_redraw(void);
 void waterfall_set_painting(bool on);
+void waterfall_set_rows(int fall_rows);
 void waterfall_to_serial(void);
 void waterfall_report(void);

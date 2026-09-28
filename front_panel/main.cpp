@@ -70,6 +70,7 @@ struct shown {
 };
 
 lv_obj_t *main_screen = NULL;
+static lv_obj_t *note = NULL;
 
 struct field main_list[] = {
 	{FIELD_FREQ, FREQ_LEFT, CONTROLS_TOP, FREQ_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
@@ -191,6 +192,12 @@ void main_radio_says(int control, int32_t value){
 	}
 }
 
+//a few words in the corner of the frequency's box, for whatever is being tried
+void main_note(const char *text){
+	if (note)
+		lv_label_set_text(note, text);
+}
+
 void main_knob_turned(int steps){
 	if (f_selected)
 		field_change(f_selected, steps);
@@ -225,6 +232,12 @@ void main_ui(){
 		for (int i = 0; main_list[i].type != -1; i++)
 			field_create(main_screen, main_list + i, shown_list + i);
 		field_select(main_list);
+
+		note = lv_label_create(shown_list[0].box);
+		lv_label_set_text(note, "");
+		lv_obj_set_style_text_color(note, lv_color_hex(COLOUR_WITH_FOCUS), 0);
+		lv_obj_set_style_text_font(note, &lv_font_montserrat_14, 0);
+		lv_obj_align(note, LV_ALIGN_TOP_RIGHT, -TITLE_LEFT, TITLE_TOP);
 	}
 	lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
 }

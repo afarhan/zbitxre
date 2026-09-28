@@ -176,6 +176,7 @@ void ui_init(){
 
   block_read();
   ili_init();
+  ili_set_drive(DISPLAY_DRIVE_MA, false);
   touch_init();
   Serial.printf("the display's port runs at %u Hz, from a clock of %u Hz\n", ili_spi_hz, ili_peri_hz);
   testcard_show();

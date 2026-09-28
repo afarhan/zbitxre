@@ -40,7 +40,9 @@
 // Painting is the busiest thing the panel does, and the panel sits against
 // the receiver. waterfall_set_painting(false) stops the painting and leaves
 // everything else going, so that what the painting puts in the receiver can
-// be told by ear from what the link puts there.
+// be told by ear from what the link puts there. waterfall_set_rows() paints
+// the graph and only so many rows of the waterfall below it, to hear whether
+// the hash falls as less is painted.
 
 #include <Arduino.h>
 #include "ili9488.h"
@@ -87,6 +89,7 @@ static int newest_row;
 static int next_row = NOTHING_TO_PAINT;
 static bool is_waiting = false;
 static bool is_painting = true;
+static int rows_to_paint = ALL_ROWS;
 static bool copy_to_serial = false;
 
 static unsigned long lines_taken;
@@ -231,7 +234,7 @@ void waterfall_slice(void){
 	if (next_row == NOTHING_TO_PAINT || !is_painting)
 		return;
 
-	count = ALL_ROWS - next_row;
+	count = rows_to_paint - next_row;
 	if (count > ROWS_A_SLICE)
 		count = ROWS_A_SLICE;
 	began_us = micros();
@@ -241,7 +244,7 @@ void waterfall_slice(void){
 		longest_slice_us = took_us;
 
 	next_row = next_row + count;
-	if (next_row < ALL_ROWS)
+	if (next_row < rows_to_paint)
 		return;
 	next_row = NOTHING_TO_PAINT;
 	repaints = repaints + 1;
@@ -257,6 +260,14 @@ void waterfall_set_painting(bool on){
 	is_painting = on;
 	if (on)
 		waterfall_redraw();
+}
+
+void waterfall_set_rows(int fall_rows){
+	if (fall_rows < 0)
+		fall_rows = 0;
+	if (fall_rows > FALL_ROWS)
+		fall_rows = FALL_ROWS;
+	rows_to_paint = GRAPH_ROWS + fall_rows;
 }
 
 void waterfall_to_serial(void){

@@ -32,6 +32,12 @@ void ili_init(void);
 void ili_release(void);
 void ili_select(void);
 
+// How the pins that go to the display are driven: 2, 4, 8 or 12 mA, with
+// slow edges or sharp ones. The Pico starts them at 4 mA and slow. And how
+// fast the port runs; ili_spi_hz says what was got.
+void ili_set_drive(int milliamps, bool sharp_edges);
+void ili_set_rate(uint32_t hz);
+
 // Actual negotiated SPI clock + peripheral clock, valid after ili_init().
 extern uint32_t ili_spi_hz, ili_peri_hz;
 
