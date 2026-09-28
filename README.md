@@ -211,8 +211,10 @@ each. On a zbitx, painting all of the waterfall four times a second:
 
 Those are averages over 20 seconds, and the ear does not average. The author
 found 24 MHz the least irritating, because at the slower rates each burst of
-the hash lasts longer, and chose 24 MHz at 2 mA with the waterfall cut from
-160 lines to 48, which shortens the burst further. Sending each slice of the
+the hash lasts longer, and chose 24 MHz at 2 mA with a shallower waterfall,
+which shortens the burst further. It was 160 lines deep. At 48 lines the hash
+was gone, and at 96 it was barely to be heard above the radio's own static
+with the antenna out. Sending each slice of the
 painting as one unbroken stream, in place of stopping after every row, made
 no difference that could be measured.
 

@@ -50,7 +50,7 @@
 // edges, the Pico's own choice being 4, and '9' drives them at 12 mA with
 // sharp edges. 'F', 'H' and 'Q' run the display's port at its full rate, at
 // 12 MHz and at 6 MHz. 'a' paints the graph and all of the waterfall for
-// each new line, 'b' the graph and half of it, 'c' the graph alone. What is
+// each new line, 'b' the graph and 48 rows of it, 'c' the graph alone. What is
 // chosen is shown in the corner of the frequency's box.
 //
 // What was heard: 2 mA with slow edges is some 3 dB quieter than 12 mA with
@@ -90,7 +90,7 @@
 #define PAINT_ALL_ROWS 'a'
 #define PAINT_SOME_ROWS 'b'
 #define PAINT_GRAPH_ONLY 'c'
-#define SOME_ROWS 24
+#define SOME_ROWS 48
 #define RATE_FULL 'F'
 #define RATE_HALF 'H'
 #define RATE_QUARTER 'Q'
@@ -158,7 +158,7 @@ void on_serial(int c) {
   }
   if (c == PAINT_SOME_ROWS) {
     waterfall_set_rows(SOME_ROWS);
-    main_note("24 rows");
+    main_note("48 rows");
   }
   if (c == PAINT_GRAPH_ONLY) {
     waterfall_set_rows(0);

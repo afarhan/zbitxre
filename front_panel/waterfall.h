@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #define WATERFALL_POINTS 240
-#define WATERFALL_ALL_ROWS 48
+#define WATERFALL_ALL_ROWS 96
 
 void waterfall_init(void);
 void waterfall_update(const uint8_t *points);

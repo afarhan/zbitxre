@@ -14,7 +14,7 @@
 //
 // WHAT IS KEPT
 //
-// The waterfall is kept as the points themselves, a byte each, 48 lines
+// The waterfall is kept as the points themselves, a byte each, 96 lines
 // of 240. They are kept in a ring, so that a new line costs nothing to put
 // in; only where the newest line is, is moved. A point is two pixels wide
 // on the screen.
@@ -27,7 +27,7 @@
 // alone once it has painted it black.
 //
 // The display cannot scroll this way up, so a new line means sending the
-// whole of the graph and the waterfall again: 53,760 pixels, three bytes
+// whole of the graph and the waterfall again: 76,800 pixels, three bytes
 // each. That takes longer than the knob and the touch screen can be kept
 // waiting. So it is painted a few rows at a time, one slice to each turn
 // of loop(), and the screen shows the new line wiping down from the top.
@@ -35,7 +35,7 @@
 // A line that arrives while the last is still being painted waits its
 // turn. If another arrives before it is taken up, it replaces it.
 //
-// THE HASH, AND WHY THE WATERFALL IS ONLY 48 LINES DEEP
+// THE HASH, AND WHY THE WATERFALL IS NO DEEPER THAN IT IS
 //
 // Painting the display puts a hash in the receiver. It gets in on the line
 // from the second IF to the sound card, and it is there for as long as the
@@ -43,14 +43,14 @@
 // burst of it.
 //
 // The waterfall was 160 lines deep at first. The author listened to it at
-// several depths, and with the display's port at 24 and at 6 MHz, and chose
-// the graph and 48 lines of waterfall at 24 MHz: of all that was tried, the
-// bursts were shortest and the least irritating. A slower port measured
-// quieter on average, but its bursts are four times as long, and the ear
-// minds the length.
+// several depths, and with the display's port at 24 and at 6 MHz. At 24 MHz
+// with the graph and 48 lines of waterfall the hash was gone. With 96 lines
+// it was barely to be heard above the radio's own static, the antenna being
+// out. A slower port measured quieter on average, but its bursts are four
+// times as long, and the ear minds the length.
 //
-// So the depth is not to be raised to fill the screen without listening
-// again.
+// WATERFALL_ALL_ROWS is the depth being tried now. It is not to be raised
+// to fill the screen without listening again.
 //
 // waterfall_set_painting(false) stops the painting and leaves everything
 // else going, so that what the painting puts in the receiver can be told by
@@ -277,11 +277,18 @@ void waterfall_set_painting(bool on){
 }
 
 void waterfall_set_rows(int fall_rows){
+	int rows;
+
 	if (fall_rows < 0)
 		fall_rows = 0;
 	if (fall_rows > FALL_ROWS)
 		fall_rows = FALL_ROWS;
-	rows_to_paint = GRAPH_ROWS + fall_rows;
+	rows = GRAPH_ROWS + fall_rows;
+	if (rows < rows_to_paint)
+		ili_fill_rect(LEFT, GRAPH_TOP + rows, WIDTH, rows_to_paint - rows, BLACK);
+	rows_to_paint = rows;
+	next_row = NOTHING_TO_PAINT;
+	waterfall_redraw();
 }
 
 void waterfall_to_serial(void){
