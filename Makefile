@@ -6,6 +6,8 @@
 #   make          build everything into build/
 #   make check    run the tests that need no radio
 #   make radio    run the tests that need the radio (stop the radio program first)
+#   make panel    build the front panel's firmware
+#   make panel-flash   put it on a Pico that is in its loader
 #
 #   build/sdr     the radio, run from a terminal; see tools/sdr.c
 
@@ -23,7 +25,16 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio
 TOOLS       = $(BUILD)/sdr
 
-.PHONY: all check radio clean
+# The front panel is an Arduino sketch for the Pico W. It is built with
+# arduino-cli, which needs the rp2040 core and the lvgl library, version 9.3.0.
+PANEL        = front_panel
+PANEL_BUILD  = $(CURDIR)/$(BUILD)/$(PANEL)
+PANEL_BOARD  = rp2040:rp2040:rpipicow
+PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
+PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
+PANEL_DRIVE  = /media/$(USER)/RPI-RP2
+
+.PHONY: all check radio clean panel panel-flash
 
 all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
 
@@ -59,6 +70,18 @@ $(BUILD)/test_board: tests/test_board.c hw/board.c hw/gpio.c \
 
 $(BUILD)/test_audio: tests/test_audio.c hw/audio.c $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_audio.c hw/audio.c -lasound -lpthread -lm
+
+panel:
+	arduino-cli compile --fqbn $(PANEL_BOARD) --build-path $(PANEL_BUILD) \
+		--build-property "compiler.c.extra_flags=$(PANEL_FLAGS)" \
+		--build-property "compiler.cpp.extra_flags=$(PANEL_FLAGS)" \
+		--build-property "compiler.S.extra_flags=$(PANEL_FLAGS)" \
+		$(PANEL)
+
+panel-flash: panel
+	test -d $(PANEL_DRIVE)
+	cp $(PANEL_UF2) $(PANEL_DRIVE)/
+	sync
 
 clean:
 	rm -rf $(BUILD)

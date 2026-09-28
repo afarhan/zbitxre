@@ -19,6 +19,7 @@ over. Nothing here changes it.
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
 | The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
+| Front panel firmware (`front_panel/`) | begun: builds, runs on a panel, shows its screen; no link to the radio yet |
 | Controls, keyer, clients | after that |
 
 ## How it relates to hermes-radio-daemon
@@ -87,6 +88,46 @@ zbitxv2's source at hand:
     tests/against_zbitxv2/run.sh ~/zbitxv2
 
 It needs no radio. `tests/against_zbitxv2/script.c` says what is compared.
+
+## The front panel
+
+The zbitx's front panel is a Raspberry Pi Pico W with a touch screen and a
+knob. Its firmware is the Arduino sketch in `front_panel/`, which draws with
+LVGL. `front_panel/front_panel.ino` says what each file is.
+
+    make panel          build it
+    make panel-flash    put it on a Pico that is in its loader
+
+Building needs `arduino-cli` with the `rp2040` core and the `lvgl` library,
+version 9.3.0:
+
+    arduino-cli core install rp2040:rp2040
+    arduino-cli lib install lvgl@9.3.0
+
+Once this firmware is on a panel, new firmware goes on over the cable with
+nothing to press:
+
+    arduino-cli upload -p /dev/ttyACM0 --fqbn rp2040:rp2040:rpipicow \
+        --input-dir build/front_panel front_panel
+
+To see what the panel has on its screen without looking at it:
+
+    tools/panel_screen.py build/panel.png
+
+The panel shows colour bars for four seconds as it starts: red, green, blue
+and white, in two rows that must look the same, with a small white square in
+the top left corner.
+
+To put a Pico in its loader, hold the panel's knob down while the panel
+powers up. It then shows up on USB as a drive called `RPI-RP2`. Use a cable
+that is known to carry data.
+
+Before putting new firmware on a panel, keep what it has:
+
+    picotool save -a panel.bin
+
+`picotool` comes with the `rp2040` core. `picotool load panel.bin` puts it
+back, access points and touch calibration included.
 
 ## Running the radio
 
@@ -172,6 +213,10 @@ pins until now.
 To Phil Karn, KA9Q, whose ka9q-radio is where the filter comes from, and
 whose method of filtering by fast convolution the receiver follows.
 
+To Bodmer, whose TFT_eSPI is where the display's start-up sequence and the
+way the touch screen is read come from, and to the LVGL project, whose
+library draws the front panel's screen.
+
 To JJ (W9JES), whose version of the zbitx software at
 [drexjj/zbitx](https://github.com/drexjj/zbitx) gave the form of the I2C
 request used in `hw/i2c.c`.
@@ -186,6 +231,7 @@ GPL version 3 or later. See `LICENSE`.
     hw/       the radio's hardware: buses, chips and boards
     dsp/      the radio itself: tuning, modes, filters, the receiver
     tools/    programs to run the radio by hand
+    front_panel/   the firmware of the zbitx's front panel, an Arduino sketch
     tests/    one program per piece, each with its own main()
 
 ## Conventions
