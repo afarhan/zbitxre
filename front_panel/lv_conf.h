@@ -1,7 +1,7 @@
 /*
- * zbitxre front panel: this is LVGL 9.3.0's lv_conf_template.h with four
- * changes. The content is switched on. The 20 and 32 point fonts are built
- * in, for the frequency. The examples are not built. Everything else is as
+ * zbitxre front panel: this is LVGL 9.3.0's lv_conf_template.h with three
+ * changes. The content is switched on. The 40 point font is built in, for
+ * the frequency and the volume. The examples are not built. Everything else is as
  * LVGL ships it: 16 bit colour, 64 K of memory for the widgets, no operating
  * system, and none of LVGL's own display drivers, because the panel's driver
  * is tft_ili9488.cpp in this folder.
@@ -601,17 +601,17 @@
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 0
 #define LV_FONT_MONTSERRAT_18 0
-#define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_20 0
 #define LV_FONT_MONTSERRAT_22 0
 #define LV_FONT_MONTSERRAT_24 0
 #define LV_FONT_MONTSERRAT_26 0
 #define LV_FONT_MONTSERRAT_28 0
 #define LV_FONT_MONTSERRAT_30 0
-#define LV_FONT_MONTSERRAT_32 1
+#define LV_FONT_MONTSERRAT_32 0
 #define LV_FONT_MONTSERRAT_34 0
 #define LV_FONT_MONTSERRAT_36 0
 #define LV_FONT_MONTSERRAT_38 0
-#define LV_FONT_MONTSERRAT_40 0
+#define LV_FONT_MONTSERRAT_40 1
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0

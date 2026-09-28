@@ -15,7 +15,6 @@ uint8_t encoder_state = 0;
 boolean encoder_switch = false;
 unsigned int wheel_count = 0;
 int wheel_move = 0;
-lv_indev_t *encoder;
 
 /*LVGL draw into this buffer, 1/10 screen size usually works well. The size is in bytes*/
 uint32_t draw_buf[DRAW_BUF_SIZE / 4];
@@ -82,33 +81,6 @@ void on_touch( lv_indev_t * indev, lv_indev_data_t * data )
         data->point.x = x;
         data->point.y = y;
     } 
-}
-
-bool is_down = false;
-void on_read_encoder( lv_indev_t * indev, lv_indev_data_t * data ){
-
-	data->enc_diff = wheel_count;
-	if (wheel_move > 0){
-		data->key = LV_KEY_LEFT;
-		data->state = LV_INDEV_STATE_PR;
-	}
-	else if (wheel_move < 0){
-		data->key = LV_KEY_RIGHT;
-		data->state = LV_INDEV_STATE_PR;
-	}
-	else if (digitalRead(ENC_S) == ENC_PRESSED){
-		data->key = LV_KEY_ENTER;
-		data->state = LV_INDEV_STATE_PRESSED;
-    is_down = true;
-	  //lv_indev_set_key(indev, LV_KEY_ENTER);
-  }
-  else {
-    data->enc_diff = 0;
-    //data->key = LV_KEY_ENTER;
-    data->state = LV_INDEV_STATE_RELEASED;
-    is_down = false;
-  }
-	wheel_move = 0;
 }
 
 /*use Arduinos millis() as tick source*/
@@ -234,16 +206,6 @@ void ui_init(){
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER); /*Touchpad should have POINTER type*/
   lv_indev_set_read_cb(indev, on_touch);
 
-  //encoder
-  
-  encoder = lv_indev_create();
-  lv_indev_set_type(encoder, LV_INDEV_TYPE_ENCODER); 
-  lv_indev_set_read_cb(encoder, on_read_encoder);
-
-	lv_group_t *g = lv_group_create(); 
-	lv_indev_set_group(encoder, g);
-	lv_group_set_default(g);
-
   main_ui();
 /*
   if (digitalRead(ENC_S) == LOW)
@@ -267,6 +229,31 @@ void ui_screen_to_serial(){
   Serial.flush();
 }
 
+/* the knob is read here and not by LVGL, because LVGL's way with a knob is
+   to move the focus by turning and to edit by pressing, and the panel's way
+   is the other way about: turning changes what has the focus and pressing
+   moves the focus on. The shipping firmware waits for more than one count
+   of the knob before it takes a step, and so does this */
+void knob_slice(){
+	if (digitalRead(ENC_S) != ENC_PRESSED && encoder_switch == true){
+		encoder_switch = false;
+	}
+	if (digitalRead(ENC_S) == ENC_PRESSED && encoder_switch == false){
+		encoder_switch = true;
+		main_knob_pressed();
+	}
+
+	if (wheel_move > KNOB_COUNTS_IGNORED){
+		main_knob_turned(1);
+		wheel_move = 0;
+	}
+	else if (wheel_move < -KNOB_COUNTS_IGNORED){
+		main_knob_turned(-1);
+		wheel_move = 0;
+	}
+}
+
 void ui_slice(){
+  knob_slice();
   lv_timer_handler(); /* let the GUI do its work */
 }

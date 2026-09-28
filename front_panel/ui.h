@@ -21,6 +21,7 @@
 //the encoder's switch and the two inputs from the knob are low when closed
 #define ENC_PRESSED LOW
 #define PULLUPS_SETTLE_MS 10
+#define KNOB_COUNTS_IGNORED 1
 
 #define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 10 * (LV_COLOR_DEPTH / 8))
 
@@ -52,6 +53,8 @@ struct saved {
 
 // screens
 void main_ui();
+void main_knob_turned(int steps);
+void main_knob_pressed();
 
 #ifndef FIELDS_H
 #define FIELDS_H

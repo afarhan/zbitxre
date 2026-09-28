@@ -6,6 +6,9 @@
 #
 #     tools/panel_screen.py [picture.png] [port] [restart]
 #
+# The port is found by the panel's name on USB, because the number of its
+# ttyACM changes when it restarts. To name one, give its path.
+#
 # It asks the panel, over its USB serial port, for the screen as LVGL has
 # drawn it. The panel answers with the screen's size, then the screen in
 # pieces, each piece a line "AREA x y w h" followed by w * h pixels of two
@@ -13,12 +16,15 @@
 # are put together and written as a PNG.
 #
 # With "restart" as the third word it restarts the panel first and prints
-# what the panel says as it starts.
+# what the panel says as it starts. The panel takes the request only once it
+# is running, so after asking, this waits for the port to go away before it
+# looks for it again.
 #
 # This shows what the firmware drew. It does not show what the glass did with
 # it: wrong colours or a display turned the wrong way will not be seen here.
 # The colour bars the panel shows as it starts are for that.
 
+import glob
 import os
 import struct
 import sys
@@ -27,22 +33,23 @@ import time
 import zlib
 
 PICTURE = "build/panel.png"
-PORT = "/dev/ttyACM0"
+PORT = "/dev/serial/by-id/usb-Raspberry_Pi_Pico_W_*"
 WAIT_FOR_PORT_S = 15
 WAIT_FOR_ANSWER_S = 10
 STARTING_TAKES_S = 9
 
 
-def open_port(path):
+def open_port(pattern):
     ends_at = time.time() + WAIT_FOR_PORT_S
     while time.time() < ends_at:
         try:
-            port = os.open(path, os.O_RDWR | os.O_NOCTTY)
+            found = glob.glob(pattern)
+            port = os.open(found[0], os.O_RDWR | os.O_NOCTTY)
             break
-        except OSError:
+        except (OSError, IndexError):
             time.sleep(0.2)
     else:
-        sys.exit("no panel on " + path)
+        sys.exit("no panel on " + pattern)
     settings = termios.tcgetattr(port)
     settings[0] = 0
     settings[1] = 0
@@ -80,10 +87,24 @@ class Reader:
         return taken
 
 
+def wait_until_gone(port, path):
+    ends_at = time.time() + WAIT_FOR_PORT_S
+    while time.time() < ends_at:
+        try:
+            os.read(port, 4096)
+        except OSError:
+            return
+        if not glob.glob(path):
+            return
+        time.sleep(0.1)
+    sys.exit("the panel did not restart")
+
+
 def restart(port, path):
     os.write(port, b"r")
+    wait_until_gone(port, path)
     os.close(port)
-    time.sleep(1.5)
+    time.sleep(0.5)
     port = open_port(path)
     ends_at = time.time() + STARTING_TAKES_S
     said = b""

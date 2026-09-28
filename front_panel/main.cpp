@@ -1,158 +1,196 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
+// main.cpp — the main screen: two controls, the frequency and the volume.
+//
+// One of the two has the focus, and it is the one with the bright border.
+// Turning the knob changes the control that has the focus. Pressing the knob
+// gives the focus to the other one. Touching a control gives it the focus
+// too.
+//
+// The controls are listed in main_list, each a struct field as in the
+// zbitx's shipping firmware. A field's selection holds its least value, its
+// greatest and its step, one to a line. Its value is kept as text, which is
+// what will go to the radio.
+//
+// The frequency is shown in the way of a radio's dial, with a dot after the
+// megahertz and after the kilohertz: 7.040.000.
+//
+// Whenever a control changes, the panel prints its label and its value on
+// the serial port, as "FREQ 7040100". That is the form the radio takes them
+// in. There is no link to the radio yet, so for now it only shows on USB
+// what the knob has done.
+//
+// The rest of the screen, below the controls, is kept for the waterfall.
+
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <lvgl.h>
 #include <WiFi.h>
 #include "ui.h"
 
-static lv_obj_t *wifi_label = NULL;
-static lv_obj_t *wifi_btn = NULL;
+#define CONTROLS_TOP 6
+#define CONTROLS_HEIGHT 84
+#define FREQ_LEFT 6
+#define FREQ_WIDTH 312
+#define VOLUME_LEFT 324
+#define VOLUME_WIDTH 150
+
+#define TITLE_LEFT 8
+#define TITLE_TOP 4
+#define VALUE_DOWN 12
+#define CORNER_RADIUS 6
+#define BORDER_WITH_FOCUS 3
+#define BORDER_WITHOUT 1
+
+#define COLOUR_SCREEN 0x000000
+#define COLOUR_BOX 0x101820
+#define COLOUR_TITLE 0x90A0B0
+#define COLOUR_VALUE 0xFFFFFF
+#define COLOUR_WITH_FOCUS 0xFFC000
+#define COLOUR_WITHOUT 0x405060
+
+#define HZ_PER_MHZ 1000000
+#define HZ_PER_KHZ 1000
+#define SHOWN_MAX 24
+
+//what LVGL has made on the screen for a field; the field's data points to it
+struct shown {
+	lv_obj_t *box;
+	lv_obj_t *value;
+};
 
 lv_obj_t *main_screen = NULL;
 
 struct field main_list[] = {
-
-  //the first eight fields are always visible
-  {FIELD_BUTTON, 0, 0, 44, 44,  TFT_ORANGE, "MENU", "" },  
-  {FIELD_SELECTION, 48, 0, 46, 46,  TFT_BLACK, "MODE", "USB", "USB\nLSB\nCW/CWR\nFT8\nAMDIGI\n2TONE"},
-  {FIELD_NUMBER, 96, 0, 46, 46,  TFT_BLACK, "DRIVE", "100", "0\n100\n5"},   
-  {FIELD_NUMBER, 144, 0, 46, 46,  TFT_BLACK, "IF", "40", "0\n100\n1"},
-  {FIELD_SELECTION, 192, 0, 46, 46,  TFT_BLACK, "RIT", "OFF", "ON\nOFF"},
-  {FIELD_FREQ, 240, 0, 190, 46,  TFT_BLACK, "FREQ", "14074000", "500000\n30000000\n1"}, 
-  {FIELD_NUMBER, 432, 0, 46, 46,  TFT_BLACK, "AUDIO", "95", "0\n100\n1"},
-
-  {FIELD_SELECTION, 288, 48, 60, 60,  TFT_BLACK, "SPAN", "25K", "25K\n10K\n6K\n2.5K"},
-  //{FIELD_SELECTION, 336, 48, 48, 48,  TFT_BLACK, "RIT", "OFF", "ON/OFF"},  
-  {FIELD_NUMBER, 336, 48, 46, 46,  TFT_BLACK, "BW", "2200", "50\n5000\n50"},
-  {FIELD_SELECTION, 384, 48, 46, 46,  TFT_BLACK, "STEP", "1K", "10K\n1K\n500H\n100H\n10H"},
-  {FIELD_BUTTON, 432, 48, 46, 46,  TFT_BLUE, "SET", ""},
- 
-   //LOGGER FIELDS
-  {FIELD_BUTTON, 0, 48, 46, 46,  TFT_DARKGREEN, "OPEN"},
-  {FIELD_BUTTON, 48, 48, 46, 46,  TFT_DARKGREEN, "WIPE"},
-  {FIELD_BUTTON, 240, 48, 46, 46,  TFT_DARKGREEN, "SAVE"},
-  {FIELD_TEXT, 96,48, 94, 22, TFT_BLACK, "CALL", "", "0,10"},
-  {FIELD_TEXT, 192, 48, 46, 22, TFT_BLACK, "EXCH", "", "0,10"},
-  {FIELD_TEXT, 96, 72, 46, 22, TFT_BLACK, "RECV", "", "0,10"},
-  {FIELD_TEXT, 144, 72, 46, 22, TFT_BLACK, "SENT", "", "0,10"},
-  {FIELD_TEXT, 192, 72, 46, 22, TFT_BLACK, "NR", "", "0,10"},
-	
-  {-1}
+	{FIELD_FREQ, FREQ_LEFT, CONTROLS_TOP, FREQ_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
+		"FREQ", "7040000", "500000\n30000000\n100"},
+	{FIELD_NUMBER, VOLUME_LEFT, CONTROLS_TOP, VOLUME_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
+		"VOLUME", "60", "0\n100\n1"},
+	{-1}
 };
 
-lv_obj_t *create_button(lv_obj_t *mom,  struct field *f){
-  lv_obj_t *w, *label;
+static struct shown shown_list[sizeof(main_list) / sizeof(main_list[0])];
+static struct field *f_selected = NULL;
 
-  static lv_style_t style;
-  lv_style_init(&style);
-  lv_style_set_radius(&style, 3);
-  lv_style_set_pad_top(&style, 2);
-  lv_style_set_pad_left(&style, 2);
+static void field_show_value(struct field *f){
+	struct shown *s = (struct shown *)f->data;
+	char text[SHOWN_MAX];
+	int v = atoi(f->value);
 
-  w = lv_btn_create(lv_scr_act());
-  lv_obj_add_flag(w, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_set_size(w, f->w, f->h);
-  lv_obj_add_style(w, &style, 0);
-  lv_obj_align(w, LV_ALIGN_TOP_LEFT, f->x, f->y);
-
-  label = lv_label_create(w);
-  lv_label_set_text(label, f->label);
-  lv_obj_align(label, LV_ALIGN_CENTER, 5, 5);
-		  
-  return w;
+	if (f->type == FIELD_FREQ)
+		snprintf(text, sizeof(text), "%d.%03d.%03d", v / HZ_PER_MHZ,
+			(v % HZ_PER_MHZ) / HZ_PER_KHZ, v % HZ_PER_KHZ);
+	else
+		snprintf(text, sizeof(text), "%d", v);
+	lv_label_set_text(s->value, text);
 }
 
-lv_obj_t *create_selection(lv_obj_t *mom,  struct field *f){
-  lv_obj_t *base, *dd, *label;
-  char list[1000];
+static void field_show_focus(struct field *f){
+	struct shown *s = (struct shown *)f->data;
 
-  static lv_style_t style;
+	if (f == f_selected){
+		lv_obj_set_style_border_color(s->box, lv_color_hex(COLOUR_WITH_FOCUS), 0);
+		lv_obj_set_style_border_width(s->box, BORDER_WITH_FOCUS, 0);
+	}
+	else {
+		lv_obj_set_style_border_color(s->box, lv_color_hex(COLOUR_WITHOUT), 0);
+		lv_obj_set_style_border_width(s->box, BORDER_WITHOUT, 0);
+	}
+}
 
-  lv_style_init(&style);
-  lv_style_set_radius(&style, 3);
-  lv_style_set_pad_top(&style, 0);
-  lv_style_set_pad_left(&style, 0);
-  lv_style_set_bg_color(&style, lv_color_hex(0x2F0000));
+static void field_select(struct field *f){
+	f_selected = f;
+	for (int i = 0; main_list[i].type != -1; i++)
+		field_show_focus(main_list + i);
+}
 
-  base = lv_obj_create(lv_screen_active());
-	lv_obj_add_flag(base, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_set_size(base, f->w, f->h);
-  lv_obj_add_style(base, &style, 0);
-  lv_obj_align(base, LV_ALIGN_TOP_LEFT, f->x, f->y);
+static void field_change(struct field *f, int steps){
+	int least, greatest, step;
+	int v = atoi(f->value);
 
-  label = lv_label_create(base);
-  lv_label_set_text(label, f->label);
-  lv_obj_set_size(label, f->w-2, 15);
-  lv_obj_align(label, LV_ALIGN_TOP_LEFT, 1, 1);
- 
-  dd = lv_dropdown_create(base);
-  lv_obj_set_style_pad_left(dd, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(dd, 0, LV_PART_MAIN);
+	if (sscanf(f->selection, "%d\n%d\n%d", &least, &greatest, &step) != 3)
+		return;
+	v = ((v / step) + steps) * step;
+	if (v < least)
+		v = least;
+	if (v > greatest)
+		v = greatest;
+	if (v == atoi(f->value))
+		return;
 
- 	lv_obj_add_flag(dd, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_set_size(dd, f->w-2, 20);
-  lv_obj_add_style(dd, &style, 0);
-  lv_obj_align(dd, LV_ALIGN_TOP_LEFT, 1, 18);
+	snprintf(f->value, sizeof(f->value), "%d", v);
+	field_show_value(f);
+	Serial.printf("%s %s\n", f->label, f->value);
+}
 
-  lv_dropdown_set_options(dd, f->selection);
-/*  strcpy(list, f->selection);
-  char *p = strtok(list, "/");
+static void on_field_touched(lv_event_t *e){
+	struct field *f = (struct field *)lv_event_get_user_data(e);
 
-  Serial.printf("\n%s:", f->label);
-  while (p){
-    lv_obj_t *btn = lv_list_add_button(wifi_list, LV_SYMBOL_WIFI, buff);
-		lv_obj_add_event_cb(btn, on_wifi_selected, LV_EVENT_CLICKED, NULL);
+	field_select(f);
+}
 
-    //field_show(p, true);
-    Serial.print(p);
-    p = strtok(NULL, "/");
-    Serial.print(',');
-  }
+static void field_create(lv_obj_t *mom, struct field *f, struct shown *s){
+	lv_obj_t *title;
 
-//      lv_obj_set_style_pad_left(w, 2, LV_PART_MAIN);
-//      lv_obj_set_style_pad_top(w, 2, LV_PART_MAIN);
+	s->box = lv_obj_create(mom);
+	lv_obj_set_size(s->box, f->w, f->h);
+	lv_obj_align(s->box, LV_ALIGN_TOP_LEFT, f->x, f->y);
+	lv_obj_set_style_radius(s->box, CORNER_RADIUS, 0);
+	lv_obj_set_style_pad_all(s->box, 0, 0);
+	lv_obj_set_style_bg_color(s->box, lv_color_hex(COLOUR_BOX), 0);
+	lv_obj_remove_flag(s->box, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_add_event_cb(s->box, on_field_touched, LV_EVENT_CLICKED, f);
 
-    //lv_obj_set_style_bg_color(w, lv_color_hex(0xFF0000), LV_PART_MAIN);
+	title = lv_label_create(s->box);
+	lv_label_set_text(title, f->label);
+	lv_obj_set_style_text_color(title, lv_color_hex(COLOUR_TITLE), 0);
+	lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+	lv_obj_align(title, LV_ALIGN_TOP_LEFT, TITLE_LEFT, TITLE_TOP);
 
-  label = lv_label_create(w);
-  lv_label_set_text(label, f->label);
-  //lv_obj_align(label, LV_ALIGN_CENTE, 5, 5);
-  lv_obj_align(w, LV_ALIGN_TOP_LEFT, f->x, f->y);
-*/
-  return base;
+	s->value = lv_label_create(s->box);
+	lv_obj_set_style_text_color(s->value, lv_color_hex(COLOUR_VALUE), 0);
+	lv_obj_set_style_text_font(s->value, &lv_font_montserrat_40, 0);
+	lv_obj_align(s->value, LV_ALIGN_CENTER, 0, VALUE_DOWN);
+
+	f->data = s;
+	field_show_value(f);
+}
+
+void main_knob_turned(int steps){
+	if (f_selected)
+		field_change(f_selected, steps);
+}
+
+void main_knob_pressed(){
+	struct field *next;
+
+	if (!f_selected)
+		return;
+	next = f_selected + 1;
+	if (next->type == -1)
+		next = main_list;
+	field_select(next);
 }
 
 void main_ui(){
 
 	if (!main_screen){
-		
 		Serial.println("Creating the main screen");
-		main_screen = lv_obj_create(lv_scr_act());
-  	lv_obj_set_size(main_screen, TFT_VER_RES, TFT_HOR_RES);
-  	lv_obj_align(main_screen, LV_ALIGN_TOP_LEFT, 0, 0);
+		lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(COLOUR_SCREEN), 0);
 
-    for (int i = 0; main_list[i].type != -1; i++){
-      switch(main_list[i].type){
-      case FIELD_BUTTON:
-        create_button(main_screen, main_list+i);
-        break;
-      case FIELD_SELECTION:
-        create_selection(main_screen, main_list+i);
-        break;
-    }
-  }
-/*
-		wifi_btn = lv_btn_create(main_screen);
-		lv_obj_set_size(wifi_btn, 140, 30);
-		lv_obj_add_flag(wifi_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
+		main_screen = lv_obj_create(lv_screen_active());
+		lv_obj_set_size(main_screen, TFT_VER_RES, TFT_HOR_RES);
+		lv_obj_align(main_screen, LV_ALIGN_TOP_LEFT, 0, 0);
+		lv_obj_set_style_bg_color(main_screen, lv_color_hex(COLOUR_SCREEN), 0);
+		lv_obj_set_style_border_width(main_screen, 0, 0);
+		lv_obj_set_style_radius(main_screen, 0, 0);
+		lv_obj_set_style_pad_all(main_screen, 0, 0);
+		lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-		wifi_label = lv_label_create(wifi_btn);
-		lv_label_set_text(wifi_label, LV_SYMBOL_WIFI " Offline");
-
-		lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 5, 5);
-		lv_obj_set_style_bg_color(wifi_btn, lv_color_hex(0xFF0000), LV_PART_MAIN);
-*/	
-  	//lv_obj_set_style_bg_color(coverflow_screen, lv_color_hex(0xFF0000), LV_PART_MAIN);
+		for (int i = 0; main_list[i].type != -1; i++)
+			field_create(main_screen, main_list + i, shown_list + i);
+		field_select(main_list);
 	}
 	lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-	lv_group_focus_obj(main_screen);
 }
