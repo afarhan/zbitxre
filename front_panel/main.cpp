@@ -16,10 +16,15 @@
 // The frequency is shown in the way of a radio's dial, with a dot after the
 // megahertz and after the kilohertz: 7.040.000.
 //
-// Whenever a control changes, the panel prints its label and its value on
-// the serial port, as "FREQ 7040100". That is the form the radio takes them
-// in. There is no link to the radio yet, so for now it only shows on USB
-// what the knob has done.
+// Whenever a control is changed on the panel, the radio is told of it over
+// the link, and the panel prints the label and the value on the serial port,
+// as "FREQ 7040100".
+//
+// The radio may tell the panel a control's value too: when either of them
+// starts, and when something else has changed it. The operator's hand comes
+// first. A value from the radio is not taken for a control that was changed
+// on the panel less than a second ago, or the dial would jump back under
+// the knob while it is being turned.
 //
 // The rest of the screen, below the controls, is kept for the waterfall.
 
@@ -27,6 +32,7 @@
 #include <EEPROM.h>
 #include <lvgl.h>
 #include <WiFi.h>
+#include "link.h"
 #include "ui.h"
 
 #define CONTROLS_TOP 6
@@ -50,6 +56,9 @@
 #define COLOUR_WITH_FOCUS 0xFFC000
 #define COLOUR_WITHOUT 0x405060
 
+#define OPERATOR_WINS_FOR_MS 1000
+#define NOT_ON_THE_LINK (-1)
+
 #define HZ_PER_MHZ 1000000
 #define HZ_PER_KHZ 1000
 #define SHOWN_MAX 24
@@ -64,7 +73,7 @@ lv_obj_t *main_screen = NULL;
 
 struct field main_list[] = {
 	{FIELD_FREQ, FREQ_LEFT, CONTROLS_TOP, FREQ_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
-		"FREQ", "7040000", "500000\n30000000\n100"},
+		"FREQ", "7088000", "500000\n30000000\n100"},
 	{FIELD_NUMBER, VOLUME_LEFT, CONTROLS_TOP, VOLUME_WIDTH, CONTROLS_HEIGHT, TFT_BLACK,
 		"VOLUME", "60", "0\n100\n1"},
 	{-1}
@@ -72,6 +81,14 @@ struct field main_list[] = {
 
 static struct shown shown_list[sizeof(main_list) / sizeof(main_list[0])];
 static struct field *f_selected = NULL;
+
+static int control_of(struct field *f){
+	if (!strcmp(f->label, "FREQ"))
+		return LINK_FREQ;
+	if (!strcmp(f->label, "VOLUME"))
+		return LINK_VOLUME;
+	return NOT_ON_THE_LINK;
+}
 
 static void field_show_value(struct field *f){
 	struct shown *s = (struct shown *)f->data;
@@ -120,8 +137,11 @@ static void field_change(struct field *f, int steps){
 		return;
 
 	snprintf(f->value, sizeof(f->value), "%d", v);
+	f->last_user_change = millis();
 	field_show_value(f);
 	Serial.printf("%s %s\n", f->label, f->value);
+	if (control_of(f) != NOT_ON_THE_LINK)
+		i2c_link_changed(control_of(f), v);
 }
 
 static void on_field_touched(lv_event_t *e){
@@ -155,6 +175,20 @@ static void field_create(lv_obj_t *mom, struct field *f, struct shown *s){
 
 	f->data = s;
 	field_show_value(f);
+}
+
+void main_radio_says(int control, int32_t value){
+	struct field *f;
+
+	for (f = main_list; f->type != -1; f++){
+		if (control_of(f) != control)
+			continue;
+		if (f->last_user_change != 0
+				&& millis() - f->last_user_change < OPERATOR_WINS_FOR_MS)
+			return;
+		snprintf(f->value, sizeof(f->value), "%d", (int)value);
+		field_show_value(f);
+	}
 }
 
 void main_knob_turned(int steps){

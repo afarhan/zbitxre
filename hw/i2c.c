@@ -33,8 +33,17 @@
 // number. i2c_open_bus_of() tries each bus in turn and keeps the first on
 // which a chip answers at the address given; the radio asks for the Si5351.
 //
+// Not every device on the bus has registers. The front panel takes and gives
+// whole frames. i2c_send() writes bytes as they are. i2c_receive_counted()
+// reads an answer whose first byte says how many bytes follow it, 1 to 32:
+// the kernel reads that byte and then as many more as it says, in the one
+// transfer. It is how SMBus reads a block. The caller gives room for the
+// longest answer there can be, I2C_COUNTED_ROOM, and gets back the count
+// byte and what followed it.
+//
 // Every function returns 0, or -1 with errno set, except i2c_open_bus_of(),
-// which returns the number of the bus it opened.
+// which returns the number of the bus it opened, and i2c_receive_counted(),
+// which returns how many bytes it has put in the caller's room.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -51,6 +60,7 @@
 #define NOT_OPEN (-1)
 #define REGISTER_BYTES 1
 #define HIGHEST_BUS 31
+#define COUNT_BYTES 1
 
 static int bus_fd = NOT_OPEN;
 static int bus_number = NOT_OPEN;
@@ -138,6 +148,43 @@ int i2c_read(uint8_t address, uint8_t reg, uint8_t *values, int count) {
 	messages[1].len = count;
 	messages[1].buf = values;
 	return transfer(messages, 2);
+}
+
+int i2c_send(uint8_t address, const uint8_t *bytes, int count) {
+	uint8_t frame[I2C_SEND_MAX];
+	struct i2c_msg message;
+
+	if (bus_fd == NOT_OPEN || bytes == NULL || count < 1 || count > I2C_SEND_MAX) {
+		errno = EINVAL;
+		return -1;
+	}
+	memcpy(frame, bytes, count);
+	message.addr = address;
+	message.flags = 0;
+	message.len = count;
+	message.buf = frame;
+	return transfer(&message, 1);
+}
+
+int i2c_receive_counted(uint8_t address, uint8_t *bytes, int room) {
+	struct i2c_msg message;
+
+	if (bus_fd == NOT_OPEN || bytes == NULL || room < I2C_COUNTED_ROOM) {
+		errno = EINVAL;
+		return -1;
+	}
+	bytes[0] = COUNT_BYTES;
+	message.addr = address;
+	message.flags = I2C_M_RD | I2C_M_RECV_LEN;
+	message.len = I2C_COUNTED_ROOM;
+	message.buf = bytes;
+	if (transfer(&message, 1) < 0)
+		return -1;
+	if (bytes[0] < 1 || bytes[0] > I2C_COUNTED_MAX) {
+		errno = EPROTO;
+		return -1;
+	}
+	return COUNT_BYTES + bytes[0];
 }
 
 int i2c_open_bus_of(uint8_t address) {

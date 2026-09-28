@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ashhar Farhan
+//
+// link.c — what the radio and its front panel say to each other.
+//
+// WHY IT IS AS SMALL AS IT IS
+//
+// The panel sits against the receiver, and whatever passes between the panel
+// and the radio is heard in the receiver as a hash. The earlier I2C link sent
+// some 280 bytes on every poll, changed or not. This one says as little as
+// it can: four bytes on the bus when there is nothing to say, nine to bring
+// a new frequency.
+//
+// This file knows nothing of I2C. It makes frames and takes them. The panel's
+// i2c_link.cpp and the radio's hw/panel.c carry them.
+//
+// A FRAME
+//
+//     numbers    one byte. The high four bits are the number of this frame,
+//                the low four the number of the last frame taken from the
+//                other side.
+//     records    none or more
+//     check      one byte, the CRC-8 of all the bytes before it
+//
+// The radio is the master of the bus. What it writes is a frame as it is;
+// the stop says where the frame ends. What it reads is a frame with one byte
+// before it, the count of the bytes that follow, because a master has to
+// know how much to read. That is an answer.
+//
+// The panel answers from an interrupt, and its chip holds 16 bytes ready to
+// go. So an answer is never more than 16 bytes, and the interrupt never
+// waits.
+//
+// A RECORD
+//
+// A record is one control and its value.
+//
+//     first      the high two bits are the size of the value: 0 is one byte,
+//                1 is two, 2 is four, 3 is counted. The low six bits are the
+//                control.
+//     count      only if counted: how many bytes of value follow
+//     value      low byte first
+//
+// The size is in the record, so a control that is not known can be stepped
+// over. Counted values are for text and the spectrum. Nothing here makes one
+// yet; one that arrives is stepped over.
+//
+// NUMBERS
+//
+// A side numbers the frames it makes that have records in them, 1 to 15 and
+// round again. 0 is never a frame's number; as the number taken it means
+// that nothing has been taken yet. A frame with no records carries the
+// number of the last frame that had some.
+//
+// A frame whose number has been taken already is a repeat, and its records
+// are thrown away. So a frame can be sent again without harm.
+//
+// A control that is offered waits until the other side says it took the
+// frame the control went in. If it is offered again meanwhile, it goes out
+// afresh, in a frame with a new number, and everything else still waiting
+// goes with it. So only the newest value of a control is ever sent: ten
+// steps of the knob between two polls are one record.
+//
+// A frame whose check is wrong is dropped whole. Nothing says it was taken,
+// so it comes again.
+//
+// HELLO
+//
+// A side offers HELLO when it starts, with the version of the protocol as
+// its value, and HELLO goes first in its frame. A frame that begins with
+// HELLO is always taken, whatever its number, since the side that sent it
+// has forgotten what numbers it used before.
+//
+// The radio is the one that remembers the settings. When it takes HELLO from
+// the panel it offers every control again.
+//
+// THE CHECK
+//
+// CRC-8 with the polynomial x^8 + x^2 + x + 1, starting from 0. It is the
+// check SMBus uses.
+
+#include <stddef.h>
+#include <string.h>
+
+#include "link.h"
+
+#define CRC_POLYNOMIAL 0x07
+#define CRC_TOP_BIT 0x80
+#define BITS_IN_A_BYTE 8
+
+#define NUMBER_SHIFT 4
+#define NUMBER_MASK 0x0f
+#define HIGHEST_NUMBER 15
+
+#define SIZE_SHIFT 6
+#define CONTROL_MASK 0x3f
+#define SIZE_ONE 0
+#define SIZE_TWO 1
+#define SIZE_FOUR 2
+#define SIZE_COUNTED 3
+
+#define COUNT_BYTES 1
+#define NUMBERS_BYTES 1
+#define CHECK_BYTES 1
+
+uint8_t link_crc(const uint8_t *bytes, int count) {
+	uint8_t crc = 0;
+	int i;
+	int bit;
+
+	for (i = 0; i < count; i++) {
+		crc ^= bytes[i];
+		for (bit = 0; bit < BITS_IN_A_BYTE; bit++) {
+			if (crc & CRC_TOP_BIT)
+				crc = (uint8_t)((crc << 1) ^ CRC_POLYNOMIAL);
+			else
+				crc = (uint8_t)(crc << 1);
+		}
+	}
+	return crc;
+}
+
+static uint8_t bytes_of(int control) {
+	if (control == LINK_FREQ)
+		return 4;
+	return 1;
+}
+
+static uint8_t size_code_of(uint8_t bytes) {
+	if (bytes == 4)
+		return SIZE_FOUR;
+	if (bytes == 2)
+		return SIZE_TWO;
+	return SIZE_ONE;
+}
+
+static int bytes_of_size_code(int code) {
+	if (code == SIZE_FOUR)
+		return 4;
+	if (code == SIZE_TWO)
+		return 2;
+	return 1;
+}
+
+void link_start(struct link_end *end, int room) {
+	int i;
+
+	memset(end, 0, sizeof(*end));
+	end->room = room;
+	for (i = 0; i < LINK_CONTROLS; i++)
+		end->control[i].bytes = bytes_of(i);
+	link_offer(end, LINK_HELLO, LINK_VERSION);
+}
+
+void link_offer(struct link_end *end, int control, int32_t value) {
+	struct link_control *c;
+
+	if (control < 0 || control >= LINK_CONTROLS)
+		return;
+	c = &end->control[control];
+	c->value = value;
+	c->is_waiting = 1;
+	c->went_under = 0;
+}
+
+int link_has_something_to_say(const struct link_end *end) {
+	int i;
+
+	if (end->owes_a_word)
+		return 1;
+	for (i = 0; i < LINK_CONTROLS; i++) {
+		if (end->control[i].is_waiting)
+			return 1;
+	}
+	return 0;
+}
+
+static int something_new_is_waiting(const struct link_end *end) {
+	int i;
+
+	for (i = 0; i < LINK_CONTROLS; i++) {
+		if (end->control[i].is_waiting && end->control[i].went_under == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static uint8_t number_after(uint8_t number) {
+	if (number >= HIGHEST_NUMBER)
+		return 1;
+	return number + 1;
+}
+
+static int put_record(uint8_t *at, int control, const struct link_control *c) {
+	uint32_t value = (uint32_t)c->value;
+	int i;
+
+	at[0] = (uint8_t)((size_code_of(c->bytes) << SIZE_SHIFT) | control);
+	for (i = 0; i < c->bytes; i++)
+		at[1 + i] = (uint8_t)(value >> (BITS_IN_A_BYTE * i));
+	return 1 + c->bytes;
+}
+
+static int goes_in_this_frame(const struct link_control *c, uint8_t number,
+		int is_new_frame) {
+	if (!c->is_waiting)
+		return 0;
+	if (is_new_frame)
+		return 1;
+	return c->went_under == number;
+}
+
+int link_make_frame(struct link_end *end, uint8_t *frame) {
+	struct link_control *c;
+	int is_new_frame;
+	int used;
+	int i;
+
+	is_new_frame = something_new_is_waiting(end);
+	if (is_new_frame)
+		end->number = number_after(end->number);
+
+	used = NUMBERS_BYTES;
+	for (i = 0; i < LINK_CONTROLS; i++) {
+		c = &end->control[i];
+		if (!goes_in_this_frame(c, end->number, is_new_frame))
+			continue;
+		if (used + 1 + c->bytes + CHECK_BYTES > end->room)
+			continue;
+		used += put_record(frame + used, i, c);
+		c->went_under = end->number;
+	}
+
+	frame[0] = (uint8_t)((end->number << NUMBER_SHIFT) | end->taken);
+	frame[used] = link_crc(frame, used);
+	end->owes_a_word = 0;
+	end->frames_made++;
+	return used + CHECK_BYTES;
+}
+
+int link_make_answer(struct link_end *end, uint8_t *answer) {
+	int count;
+
+	count = link_make_frame(end, answer + COUNT_BYTES);
+	answer[0] = (uint8_t)count;
+	return COUNT_BYTES + count;
+}
+
+static void the_other_side_took(struct link_end *end, uint8_t number) {
+	struct link_control *c;
+	int i;
+
+	if (number == 0 || number != end->number)
+		return;
+	for (i = 0; i < LINK_CONTROLS; i++) {
+		c = &end->control[i];
+		if (c->is_waiting && c->went_under == number)
+			c->is_waiting = 0;
+	}
+}
+
+static int32_t value_at(const uint8_t *at, int bytes) {
+	uint32_t value = 0;
+	int i;
+
+	for (i = 0; i < bytes; i++)
+		value |= (uint32_t)at[i] << (BITS_IN_A_BYTE * i);
+	if (bytes == 2)
+		return (int16_t)value;
+	return (int32_t)value;
+}
+
+static int length_of_record(const uint8_t *at, int left) {
+	int code = at[0] >> SIZE_SHIFT;
+
+	if (code != SIZE_COUNTED)
+		return 1 + bytes_of_size_code(code);
+	if (left < 2)
+		return left + 1;
+	return 2 + at[1];
+}
+
+static int records_are_whole(const uint8_t *records, int count) {
+	int at = 0;
+
+	while (at < count)
+		at += length_of_record(records + at, count - at);
+	return at == count;
+}
+
+static void take_records(const uint8_t *records, int count, link_took_fn took) {
+	int at = 0;
+	int length;
+	int code;
+
+	while (at < count) {
+		length = length_of_record(records + at, count - at);
+		code = records[at] >> SIZE_SHIFT;
+		if (code != SIZE_COUNTED && took != NULL)
+			took(records[at] & CONTROL_MASK,
+				value_at(records + at + 1, length - 1));
+		at += length;
+	}
+}
+
+int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
+		link_took_fn took) {
+	const uint8_t *records = frame + NUMBERS_BYTES;
+	int records_count = count - NUMBERS_BYTES - CHECK_BYTES;
+	uint8_t number;
+	int begins_with_hello;
+
+	if (count < LINK_FRAME_MIN || count > LINK_FRAME_MAX
+			|| link_crc(frame, count - CHECK_BYTES) != frame[count - CHECK_BYTES]
+			|| !records_are_whole(records, records_count)) {
+		end->frames_spoiled++;
+		return LINK_SPOILED;
+	}
+
+	number = frame[0] >> NUMBER_SHIFT;
+	the_other_side_took(end, frame[0] & NUMBER_MASK);
+	if (records_count == 0 || number == 0)
+		return LINK_NOTHING_NEW;
+
+	begins_with_hello = (records[0] & CONTROL_MASK) == LINK_HELLO;
+	if (number == end->taken && !begins_with_hello) {
+		end->frames_repeated++;
+		end->owes_a_word = 1;
+		return LINK_NOTHING_NEW;
+	}
+
+	end->taken = number;
+	end->owes_a_word = 1;
+	end->frames_taken++;
+	take_records(records, records_count, took);
+	return LINK_TOOK_RECORDS;
+}

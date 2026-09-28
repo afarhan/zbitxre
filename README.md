@@ -19,7 +19,8 @@ over. Nothing here changes it.
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
 | The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
-| Front panel firmware (`front_panel/`) | begun: builds, runs on a panel, shows its screen; no link to the radio yet |
+| Front panel firmware (`front_panel/`) | begun: two controls, the frequency and the volume |
+| The link between the radio and the panel, over I2C | the panel's knob tunes the receiver |
 | Controls, keyer, clients | after that |
 
 ## How it relates to hermes-radio-daemon
@@ -131,10 +132,12 @@ back, access points and touch calibration included.
 
 ## Running the radio
 
-    build/sdr 7040000 LSB 75
+    build/sdr 7088000 LSB 75
 
-opens the receiver on 7040 kHz, lower sideband, at a volume of 75, with a
-passband of 300 to 3000 Hz, and then takes one request to a line:
+opens the receiver on 7088 kHz, lower sideband, at a volume of 75, with a
+passband of 300 to 3000 Hz. Those are also what it opens with when given
+nothing. From then on the front panel's knob tunes it, and it takes one
+request to a line from the terminal:
 
     r1:freq=7030000
     r1:mode=CW
@@ -143,6 +146,8 @@ passband of 300 to 3000 Hz, and then takes one request to a line:
     r1:agc=FAST
     smeter=0
     report
+    panel=off
+    panel=on
     quit
 
 These are the requests of zbitxv2's `sdr_request()`, with the same names. A
@@ -150,6 +155,22 @@ request it does not know is answered `error unknown`.
 
 As in zbitxv2, the passband does not follow the mode. After changing the
 mode, ask for `r1:low` and `r1:high` again.
+
+## The link to the front panel
+
+The panel is on the same I2C bus as the Si5351, as a slave at 0x0a. What
+passes between it and the radio is heard in the receiver, so the link says as
+little as it can: four bytes on the bus when there is nothing to say, nine to
+bring a new frequency. `front_panel/link.c` says how, and both the radio and
+the panel's firmware are built with that one file. `hw/panel.c` says when the
+radio polls.
+
+`panel=off` stops the radio polling the panel and `panel=on` starts it again,
+so that the noise of the link can be told by ear from everything else.
+
+To try the link without the radio running:
+
+    build/test_panel 20
 
 ## What was measured
 
@@ -191,6 +212,12 @@ The receiver was run beside zbitxv2's (commit 2726c57) on the same samples:
 four passbands, quiet, usual and very loud. The samples for the speaker, the
 spectrum, the S meter and the oscillator's frequency were the same throughout,
 byte for byte.
+
+The link to the panel, on a zbitx: in 20 seconds idle, 280 polls, every one
+answered and none spoiled. With the receiver running and the knob turned
+through 48 kHz, 840 frequencies arrived and the radio followed each; of 3158
+polls none went unanswered and none was spoiled, and the sound card missed no
+block.
 
 AM is where zbitxre differs from zbitxv2 on purpose. The AM filter goes
 around the carrier of the station tuned in, which is on the board's centre

@@ -38,10 +38,11 @@ gcc -std=gnu11 -O2 -w -DOLD -I"$here" -I"$old" -o "$work/old" \
 	"$old/sbitx.c" "$old/fft_filter.c" "$old/vfo.c" \
 	"$old/ini.c" "$old/queue.c" $libs
 
-gcc -std=gnu11 -O2 -Wall -Wextra -I"$new/hw" -I"$new/dsp" -o "$work/new" \
+gcc -std=gnu11 -O2 -Wall -Wextra -I"$new/hw" -I"$new/dsp" \
+	-I"$new/front_panel" -o "$work/new" \
 	"$here/script.c" \
 	"$new/dsp/sdr.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
-	"$new"/hw/*.c $libs -lasound
+	"$new"/hw/*.c "$new/front_panel/link.c" $libs -lasound
 
 cd "$work"
 rm -f w.wis wf.wis

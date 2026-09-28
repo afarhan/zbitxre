@@ -12,17 +12,25 @@
 #   build/sdr     the radio, run from a terminal; see tools/sdr.c
 
 CC     = gcc
-CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -Ihw -Idsp -Itests
+CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -Ihw -Idsp -Itests -Ifront_panel
 BUILD  = build
 
-HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h
+# what the radio and the panel say to each other is in the panel's folder,
+# and both are built with it
+LINK        = front_panel/link.c
+LINK_HEADERS = front_panel/link.h
+
+HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
+	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h
-HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c
+HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
+	$(LINK)
 DSP         = dsp/sdr.c dsp/filter.c dsp/vfo.c
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
-HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am
-RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio
+HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link
+RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
+	$(BUILD)/test_panel
 TOOLS       = $(BUILD)/sdr
 
 # The front panel is an Arduino sketch for the Pico W. It is built with
@@ -41,11 +49,13 @@ all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
 check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
+	$(BUILD)/test_link
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
 	$(BUILD)/test_board
 	$(BUILD)/test_audio
+	$(BUILD)/test_panel
 
 $(BUILD):
 	mkdir -p $(BUILD) data
@@ -59,6 +69,13 @@ $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(HW) $(RADIO_LIBS)
+
+$(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)
+
+$(BUILD)/test_panel: tests/test_panel.c hw/panel.c hw/i2c.c $(LINK) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_panel.c hw/panel.c hw/i2c.c $(LINK)
 
 $(BUILD)/test_si5351: tests/test_si5351.c hw/si5351.c hw/i2c.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)

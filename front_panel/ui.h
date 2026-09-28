@@ -29,6 +29,13 @@ void ui_init();
 void ui_slice();
 void ui_screen_to_serial();
 
+// the link to the radio
+void i2c_link_init();
+void i2c_link_slice();
+void i2c_link_changed(int control, int32_t value);
+void i2c_link_report();
+void main_radio_says(int control, int32_t value);
+
 /* saved block of user data*/
 extern struct saved block;
 bool block_read();

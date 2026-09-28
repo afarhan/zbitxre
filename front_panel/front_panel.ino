@@ -5,9 +5,8 @@
 // 480 by 320 touch screen and a knob.
 //
 // This is the beginning of the panel for zbitxre. It comes from the sketch
-// zbitx_front_panel_lvgl, and draws its screen with LVGL. So far it brings up
-// the display, the touch screen and the knob, and shows the main screen. It
-// does not talk to the radio yet.
+// zbitx_front_panel_lvgl, and draws its screen with LVGL. It has two controls,
+// the frequency and the volume, and tells the radio of them over I2C.
 //
 // The files:
 //
@@ -20,6 +19,9 @@
 //                     fully debugged
 //   touch.cpp         the touch screen, which shares the display's SPI port
 //   testcard.cpp      colour bars, shown for a moment as the panel starts
+//   link.c, link.h    what the panel and the radio say to each other; the
+//                     radio is built with these same two files
+//   i2c_link.cpp      the panel's end of the link, an I2C slave
 //   lv_conf.h         LVGL's settings
 //
 // TO PUT NEW FIRMWARE ON A PANEL
@@ -35,8 +37,9 @@
 // THE SERIAL PORT
 //
 // The panel prints what it is doing on its USB serial port. It also takes
-// two letters there. 's' sends back the whole screen as LVGL has drawn it,
+// three letters there. 's' sends back the whole screen as LVGL has drawn it,
 // which tools/panel_screen.py turns into a picture. 'r' restarts the panel.
+// 'i' says how the link to the radio has been doing.
 //
 // WHICH PICO CORE
 //
@@ -58,6 +61,7 @@
 
 #define ASK_FOR_SCREEN 's'
 #define ASK_TO_RESTART 'r'
+#define ASK_ABOUT_LINK 'i'
 
 void setup() {
   Serial.begin();
@@ -66,9 +70,12 @@ void setup() {
   Serial.println("zbitxre front panel");
   ui_init();
   Serial.println("the screen is up");
+  i2c_link_init();
 }
 
 void on_serial(int c) {
+  if (c == ASK_ABOUT_LINK)
+    i2c_link_report();
   if (c == ASK_FOR_SCREEN)
     ui_screen_to_serial();
   if (c == ASK_TO_RESTART)
@@ -77,6 +84,7 @@ void on_serial(int c) {
 
 void loop() {
   ui_slice();
+  i2c_link_slice();
   if (Serial.available())
     on_serial(Serial.read());
 }
