@@ -14,7 +14,7 @@
 //
 // WHAT IS KEPT
 //
-// The waterfall is kept as the points themselves, a byte each, 160 lines
+// The waterfall is kept as the points themselves, a byte each, 48 lines
 // of 240. They are kept in a ring, so that a new line costs nothing to put
 // in; only where the newest line is, is moved. A point is two pixels wide
 // on the screen.
@@ -27,7 +27,7 @@
 // alone once it has painted it black.
 //
 // The display cannot scroll this way up, so a new line means sending the
-// whole of the graph and the waterfall again: 107,520 pixels, three bytes
+// whole of the graph and the waterfall again: 53,760 pixels, three bytes
 // each. That takes longer than the knob and the touch screen can be kept
 // waiting. So it is painted a few rows at a time, one slice to each turn
 // of loop(), and the screen shows the new line wiping down from the top.
@@ -35,14 +35,27 @@
 // A line that arrives while the last is still being painted waits its
 // turn. If another arrives before it is taken up, it replaces it.
 //
-// THE HASH
+// THE HASH, AND WHY THE WATERFALL IS ONLY 48 LINES DEEP
 //
-// Painting is the busiest thing the panel does, and the panel sits against
-// the receiver. waterfall_set_painting(false) stops the painting and leaves
-// everything else going, so that what the painting puts in the receiver can
-// be told by ear from what the link puts there. waterfall_set_rows() paints
-// the graph and only so many rows of the waterfall below it, to hear whether
-// the hash falls as less is painted.
+// Painting the display puts a hash in the receiver. It gets in on the line
+// from the second IF to the sound card, and it is there for as long as the
+// painting of a line lasts. The less there is to paint, the shorter each
+// burst of it.
+//
+// The waterfall was 160 lines deep at first. The author listened to it at
+// several depths, and with the display's port at 24 and at 6 MHz, and chose
+// the graph and 48 lines of waterfall at 24 MHz: of all that was tried, the
+// bursts were shortest and the least irritating. A slower port measured
+// quieter on average, but its bursts are four times as long, and the ear
+// minds the length.
+//
+// So the depth is not to be raised to fill the screen without listening
+// again.
+//
+// waterfall_set_painting(false) stops the painting and leaves everything
+// else going, so that what the painting puts in the receiver can be told by
+// ear from what the link puts there. waterfall_set_rows() paints the graph
+// and only so many rows of the waterfall below it.
 
 #include <Arduino.h>
 #include "ili9488.h"
@@ -55,7 +68,7 @@
 #define GRAPH_TOP 96
 #define GRAPH_ROWS 64
 #define FALL_TOP (GRAPH_TOP + GRAPH_ROWS)
-#define FALL_ROWS 160
+#define FALL_ROWS WATERFALL_ALL_ROWS
 #define ALL_ROWS (GRAPH_ROWS + FALL_ROWS)
 #define ROWS_A_SLICE 16
 
@@ -212,6 +225,7 @@ static void make_a_row(int row){
 
 static void paint_rows(int first, int count){
 	int row;
+
 
 	ili_set_window(LEFT, GRAPH_TOP + first, WIDTH, count);
 	for (row = first; row < first + count; row++){

@@ -209,6 +209,17 @@ each. On a zbitx, painting all of the waterfall four times a second:
 | 12 mA, sharp edges | 12 MHz | 0.3 dB | 11 dB below |
 | 12 mA, sharp edges | 6 MHz | 0.1 dB | 16 dB below |
 
+Those are averages over 20 seconds, and the ear does not average. The author
+found 24 MHz the least irritating, because at the slower rates each burst of
+the hash lasts longer, and chose 24 MHz at 2 mA with the waterfall cut from
+160 lines to 48, which shortens the burst further. Sending each slice of the
+painting as one unbroken stream, in place of stopping after every row, made
+no difference that could be measured.
+
+The four steady lines in the waterfall of a zbitx with no antenna are not
+signals. They are spurs in the IF from the PLLs and clocks of the Pico and
+the Raspberry Pi.
+
 Readings of the quiet radio agree with each other within 0.1 dB. The link
 itself, polling and sending the spectrum, adds nothing that can be measured.
 Switching both oscillators off does not change the hash, and turning the
@@ -217,7 +228,7 @@ the second IF to the sound card, around 28 kHz.
 
 More letters on the panel's serial port, for finding what quietens it: `2`,
 `4` and `9` drive the display's pins at 2 mA, 4 mA, and 12 mA with sharp
-edges; `a`, `b` and `c` paint all of the waterfall, 40 rows of it, or the
+edges; `a`, `b` and `c` paint all of the waterfall, half of it, or the
 graph alone; `F`, `H` and `Q` run the display's port at its full rate, 12 MHz
 and 6 MHz. The panel shows which is chosen.
 
