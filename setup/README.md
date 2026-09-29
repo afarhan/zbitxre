@@ -92,29 +92,16 @@ controls it from afar:
 
     ssh pi@sbitx.local
 
-Whether the name resolves depends on the access point. mDNS is asked and
-answered by multicast, and an access point that does not pass multicast
-from one wireless device to another breaks it for every device on it.
+It works only where the access point carries mDNS. A home router tried on
+29 September 2026 did not. On it, and for the first few minutes after a
+device joined a phone's hotspot, the name resolved; after that it did not,
+on two different zbitx radios. The radio was not at fault.
 
-This was met on 29 September 2026. With the radio and a computer both on
-one access point, a home router from an internet provider, the name did not
-resolve. The radio's avahi answered when asked directly and its WiFi had
-joined the mDNS groups, but nothing sent to 224.0.0.251 or to
-239.255.255.250 passed between the two in either direction, while ordinary
-traffic, broadcasts and IPv6 neighbour discovery did. Both were moved to
-another access point and the name resolved at once, with nothing changed
-on the radio or the computer.
+Where the name does not resolve, the radio has to be found by its address.
 
-None of these made any difference on the first access point, so none of
-them is a cure: stopping the radio's own access point, turning off the
-WiFi's power saving, letting the WiFi take all multicast, and having avahi
-leave the groups and join again.
-
-To tell whether an access point passes mDNS, ask the radio directly, which
-does not need multicast. If this answers and the name still does not
-resolve, the access point is the cause:
-
-    dig +short @<the radio's address> -p 5353 sbitx.local
+Every radio made from the same system image is called `sbitx`. Two of them
+on one network will not both be `sbitx.local`: avahi renames the second
+`sbitx-2.local`, and says so only in its log.
 
 ### The radio's own access point
 
