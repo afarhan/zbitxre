@@ -12,7 +12,7 @@
 #   build/sdr     the radio, run from a terminal; see tools/sdr.c
 
 CC     = gcc
-CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -Ihw -Idsp -Itests -Ifront_panel
+CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -I. -Ihw -Idsp -Itests -Ifront_panel
 BUILD  = build
 
 # what the radio and the panel say to each other is in the panel's folder,
@@ -22,13 +22,14 @@ LINK_HEADERS = front_panel/link.h
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h
+DSP_HEADERS = dsp/sdr.h signal_block.h modems.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
 	$(LINK)
-DSP         = core_sdr.c dsp/filter.c dsp/vfo.c
+DSP         = core_sdr.c signal_block.c modems.c dsp/filter.c dsp/vfo.c
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
-HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link
+HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
+	$(BUILD)/test_chain
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = $(BUILD)/sdr
@@ -50,6 +51,7 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
+	$(BUILD)/test_chain
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -72,6 +74,9 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
+
+$(BUILD)/test_chain: tests/test_chain.c signal_block.c modems.c signal_block.h modems.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_chain.c signal_block.c modems.c
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

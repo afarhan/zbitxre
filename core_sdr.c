@@ -28,6 +28,11 @@
 // follow the bin: a filter left at 24 kHz on a radio that works at bin 600
 // passes what is 4 kHz below the station and cuts the station off.
 //
+// THE MODEM
+//
+// rx_linear() ends, as zbitxv2's did, by handing the audio it has made for
+// the speaker to modem_rx(). modems.c says what may happen to it there.
+//
 // WHO CHANGES WHAT
 //
 // The audio thread runs sound_block(), and from it sound_process(),
@@ -70,6 +75,7 @@
 #include "i2c.h"
 #include "si5351.h"
 #include "sdr.h"
+#include "modems.h"
 
 static int center_bin = 512;
 
@@ -585,6 +591,9 @@ void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 		memset(output_speaker, 0, MAX_BINS/2 * sizeof(int32_t));
 		mute_count--;
 	}
+
+	//push the data to any potential modem
+	modem_rx(rx_list->mode, output_speaker, MAX_BINS/2);
 }
 
 /*
