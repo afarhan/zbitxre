@@ -77,3 +77,7 @@ avoid_warnings=1
 
 # the Si5351 and the DS3231 clock chip on a kernel I2C bus; the kernel keeps the clock (zbitxre)
 dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6
+
+# the newer USB driver, as a host; the older one did not always find a full-speed device
+# behind a hub when the Pi started (zbitxre)
+dtoverlay=dwc2,dr_mode=host

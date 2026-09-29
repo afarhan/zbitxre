@@ -24,7 +24,8 @@ stands with zbitxre working. The lines that matter to the radio are these.
 | `dtoverlay=i2s-mmap` | Lets programs reach the sound card's buffer directly. |
 | `gpio=4,5,9,10,11,17,22,27=ip,pu` | Makes these pins inputs with pull-ups from the moment the Pi starts. Pins 4 and 5 are the PTT and the key. |
 | `gpio=24,23=op,pu` | Makes these pins outputs from the moment the Pi starts. Pin 23 is the transmitter's line. |
-| `dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6` | The one line zbitxre adds. See below. |
+| `dtoverlay=i2c-rtc-gpio,ds3231,i2c_gpio_sda=13,i2c_gpio_scl=6` | Added for zbitxre. See below. |
+| `dtoverlay=dwc2,dr_mode=host` | Added for a keyboard and mouse on the Pi's USB. The radio itself does not need it. See below. |
 
 Pin numbers are BCM GPIO numbers throughout.
 
@@ -51,6 +52,55 @@ keeps a copy of the file as it was:
 
     sudo setup/add-overlay.sh
     sudo reboot
+
+### The line for a keyboard and mouse
+
+    dtoverlay=dwc2,dr_mode=host
+
+The radio does not use the Pi's USB. This is for working on the Pi with a
+keyboard and a mouse.
+
+The Pi's older USB driver, `dwc_otg`, does badly with a full-speed device
+such as the receiver of a wireless keyboard. Plugged straight into the Pi,
+the receiver was not found on 10 starts out of 16. Through a USB 2.0 hub it
+was found on five starts running, and then on one start the hub reported
+nothing plugged into it, though the receiver was there: releasing the hub
+and taking it up again found it at once. On a start that ran overnight the
+kernel had to reset the receiver 114 times.
+
+The line replaces that driver with the newer one, `dwc2`. It was tried on 29
+September 2026 and the receiver was found on the next start. One start
+proves little about a fault that comes and goes. To see how each start of
+the radio has done:
+
+    sudo grep -a "Booting Linux\|idVendor=046d\|reset full-speed" /var/log/kern.log
+
+A copy of the boot configuration from before the line was added is kept on
+the radio as `/boot/config.txt.before-dwc2`.
+
+If the keyboard is lost while the radio is running, this finds it again
+without a restart:
+
+    echo 1-1 | sudo tee /sys/bus/usb/drivers/usb/unbind
+    echo 1-1 | sudo tee /sys/bus/usb/drivers/usb/bind
+
+## Finding the radio on the network
+
+The radio's name is `sbitx`, so where names ending in `.local` work it is
+`sbitx.local`. It is not `zbitx.local`.
+
+They do not work everywhere. A name ending in `.local` is asked for by
+multicast, and some access points do not pass multicast from one wireless
+device to another. On the network the test radio is on, nothing sent to
+224.0.0.251 by the computer reached the radio or the other way, while
+broadcasts and ordinary traffic passed. The radio answers when it is asked
+for its name directly, so the fault is not in the radio.
+
+Two ways to reach it that do not depend on the network:
+
+- The radio has an access point of its own, called `zbitx`. A computer
+  joined to it reaches the radio at 192.168.4.1, always.
+- An access point can be told to give the radio the same address each time.
 
 ## Kernel modules
 

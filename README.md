@@ -65,6 +65,10 @@ It gives the Si5351 and the clock chip to the kernel, which makes an I2C bus
 of their two pins and keeps the clock itself. `setup/add-overlay.sh` adds the
 line and keeps a copy of the file as it was.
 
+A second line, `dtoverlay=dwc2,dr_mode=host`, is for a keyboard and mouse on
+the Pi, which the older USB driver loses. `setup/README.md` also says how to
+find the radio on a network where its name does not resolve.
+
 ## Building and testing
 
     make          build everything into build/
