@@ -12,8 +12,10 @@
 //   two blocks of the same kind each keep their own data;
 //   a block that passes on a quarter of its samples, followed by one that
 //   passes each on four times, gives back as many as went in;
+//   starting a chain resets each block once, after init;
 //   a block that holds samples back, as FreeDV does, gives silence at first
 //   and then its samples, one block late, none lost;
+//   a reset clears what the chain held and queued;
 //   chain_start() refuses a chain whose rates do not agree;
 //   a block whose init fails stops the chain from starting, and the blocks
 //   already made ready are freed.
@@ -106,6 +108,15 @@ static int hold_init(struct signal_block *b) {
 	if (b->data == NULL)
 		return -1;
 	return 0;
+}
+
+static int hold_resets;
+
+static void hold_reset(struct signal_block *b) {
+	struct hold_data *d = (struct hold_data *)b->data;
+
+	d->count = 0;
+	hold_resets++;
 }
 
 static void hold_process(struct signal_block *b, const float *samples, int count) {
@@ -226,8 +237,11 @@ static void check_holding_back(void) {
 	int round;
 	int i;
 
+	hold.reset = hold_reset;
 	hold.next = &speaker_block;
+	hold_resets = 0;
 	modem_set_rx_chain(&hold);
+	expect(hold_resets == 1, "starting a chain resets each block once, after init");
 	fill(samples, 0);
 	modem_rx(0, samples, BLOCK);
 	for (i = 0; i < BLOCK; i++) {
@@ -245,6 +259,19 @@ static void check_holding_back(void) {
 		}
 	}
 	expect(then_sound, "and then its samples, one block late, none lost");
+
+	fill(samples, 0);
+	modem_rx(0, samples, BLOCK);
+	modem_reset();
+	fill(samples, 0);
+	modem_rx(0, samples, BLOCK);
+	silent_first = 1;
+	for (i = 0; i < BLOCK; i++) {
+		if (samples[i] != 0)
+			silent_first = 0;
+	}
+	expect(silent_first && hold_resets == 2,
+		"after a reset, what was held and queued is gone, and it starts afresh");
 	modem_set_rx_chain(NULL);
 }
 

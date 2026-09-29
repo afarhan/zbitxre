@@ -11,10 +11,18 @@
 //
 // A BLOCK
 //
-// A block is a struct signal_block with four things of its own:
+// A block is a struct signal_block with five things of its own:
 //
-//   init      makes the block ready. It allocates what the block needs, puts
-//             it in data, and returns 0, or -1 if it cannot.
+//   init      is called once, when the chain is first started. It allocates
+//             what the block needs, puts it in data, and returns 0, or -1 if
+//             it cannot.
+//   reset     clears what the block remembers of the signal so far: its
+//             filters' history, samples it holds back, a half-made frame. It
+//             allocates nothing and frees nothing. It is called after init,
+//             and again whenever the signal the chain is given breaks off and
+//             starts afresh: on going between receive and transmit, on a new
+//             band or a new mode. It may be left out by a block that
+//             remembers nothing.
 //   process   is given samples, as many as the block before it has, and does
 //             its work on them.
 //   free      releases what init allocated.
@@ -81,7 +89,17 @@ int chain_start(struct signal_block *first) {
 			return -1;
 		}
 	}
+	chain_reset(first);
 	return 0;
+}
+
+void chain_reset(struct signal_block *first) {
+	struct signal_block *b;
+
+	for (b = first; b != NULL; b = b->next) {
+		if (b->reset != NULL)
+			b->reset(b);
+	}
 }
 
 void chain_stop(struct signal_block *first) {

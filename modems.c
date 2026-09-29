@@ -38,6 +38,10 @@
 // way into a chain and out of it the lowest 8 bits of a sample are lost, some
 // 140 dB below full scale.
 //
+// modem_reset() clears what the chain remembers, so that the signal can start
+// afresh. It is for the audio thread, between two blocks, when the radio goes
+// between receive and transmit or changes band or mode.
+//
 // modem_set_rx_chain() is to be called before the sound card is started.
 // Changing the chain while the radio runs, as a change of mode will need, is
 // not done yet.
@@ -69,6 +73,13 @@ static int speaker_init(struct signal_block *b) {
 	return 0;
 }
 
+static void speaker_reset(struct signal_block *b) {
+	struct speaker_queue *q = (struct speaker_queue *)b->data;
+
+	q->head = 0;
+	q->count = 0;
+}
+
 static void speaker_process(struct signal_block *b, const float *samples, int count) {
 	struct speaker_queue *q = (struct speaker_queue *)b->data;
 	int at;
@@ -94,6 +105,7 @@ struct signal_block speaker_block = {
 	.rate_in = MODEM_SAMPLE_RATE,
 	.rate_out = MODEM_SAMPLE_RATE,
 	.init = speaker_init,
+	.reset = speaker_reset,
 	.process = speaker_process,
 	.free = speaker_free,
 };
@@ -134,6 +146,11 @@ static void take_from_the_speaker_queue(int32_t *samples, int count) {
 		q->head = (q->head + 1) % SPEAKER_QUEUE;
 		q->count--;
 	}
+}
+
+void modem_reset(void) {
+	if (rx_chain != NULL)
+		chain_reset(rx_chain);
 }
 
 void modem_rx(int mode, int32_t *samples, int count) {

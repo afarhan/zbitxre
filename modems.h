@@ -14,4 +14,5 @@
 extern struct signal_block speaker_block;
 
 int modem_set_rx_chain(struct signal_block *first);
+void modem_reset(void);
 void modem_rx(int mode, int32_t *samples, int count);

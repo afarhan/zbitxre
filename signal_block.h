@@ -11,6 +11,7 @@ struct signal_block {
 	int rate_in;
 	int rate_out;
 	int (*init)(struct signal_block *b);
+	void (*reset)(struct signal_block *b);
 	void (*process)(struct signal_block *b, const float *samples, int count);
 	void (*free)(struct signal_block *b);
 	void *data;
@@ -20,4 +21,5 @@ struct signal_block {
 void block_pass(struct signal_block *b, const float *samples, int count);
 
 int chain_start(struct signal_block *first);
+void chain_reset(struct signal_block *first);
 void chain_stop(struct signal_block *first);
