@@ -86,21 +86,38 @@ without a restart:
 
 ## Finding the radio on the network
 
-The radio's name is `sbitx`, so where names ending in `.local` work it is
-`sbitx.local`. It is not `zbitx.local`.
+The test radio's name is `sbitx`, and its mDNS service, avahi, announces it
+as `sbitx.local`. Nothing on it announces `zbitx.local`: no file under
+`/etc/avahi`, no service, and nothing in the radio's programs names it.
 
-They do not work everywhere. A name ending in `.local` is asked for by
-multicast, and some access points do not pass multicast from one wireless
-device to another. On the network the test radio is on, nothing sent to
-224.0.0.251 by the computer reached the radio or the other way, while
-broadcasts and ordinary traffic passed. The radio answers when it is asked
-for its name directly, so the fault is not in the radio.
+On the network the test radio is on, `sbitx.local` does not resolve from
+another computer on the same WiFi. What was seen, on 29 September 2026:
 
-Two ways to reach it that do not depend on the network:
+| | |
+|---|---|
+| The radio's avahi, asked for its name directly | answers, with the right address |
+| The groups the radio's WiFi has joined | 224.0.0.251 and ff02::fb, as they should be |
+| What the radio sees arrive on its WiFi | its own mDNS and nothing from the computer, whether the computer's resolver asks or a question is sent by hand, over IPv4 or IPv6 |
+| What the computer hears of the radio's announcements | nothing: the name is not in its cache |
+| A ping to all nodes, ff02::1 | passes both ways |
+| A broadcast, and ordinary traffic | pass both ways |
+| Letting the radio's WiFi take all multicast | no difference |
+| The radio leaving the group and joining again | no difference |
+
+So what is sent to everyone passes, and what is sent to a group that has
+to be joined does not, in either direction. That is what an access point
+does when it keeps a list of who has joined which group and the list is
+empty. It has not been proved to be the access point: the computer's
+firewall could not be read, and no third device was tried.
+
+The access point's own name service does not know the radio either.
+
+Ways to reach the radio that do not depend on any of this:
 
 - The radio has an access point of its own, called `zbitx`. A computer
   joined to it reaches the radio at 192.168.4.1, always.
-- An access point can be told to give the radio the same address each time.
+- An access point can be told to give the radio the same address each
+  time, and the computer told the name, with a line in its `/etc/hosts`.
 
 ## Kernel modules
 
