@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// sdr.c — the radio itself: tuning, modes, filters and the receiver.
+// core_sdr.c — the radio itself: tuning, modes, filters and the receiver.
 //
 // This is zbitxv2's sbitx.c. Its functions and its arrays keep their names,
 // and the receiver's arithmetic is unchanged. sdr.h explains how the
@@ -45,8 +45,14 @@
 // The S meter is worked out by the audio thread once a block, from its own
 // samples, and sdr_request() reports the last value.
 //
-// setup_without_radio() sets the receiver up and touches no hardware. The
-// caller then feeds sound_process() itself. It is for tests.
+// SETTING UP
+//
+// setup() sets up the whole radio, in the order zbitxv2's setup() does: the
+// board's pins, the Si5351, the transforms, the oscillators, the receiver
+// and transmitter, and last the sound card, which starts the audio thread.
+// teardown() undoes it. There is one way to set the radio up. The tests that
+// run on a computer with no radio are built with tests/hw_stand_ins.c in
+// place of hw/, and call the same setup().
 
 #include <stdlib.h>
 #include <string.h>
@@ -128,7 +134,6 @@ static unsigned offer_in_use = 1;
 static atomic_uint offer_waiting = 2u;
 
 static atomic_int s_meter;
-static int has_radio = 0;
 static int is_set_up = 0;
 static uint32_t oscillator_hz = 0;
 
@@ -171,8 +176,7 @@ void radio_tune_to(u_int32_t f){
 	else
 		oscillator_hz = f + bfo_freq - freq_shift + TUNING_SHIFT;
 
-	if (has_radio)
-		si5351_set_freq(OSCILLATOR_CLOCK, oscillator_hz);
+	si5351_set_freq(OSCILLATOR_CLOCK, oscillator_hz);
 }
 
 uint32_t oscillator_frequency(void){
@@ -651,8 +655,12 @@ void setup_oscillators(){
 	si5351_reset_plls();
 }
 
-static int setup_the_receiver(const struct board *board){
+int setup(const struct board *board){
 	if (is_set_up || board == NULL)
+		return -1;
+	if (board_open(board) < 0)
+		return -1;
+	if (i2c_open_bus_of(SI5351_ADDRESS) < 0)
 		return -1;
 
 	bfo_freq = board->bfo_hz;
@@ -660,6 +668,7 @@ static int setup_the_receiver(const struct board *board){
 
 	fft_init();
 	vfo_init_phase_table();
+	setup_oscillators();
 
 	add_rx(7000000, MODE_LSB, -3000, -300);
 	add_tx(7000000, MODE_LSB, -3000, -300);
@@ -679,25 +688,7 @@ static int setup_the_receiver(const struct board *board){
 	freq_hdr = -1;
 	mute_count = 50;
 	is_set_up = 1;
-	return 0;
-}
 
-int setup_without_radio(const struct board *board){
-	has_radio = 0;
-	return setup_the_receiver(board);
-}
-
-int setup(const struct board *board){
-	if (is_set_up)
-		return -1;
-	if (board_open(board) < 0)
-		return -1;
-	if (i2c_open_bus_of(SI5351_ADDRESS) < 0)
-		return -1;
-	has_radio = 1;
-	if (setup_the_receiver(board) < 0)
-		return -1;
-	setup_oscillators();
 	if (audio_open(sound_block) < 0)
 		return -1;
 	return 0;
@@ -707,8 +698,6 @@ void teardown(void){
 	if (!is_set_up)
 		return;
 	is_set_up = 0;
-	if (!has_radio)
-		return;
 	audio_close();
 	si5351_clock_off(OSCILLATOR_CLOCK);
 	si5351_clock_off(BFO_CLOCK);
@@ -829,13 +818,13 @@ void sdr_request(char *request, char *response){
 	}
 	else if(!strcmp(cmd, "r1:gain")){
 		rx_gain = atoi(value);
-		if(!in_tx && has_radio)
+		if(!in_tx)
 			audio_set_receiver(rx_gain);
 		strcpy(response, "ok");
 	}
 	else if (!strcmp(cmd, "r1:volume")){
 		rx_vol = atoi(value);
-		if(!in_tx && has_radio)
+		if(!in_tx)
 			audio_set_speaker(rx_vol);
 		strcpy(response, "ok");
 	}

@@ -17,7 +17,7 @@ over. Nothing here changes it.
 | What each pin does on a board (`hw/board.c`) | done for the zbitx's first board |
 | Clock chip | the kernel's own driver keeps it; no code here |
 | Sound card (`hw/audio.c`) | done, tested on a zbitx |
-| The receiver of `sbitx.c` as `dsp/sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
+| The receiver of `sbitx.c` as `core_sdr.c` | runs on a zbitx and is heard in the earphones; gives the same samples as zbitxv2 |
 | The transmitter and the T/R sequence | next |
 | Front panel firmware (`front_panel/`) | begun: the frequency, the volume, the spectrum and its waterfall; the hash it made in the receiver is cured |
 | The link between the radio and the panel, over I2C | the panel's knob tunes the receiver, and the radio sends the panel the spectrum; it makes no noise in the receiver |
@@ -328,14 +328,15 @@ GPL version 3 or later. See `LICENSE`.
 
     setup/    what the radio's Pi needs, and its boot configuration
     hw/       the radio's hardware: buses, chips and boards
-    dsp/      the radio itself: tuning, modes, filters, the receiver
+    core_sdr.c   the radio itself: tuning, modes, the receiver
+    dsp/      the filter and the tone generator, and sdr.h
     tools/    programs to run the radio by hand
     front_panel/   the firmware of the zbitx's front panel, an Arduino sketch
     tests/    one program per piece, each with its own main()
 
 ## Conventions
 
-What is carried from zbitxv2 keeps its names. `dsp/sdr.c` is `sbitx.c`,
+What is carried from zbitxv2 keeps its names. `core_sdr.c` is `sbitx.c`,
 `dsp/filter.c` is `fft_filter.c` and `dsp/vfo.c` is `vfo.c`, with the
 functions, the arrays and the variables called what they have been called for
 years: `rx_linear()`, `sound_process()`, `fft_in`, `fft_out`, `fft_m`,

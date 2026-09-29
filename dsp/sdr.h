@@ -187,7 +187,6 @@ extern int freq_hdr;
 extern int bfo_freq;
 
 int setup(const struct board *board);
-int setup_without_radio(const struct board *board);
 void teardown(void);
 
 void sdr_request(char *request, char *response);

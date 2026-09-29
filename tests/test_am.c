@@ -4,7 +4,7 @@
 // test_am.c — that the AM filter is around the carrier, wherever the board
 // puts it.
 //
-// It needs no radio. The receiver is set up for the zbitx's first board, put
+// It needs no radio; it is built with tests/hw_stand_ins.c. The receiver is set up for the zbitx's first board, put
 // in AM with the AGC off, and given an AM station: a carrier with a 400 Hz
 // tone on it. The test then looks for the 400 Hz tone in what goes to the
 // speaker.
@@ -33,6 +33,7 @@
 #include "audio.h"
 #include "board.h"
 #include "sdr.h"
+#include "hw_stand_ins.h"
 
 #define BLOCK 1024
 #define SAMPLE_RATE 96000.0
@@ -83,7 +84,7 @@ static void one_block(double carrier_hz, int32_t *to_speaker) {
 	block.to_speaker = to_speaker;
 	block.to_transmitter = to_transmitter;
 	block.frames = BLOCK;
-	sound_block(&block);
+	hw_stand_in_block(&block);
 }
 
 static double tone_heard(double carrier_hz) {
@@ -120,7 +121,7 @@ int main(void) {
 	double in_the_middle;
 
 	board = &board_zbitx_1;
-	if (setup_without_radio(board) < 0) {
+	if (setup(board) < 0) {
 		printf("the receiver did not open\n");
 		return EXIT_FAILURE;
 	}

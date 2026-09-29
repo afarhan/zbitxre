@@ -5,7 +5,7 @@
 // everything it produces.
 //
 // It is built twice. With OLD defined it is built with zbitxv2's sbitx.c,
-// and without it, with zbitxre's dsp/sdr.c. The two cannot be in one program
+// and without it, with zbitxre's core_sdr.c. The two cannot be in one program
 // because they have the same names. Each program writes a file, and the two
 // files must be the same, byte for byte. run.sh does all of it.
 //
@@ -109,13 +109,14 @@ static void give_a_block(int32_t *from_receiver, int32_t *from_microphone,
 #include "audio.h"
 #include "board.h"
 #include "sdr.h"
+#include "hw_stand_ins.h"
 
 static unsigned int oscillator(void) {
 	return oscillator_frequency();
 }
 
 static void open_the_receiver(void) {
-	if (setup_without_radio(&board_zbitx_1) < 0) {
+	if (setup(&board_zbitx_1) < 0) {
 		printf("the receiver did not open\n");
 		exit(EXIT_FAILURE);
 	}
@@ -130,7 +131,7 @@ static void give_a_block(int32_t *from_receiver, int32_t *from_microphone,
 	block.to_speaker = to_speaker;
 	block.to_transmitter = to_transmitter;
 	block.frames = BLOCK;
-	sound_block(&block);
+	hw_stand_in_block(&block);
 }
 
 #endif

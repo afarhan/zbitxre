@@ -7,7 +7,8 @@
 #     tests/against_zbitxv2/run.sh <directory of zbitxv2's source>
 #
 # It builds script.c twice, once with zbitxv2's sbitx.c, fft_filter.c and
-# vfo.c, and once with zbitxre's dsp/. It runs both and compares the two
+# vfo.c, and once with zbitxre's core_sdr.c and dsp/, the hardware stood in
+# for by tests/hw_stand_ins.c. It runs both and compares the two
 # files they write. It needs no radio and runs on a PC.
 #
 # zbitxv2's sbitx.c reads hw_settings.ini from $HOME/sbitx/data, so the old
@@ -38,11 +39,11 @@ gcc -std=gnu11 -O2 -w -DOLD -I"$here" -I"$old" -o "$work/old" \
 	"$old/sbitx.c" "$old/fft_filter.c" "$old/vfo.c" \
 	"$old/ini.c" "$old/queue.c" $libs
 
-gcc -std=gnu11 -O2 -Wall -Wextra -I"$new/hw" -I"$new/dsp" \
-	-I"$new/front_panel" -o "$work/new" \
+gcc -std=gnu11 -O2 -Wall -Wextra -I"$new/hw" -I"$new/dsp" -I"$new/tests" \
+	-o "$work/new" \
 	"$here/script.c" \
-	"$new/dsp/sdr.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
-	"$new"/hw/*.c "$new/front_panel/link.c" $libs -lasound
+	"$new/core_sdr.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
+	"$new/tests/hw_stand_ins.c" "$new/hw/board.c" "$new/hw/si5351.c" $libs
 
 cd "$work"
 rm -f w.wis wf.wis

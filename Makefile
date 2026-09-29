@@ -25,7 +25,7 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
 DSP_HEADERS = dsp/sdr.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
 	$(LINK)
-DSP         = dsp/sdr.c dsp/filter.c dsp/vfo.c
+DSP         = core_sdr.c dsp/filter.c dsp/vfo.c
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link
@@ -67,8 +67,11 @@ $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_si5351_math.c hw/si5351.c
 
-$(BUILD)/test_am: tests/test_am.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(HW) $(RADIO_LIBS)
+# a test that needs no radio is built with the hardware stood in for
+STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
+
+$(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)
