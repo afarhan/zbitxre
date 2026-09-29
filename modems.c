@@ -66,16 +66,18 @@ struct speaker_queue {
 
 static struct signal_block *rx_chain;
 
-static int speaker_init(struct signal_block *b) {
+static int speaker_init(struct signal_block *b, const char *params) {
+	(void)params;
 	b->data = calloc(1, sizeof(struct speaker_queue));
 	if (b->data == NULL)
 		return -1;
 	return 0;
 }
 
-static void speaker_reset(struct signal_block *b) {
+static void speaker_reset(struct signal_block *b, const char *params) {
 	struct speaker_queue *q = (struct speaker_queue *)b->data;
 
+	(void)params;
 	q->head = 0;
 	q->count = 0;
 }

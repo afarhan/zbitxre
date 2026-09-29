@@ -9,7 +9,9 @@
 //
 //   with no chain, the samples come back untouched;
 //   a block that scales passes on its samples, scaled;
-//   two blocks of the same kind each keep their own data;
+//   one kind of block, given different parameters, works differently in
+//   each place, and a running block reset with new parameters changes;
+//   parameters are read by name;
 //   a block that passes on a quarter of its samples, followed by one that
 //   passes each on four times, gives back as many as went in;
 //   starting a chain resets each block once, after init;
@@ -51,14 +53,20 @@ struct scale_data {
 	float by;
 };
 
-static int scale_init(struct signal_block *b) {
+static int scale_init(struct signal_block *b, const char *params) {
 	struct scale_data *d = malloc(sizeof(struct scale_data));
 
+	(void)params;
 	if (d == NULL)
 		return -1;
-	d->by = 1.0f;
 	b->data = d;
 	return 0;
+}
+
+static void scale_reset(struct signal_block *b, const char *params) {
+	struct scale_data *d = (struct scale_data *)b->data;
+
+	d->by = 1.0f / param_int(params, "divide", 1);
 }
 
 static void scale_process(struct signal_block *b, const float *samples, int count) {
@@ -103,7 +111,8 @@ struct hold_data {
 	int count;
 };
 
-static int hold_init(struct signal_block *b) {
+static int hold_init(struct signal_block *b, const char *params) {
+	(void)params;
 	b->data = calloc(1, sizeof(struct hold_data));
 	if (b->data == NULL)
 		return -1;
@@ -112,8 +121,10 @@ static int hold_init(struct signal_block *b) {
 
 static int hold_resets;
 
-static void hold_reset(struct signal_block *b) {
+static void hold_reset(struct signal_block *b, const char *params) {
 	struct hold_data *d = (struct hold_data *)b->data;
+
+	(void)params;
 
 	d->count = 0;
 	hold_resets++;
@@ -130,13 +141,14 @@ static void hold_process(struct signal_block *b, const float *samples, int count
 	d->count = 0;
 }
 
-static int failing_init(struct signal_block *b) {
+static int failing_init(struct signal_block *b, const char *params) {
 	(void)b;
+	(void)params;
 	return -1;
 }
 
 static struct signal_block block_of(const char *name, int rate_in, int rate_out,
-		int (*init)(struct signal_block *),
+		int (*init)(struct signal_block *, const char *),
 		void (*process)(struct signal_block *, const float *, int)) {
 	struct signal_block b;
 
@@ -186,18 +198,30 @@ static void check_scaling(void) {
 	int ok = 1;
 	int i;
 
+	half.reset = scale_reset;
+	half.params = "divide=2";
+	third.reset = scale_reset;
+	third.params = "gain=7 divide=3";
 	half.next = &third;
 	third.next = &speaker_block;
 	expect(modem_set_rx_chain(&half) == 0, "a chain of three blocks starts");
-	((struct scale_data *)half.data)->by = 0.5f;
-	((struct scale_data *)third.data)->by = 1.0f / 3.0f;
 	fill(samples, 1);
 	modem_rx(0, samples, BLOCK);
 	for (i = 0; i < BLOCK; i++) {
-		if (!close_to(samples[i], (int32_t)((1 + i) * (TEST_LEVEL / BLOCK) / 6.0)))
+		if (!close_to(samples[i], (int32_t)(value(1 + i) / 6.0)))
 			ok = 0;
 	}
-	expect(ok, "two scaling blocks, each with its own data, scale by a sixth");
+	expect(ok, "one kind of block, given divide=2 and divide=3, divides by six");
+
+	block_reset(&third, "divide=5");
+	fill(samples, 1);
+	modem_rx(0, samples, BLOCK);
+	ok = 1;
+	for (i = 0; i < BLOCK; i++) {
+		if (!close_to(samples[i], (int32_t)(value(1 + i) / 10.0)))
+			ok = 0;
+	}
+	expect(ok, "resetting a running block with divide=5 changes it to divide by ten");
 	modem_set_rx_chain(NULL);
 }
 
@@ -275,6 +299,19 @@ static void check_holding_back(void) {
 	modem_set_rx_chain(NULL);
 }
 
+static void check_reading_params(void) {
+	char text[PARAMS_MAX];
+
+	expect(param_int("sideband=LSB bw=2400", "bw", 0) == 2400
+		&& param_int("sideband=LSB bw=2400", "pitch", 700) == 700
+		&& param_int("abw=9 bw=3", "bw", 0) == 3,
+		"param_int finds a value by its name, and not by part of another name");
+	expect(param_text("sideband=LSB bw=2400", "sideband", text, sizeof(text)) == 0
+		&& strcmp(text, "LSB") == 0
+		&& param_text("bw=2400", "sideband", text, sizeof(text)) < 0,
+		"param_text finds a word, and says so when it is not there");
+}
+
 static void check_failing_init(void) {
 	struct signal_block made = block_of("made", MODEM_SAMPLE_RATE,
 		MODEM_SAMPLE_RATE, scale_init, scale_process);
@@ -294,6 +331,7 @@ int main(void) {
 	check_scaling();
 	check_rates();
 	check_holding_back();
+	check_reading_params();
 	check_failing_init();
 
 	if (checks_failed > 0) {

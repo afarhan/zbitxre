@@ -30,6 +30,21 @@
 //             and keeps its buffers and its state there. Nothing else looks
 //             at it, so two blocks of the same kind each have their own.
 //
+// PARAMETERS
+//
+// A block is told how to work by a string of parameters, a name and a value
+// to each, separated by spaces: "sideband=LSB bw=2400". init and reset are
+// both given it. So one demodulator, defined once, is USB in one chain and
+// LSB in another, and a new setting, a wider filter or a new pitch, is given
+// to a running block by resetting it with new parameters.
+//
+// A block keeps the string it was defined with in params, and chain_start()
+// and chain_reset() hand each block its own. block_reset() resets one block
+// with a string given there and then, and makes that the block's string
+// from then on. The string must stay as it is for as long as the block may
+// be reset with it. param_int() and param_text() read a value out of a
+// string; a name that is not there gives what the caller says it should be.
+//
 // A block passes samples on by calling block_pass(). It may pass on as many
 // as it likes, whenever it likes, or none at all. A decimator passes on one
 // sample for every eight it is given. The FreeDV decoder takes in 960 samples
@@ -55,6 +70,8 @@
 // buffer, and takes the results back the same way.
 
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "signal_block.h"
 
@@ -84,7 +101,7 @@ int chain_start(struct signal_block *first) {
 	for (b = first; b != NULL; b = b->next)
 		b->data = NULL;
 	for (b = first; b != NULL; b = b->next) {
-		if (b->init != NULL && b->init(b) < 0) {
+		if (b->init != NULL && b->init(b, b->params) < 0) {
 			chain_stop(first);
 			return -1;
 		}
@@ -98,8 +115,50 @@ void chain_reset(struct signal_block *first) {
 
 	for (b = first; b != NULL; b = b->next) {
 		if (b->reset != NULL)
-			b->reset(b);
+			b->reset(b, b->params);
 	}
+}
+
+void block_reset(struct signal_block *b, const char *params) {
+	b->params = params;
+	if (b->reset != NULL)
+		b->reset(b, params);
+}
+
+static const char *value_of(const char *params, const char *name) {
+	size_t length = strlen(name);
+	const char *at = params;
+
+	while (at != NULL && *at != 0) {
+		while (*at == ' ')
+			at++;
+		if (strncmp(at, name, length) == 0 && at[length] == '=')
+			return at + length + 1;
+		at = strchr(at, ' ');
+	}
+	return NULL;
+}
+
+int param_text(const char *params, const char *name, char *value, int room) {
+	const char *found = value_of(params, name);
+	int length = 0;
+
+	if (found == NULL || room <= 0)
+		return -1;
+	while (found[length] != 0 && found[length] != ' ' && length < room - 1) {
+		value[length] = found[length];
+		length++;
+	}
+	value[length] = 0;
+	return 0;
+}
+
+int param_int(const char *params, const char *name, int otherwise) {
+	char value[PARAMS_MAX];
+
+	if (param_text(params, name, value, sizeof(value)) < 0)
+		return otherwise;
+	return atoi(value);
 }
 
 void chain_stop(struct signal_block *first) {
