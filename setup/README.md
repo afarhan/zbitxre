@@ -86,38 +86,45 @@ without a restart:
 
 ## Finding the radio on the network
 
-The test radio's name is `sbitx`, and its mDNS service, avahi, announces it
-as `sbitx.local`. Nothing on it announces `zbitx.local`: no file under
-`/etc/avahi`, no service, and nothing in the radio's programs names it.
+The radio's name is `sbitx`, and its mDNS service, avahi, announces it as
+`sbitx.local`. That is how it is reached, by `ssh` and by anything that
+controls it from afar:
 
-On the network the test radio is on, `sbitx.local` does not resolve from
-another computer on the same WiFi. What was seen, on 29 September 2026:
+    ssh pi@sbitx.local
 
-| | |
-|---|---|
-| The radio's avahi, asked for its name directly | answers, with the right address |
-| The groups the radio's WiFi has joined | 224.0.0.251 and ff02::fb, as they should be |
-| What the radio sees arrive on its WiFi | its own mDNS and nothing from the computer, whether the computer's resolver asks or a question is sent by hand, over IPv4 or IPv6 |
-| What the computer hears of the radio's announcements | nothing: the name is not in its cache |
-| A ping to all nodes, ff02::1 | passes both ways |
-| A broadcast, and ordinary traffic | pass both ways |
-| Letting the radio's WiFi take all multicast | no difference |
-| The radio leaving the group and joining again | no difference |
+Whether the name resolves depends on the access point. mDNS is asked and
+answered by multicast, and an access point that does not pass multicast
+from one wireless device to another breaks it for every device on it.
 
-So what is sent to everyone passes, and what is sent to a group that has
-to be joined does not, in either direction. That is what an access point
-does when it keeps a list of who has joined which group and the list is
-empty. It has not been proved to be the access point: the computer's
-firewall could not be read, and no third device was tried.
+This was met on 29 September 2026. With the radio and a computer both on
+one access point, a home router from an internet provider, the name did not
+resolve. The radio's avahi answered when asked directly and its WiFi had
+joined the mDNS groups, but nothing sent to 224.0.0.251 or to
+239.255.255.250 passed between the two in either direction, while ordinary
+traffic, broadcasts and IPv6 neighbour discovery did. Both were moved to
+another access point and the name resolved at once, with nothing changed
+on the radio or the computer.
 
-The access point's own name service does not know the radio either.
+None of these made any difference on the first access point, so none of
+them is a cure: stopping the radio's own access point, turning off the
+WiFi's power saving, letting the WiFi take all multicast, and having avahi
+leave the groups and join again.
 
-Ways to reach the radio that do not depend on any of this:
+To tell whether an access point passes mDNS, ask the radio directly, which
+does not need multicast. If this answers and the name still does not
+resolve, the access point is the cause:
 
-- The radio has an access point of its own, called `zbitx`. A computer
-  joined to it reaches the radio at 192.168.4.1, always.
-- An access point can be told to give the radio the same address each
-  time, and the computer told the name, with a line in its `/etc/hosts`.
+    dig +short @<the radio's address> -p 5353 sbitx.local
+
+### The radio's own access point
+
+The radio can be an access point itself, called `zbitx`, at 192.168.4.1.
+It was there for the front panel when the panel was on WiFi. The panel is
+on I2C now, and on the test radio the three services that make the access
+point are disabled. To have it back:
+
+    sudo systemctl enable hostapd uap0.service dnsmasq
+    sudo reboot
 
 ## Kernel modules
 
