@@ -140,7 +140,7 @@ static struct signal_block block_of(const char *name, int rate_in, int rate_out,
 }
 
 static int32_t value(int k) {
-	return (int32_t)((long)k * TEST_LEVEL / BLOCK);
+	return (int32_t)((int64_t)k * TEST_LEVEL / BLOCK);
 }
 
 static void fill(int32_t *samples, int first) {
