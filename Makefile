@@ -6,6 +6,7 @@
 #   make          build everything into build/
 #   make check    run the tests that need no radio
 #   make radio    run the tests that need the radio (stop the radio program first)
+#   make gui      build the desktop's window on the radio (needs GTK 3)
 #   make panel    build the front panel's firmware
 #   make panel-flash   put it on a Pico that is in its loader
 #
@@ -32,7 +33,8 @@ MODEM_LIST  = $(BUILD)/modem_list.c
 DSP         = core_sdr.c dsp/filter.c dsp/vfo.c $(MODEMS) $(MODEM_LIST)
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
-HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link
+HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
+	$(BUILD)/test_server
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = $(BUILD)/sdr
@@ -46,7 +48,7 @@ PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
-.PHONY: all check radio clean panel panel-flash FORCE
+.PHONY: all check radio clean panel panel-flash gui FORCE
 
 all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
 
@@ -54,6 +56,7 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
+	$(BUILD)/test_server
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -73,8 +76,9 @@ $(MODEM_LIST): $(MODEMS) tools/make_modem_list.sh FORCE | $(BUILD)
 
 FORCE:
 
-$(BUILD)/sdr: tools/sdr.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tools/sdr.c $(DSP) $(HW) $(RADIO_LIBS)
+$(BUILD)/sdr: tools/sdr.c radio.c server.c radio.h server.h $(DSP) $(HW) \
+		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tools/sdr.c radio.c server.c $(DSP) $(HW) $(RADIO_LIBS)
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
@@ -85,6 +89,11 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
+
+$(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h \
+		$(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c $(DSP) $(STAND_INS) \
+		-lfftw3 -lfftw3f -lm
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)
@@ -103,6 +112,14 @@ $(BUILD)/test_board: tests/test_board.c hw/board.c hw/gpio.c \
 
 $(BUILD)/test_audio: tests/test_audio.c hw/audio.c $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_audio.c hw/audio.c -lasound -lpthread -lm
+
+# the desktop's window on the radio; it needs GTK 3, and is built apart
+# from the rest because the radio has no need of it
+gui: $(BUILD)/zbitx_gui
+
+$(BUILD)/zbitx_gui: clients/gtk/zbitx_gui.c | $(BUILD)
+	$(CC) $(CFLAGS) $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
+		$$(pkg-config --libs gtk+-3.0)
 
 panel:
 	arduino-cli compile --fqbn $(PANEL_BOARD) --build-path $(PANEL_BUILD) \

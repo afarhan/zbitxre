@@ -3,22 +3,26 @@
 //
 // sdr.c — the radio, run from a terminal, with its front panel.
 //
-// This opens the radio, tunes it, and then does what it is told, from two
-// places at once: the terminal and the front panel.
+// This opens the radio, tunes it, and then does what it is told, from three
+// places at once: the terminal, the front panel, and clients on the network.
 //
-// From the terminal it takes one request to a line, in the words of
-// sdr_request(): r1:freq=7040000, r1:mode=CW, r1:low=300, r1:high=3000,
-// r1:agc=FAST, r1:gain=60, r1:volume=80, rx_pitch=600, smeter=0. It prints
-// the answer to each.
+// The radio's settings, frequency, band, mode and volume, are kept by
+// radio.c. Every change to them goes through radio_set(), wherever it comes
+// from, and every change is passed on to everyone: to each network client,
+// to the front panel, and printed on the terminal. So a band chosen on the
+// desktop moves the panel's dial, and a turn of the panel's knob moves the
+// desktop's.
+//
+// Clients connect on port 8081. server.c says what they say.
+//
+// From the terminal it takes a setting as a client sends it, "FREQ 7074000",
+// or a request in the words of sdr_request(), "r1:agc=FAST", which goes to
+// the core as it is. A frequency or volume set that way, r1:freq= or
+// r1:volume=, goes through radio.c like any other change.
 //
 // From the panel it takes the frequency and the volume, over the link that
-// hw/panel.c keeps. Turning the panel's knob tunes the radio. What the panel
-// sends is printed as it arrives.
-//
-// The radio is the one that remembers. It tells the panel the frequency and
-// the volume when the panel says HELLO, which the panel does when it starts,
-// and whenever they are changed from the terminal, so that the panel's dial
-// shows what the radio is tuned to.
+// hw/panel.c keeps. When the panel says HELLO, which it does when it starts,
+// it is told the frequency and the volume.
 //
 // Four times a second it sends the panel a line of the spectrum, for the
 // panel's graph and waterfall. The line is 240 points across 25 kHz, the
@@ -54,9 +58,8 @@
 //
 //     sdr [hz] [mode] [volume]
 //
-// Without arguments it opens on 7088 kHz, LSB, at a volume of 75, with a
-// passband of 300 to 3000 Hz. The passband does not follow the mode; ask for
-// r1:low and r1:high after changing it.
+// Without arguments it opens as radio.c opens, on 7088 kHz, LSB. The
+// passband follows the mode.
 //
 // The program waits on the terminal for a few milliseconds at a time and
 // looks to the panel in between. hw/panel.c decides whether it is time to
@@ -77,17 +80,14 @@
 #include "audio.h"
 #include "board.h"
 #include "panel.h"
+#include "radio.h"
+#include "server.h"
 #include "si5351.h"
 #include "sdr.h"
 
 #define BFO_CLOCK       1
 #define VFO_CLOCK       2
 
-#define DEFAULT_HZ      "7088000"
-#define DEFAULT_MODE    "LSB"
-#define DEFAULT_VOLUME  "75"
-#define DEFAULT_LOW     "300"
-#define DEFAULT_HIGH    "3000"
 #define LINE_MAX_LENGTH 128
 #define RESPONSE_MAX    100
 
@@ -113,8 +113,6 @@
 #define MEASURE_EVERY_MS 50
 #define SMALLEST_POWER  1e-30
 
-static int hz_now;
-static int volume_now;
 static int is_done;
 static int is_sending_spectrum = 1;
 static long next_spectrum_ms;
@@ -131,23 +129,6 @@ static long now_ms(void) {
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	return now.tv_sec * MS_PER_SECOND + now.tv_nsec / NS_PER_MS;
-}
-
-static void ask(const char *key, const char *value) {
-	char request[LINE_MAX_LENGTH];
-	char response[RESPONSE_MAX];
-
-	snprintf(request, sizeof(request), "%s=%s", key, value);
-	sdr_request(request, response);
-	printf("%s: %s\n", request, response);
-}
-
-static void ask_number(const char *key_is, int value) {
-	char request[LINE_MAX_LENGTH];
-	char response[RESPONSE_MAX];
-
-	snprintf(request, sizeof(request), "%s%d", key_is, value);
-	sdr_request(request, response);
 }
 
 static void report(void) {
@@ -270,42 +251,49 @@ static void measure(long now) {
 	measured_times++;
 }
 
+static void on_radio_changed(const char *label, const char *value) {
+	server_tell(label, value);
+	if (!strcmp(label, "FREQ"))
+		panel_set(LINK_FREQ, atoi(value));
+	if (!strcmp(label, "AUDIO"))
+		panel_set(LINK_VOLUME, atoi(value));
+	printf("%s %s\n", label, value);
+	fflush(stdout);
+}
+
 static void tell_the_panel(void) {
-	panel_set(LINK_FREQ, hz_now);
-	panel_set(LINK_VOLUME, volume_now);
+	char value[RADIO_VALUE_MAX];
+
+	radio_get("FREQ", value, sizeof(value));
+	panel_set(LINK_FREQ, atoi(value));
+	radio_get("AUDIO", value, sizeof(value));
+	panel_set(LINK_VOLUME, atoi(value));
+}
+
+static void set_or_say_why(const char *label, const char *value) {
+	char why[RADIO_VALUE_MAX * 2];
+
+	if (radio_set(label, value, why, sizeof(why)) < 0)
+		printf("ERROR %s %s\n", label, why);
 }
 
 static void on_panel_took(int control, int32_t value) {
+	char text[RADIO_VALUE_MAX];
+
+	snprintf(text, sizeof(text), "%d", (int)value);
 	if (control == LINK_HELLO) {
 		printf("panel: HELLO, version %d\n", (int)value);
 		tell_the_panel();
 	}
-	if (control == LINK_FREQ) {
-		hz_now = value;
-		ask_number(FREQ_IS, hz_now);
-		printf("panel: FREQ %d\n", hz_now);
-	}
-	if (control == LINK_VOLUME) {
-		volume_now = value;
-		ask_number(VOLUME_IS, volume_now);
-		printf("panel: VOLUME %d\n", volume_now);
-	}
+	if (control == LINK_FREQ)
+		set_or_say_why("FREQ", text);
+	if (control == LINK_VOLUME)
+		set_or_say_why("AUDIO", text);
 	fflush(stdout);
 }
 
 static int begins_with(const char *line, const char *with) {
 	return strncmp(line, with, strlen(with)) == 0;
-}
-
-static void note_what_the_terminal_changed(const char *line) {
-	if (begins_with(line, FREQ_IS)) {
-		hz_now = atoi(line + strlen(FREQ_IS));
-		panel_set(LINK_FREQ, hz_now);
-	}
-	if (begins_with(line, VOLUME_IS)) {
-		volume_now = atoi(line + strlen(VOLUME_IS));
-		panel_set(LINK_VOLUME, volume_now);
-	}
 }
 
 static void obey_a_line(char *line) {
@@ -368,9 +356,22 @@ static void obey_a_line(char *line) {
 		printf("ok\n");
 		return;
 	}
+	if (begins_with(line, FREQ_IS)) {
+		set_or_say_why("FREQ", line + strlen(FREQ_IS));
+		return;
+	}
+	if (begins_with(line, VOLUME_IS)) {
+		set_or_say_why("AUDIO", line + strlen(VOLUME_IS));
+		return;
+	}
+	if (strchr(line, '=') == NULL && strchr(line, ' ') != NULL) {
+		char *value = strchr(line, ' ');
+		*value = 0;
+		set_or_say_why(line, value + 1);
+		return;
+	}
 	sdr_request(line, response);
 	printf("%s\n", response);
-	note_what_the_terminal_changed(line);
 }
 
 static void take_from_the_terminal(void) {
@@ -397,18 +398,22 @@ static void take_from_the_terminal(void) {
 }
 
 static void obey(void) {
-	struct pollfd terminal;
+	struct pollfd polls[1 + SERVER_POLLS];
+	int count;
 
-	terminal.fd = TERMINAL;
-	terminal.events = POLLIN;
 	while (!is_done) {
 		send_the_spectrum(now_ms());
 		measure(now_ms());
 		panel_poll(now_ms(), on_panel_took);
-		terminal.revents = 0;
-		if (poll(&terminal, 1, WAIT_ON_TERMINAL_MS) <= 0)
+
+		polls[0].fd = TERMINAL;
+		polls[0].events = POLLIN;
+		polls[0].revents = 0;
+		count = 1 + server_fill_polls(polls + 1);
+		if (poll(polls, count, WAIT_ON_TERMINAL_MS) <= 0)
 			continue;
-		if (terminal.revents & (POLLIN | POLLHUP))
+		server_serve(polls + 1, count - 1);
+		if (polls[0].revents & (POLLIN | POLLHUP))
 			take_from_the_terminal();
 	}
 }
@@ -418,9 +423,9 @@ int main(int argc, char **argv) {
 	const char *mode;
 	const char *volume;
 
-	hz = DEFAULT_HZ;
-	mode = DEFAULT_MODE;
-	volume = DEFAULT_VOLUME;
+	hz = NULL;
+	mode = NULL;
+	volume = NULL;
 	if (argc > 1)
 		hz = argv[1];
 	if (argc > 2)
@@ -434,20 +439,25 @@ int main(int argc, char **argv) {
 	}
 	printf("radio open on the %s\n", board_zbitx_1.name);
 
-	ask("r1:freq", hz);
-	ask("r1:mode", mode);
-	ask("r1:low", DEFAULT_LOW);
-	ask("r1:high", DEFAULT_HIGH);
-	ask("r1:volume", volume);
-	fflush(stdout);
-
-	hz_now = atoi(hz);
-	volume_now = atoi(volume);
 	panel_open();
+	radio_open(on_radio_changed);
+	if (hz != NULL)
+		set_or_say_why("FREQ", hz);
+	if (mode != NULL)
+		set_or_say_why("MODE", mode);
+	if (volume != NULL)
+		set_or_say_why("AUDIO", volume);
 	tell_the_panel();
+
+	if (server_open(SERVER_PORT) < 0)
+		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);
+	else
+		printf("clients connect on port %d\n", SERVER_PORT);
+	fflush(stdout);
 
 	obey();
 	report();
+	server_close();
 	teardown();
 	return 0;
 }

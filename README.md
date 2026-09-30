@@ -94,6 +94,24 @@ zbitxv2's source at hand:
 
 It needs no radio. `tests/against_zbitxv2/script.c` says what is compared.
 
+## Working the radio from the desktop
+
+The radio program, `build/sdr`, serves its controls on port 8081. `server.c`
+says what is said there: lines of a label and a value, `FREQ 7074000`,
+`BAND 20M`, `MODE CW`, `AUDIO 70`, sent by a client to change a setting and
+sent by the radio to every client whenever a setting changes. It can be
+tried by hand with `nc <radio> 8081`.
+
+The settings themselves, and what each change does to the radio, are kept
+by `radio.c`. Changes from the front panel and the terminal go through it
+too, so every client, the panel and the desktop see the same radio.
+
+`clients/gtk/` is a small window for the desktop, with the frequency, tuned
+in 1 kHz steps, the band, the mode and the volume:
+
+    make gui
+    build/zbitx_gui 192.168.1.76
+
 ## The front panel
 
 The zbitx's front panel is a Raspberry Pi Pico W with a touch screen and a
