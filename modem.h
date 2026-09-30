@@ -51,4 +51,3 @@ struct modem {
 
 extern const struct modem *modem_list[];
 
-const struct modem *modem_find(const char *name);

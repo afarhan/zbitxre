@@ -42,7 +42,7 @@
 // mode brings its own: 300 to 3000 Hz for SSB, 400 Hz wide around the pitch
 // for CW, 3 kHz either side of the carrier for AM.
 //
-// radio_set(), radio_get() and radio_tell_all() are for the thread that owns
+// radio_set(), radio_get() and radio_send_all() are for the thread that owns
 // the controls, the same thread that calls sdr_request(). They are not for
 // the audio thread.
 
@@ -101,9 +101,9 @@ static int hz_now;
 static int volume_now;
 static int band_now = NO_BAND;
 static char mode_now[RADIO_VALUE_MAX];
-static radio_changed_fn say_changed;
+static radio_notify_fn notify_fn;
 
-static void ask_the_core(const char *key, int value) {
+static void core_request_int(const char *key, int value) {
 	char request[REQUEST_MAX];
 	char answer[ANSWER_MAX];
 
@@ -111,7 +111,7 @@ static void ask_the_core(const char *key, int value) {
 	sdr_request(request, answer);
 }
 
-static void ask_the_core_text(const char *key, const char *value) {
+static void core_request(const char *key, const char *value) {
 	char request[REQUEST_MAX];
 	char answer[ANSWER_MAX];
 
@@ -119,19 +119,19 @@ static void ask_the_core_text(const char *key, const char *value) {
 	sdr_request(request, answer);
 }
 
-static void tell(const char *label, const char *value) {
-	if (say_changed != NULL)
-		say_changed(label, value);
+static void notify(const char *label, const char *value) {
+	if (notify_fn != NULL)
+		notify_fn(label, value);
 }
 
-static void tell_number(const char *label, int value) {
+static void notify_int(const char *label, int value) {
 	char text[RADIO_VALUE_MAX];
 
 	snprintf(text, sizeof(text), "%d", value);
-	tell(label, text);
+	notify(label, text);
 }
 
-static int band_of(int hz) {
+static int band_for_freq(int hz) {
 	int i;
 
 	for (i = 0; i < BANDS; i++) {
@@ -147,7 +147,7 @@ static const char *band_name(int band) {
 	return bands[band].name;
 }
 
-static void note_where_we_are(void) {
+static void save_band_state(void) {
 	if (band_now == NO_BAND)
 		return;
 	bands[band_now].hz = hz_now;
@@ -156,49 +156,49 @@ static void note_where_we_are(void) {
 
 static void set_passband(const char *mode) {
 	if (!strcmp(mode, "CW") || !strcmp(mode, "CWR")) {
-		ask_the_core("rx_pitch", CW_PITCH_HZ);
-		ask_the_core("r1:low", CW_PITCH_HZ - CW_HALF_WIDTH_HZ);
-		ask_the_core("r1:high", CW_PITCH_HZ + CW_HALF_WIDTH_HZ);
+		core_request_int("rx_pitch", CW_PITCH_HZ);
+		core_request_int("r1:low", CW_PITCH_HZ - CW_HALF_WIDTH_HZ);
+		core_request_int("r1:high", CW_PITCH_HZ + CW_HALF_WIDTH_HZ);
 		return;
 	}
 	if (!strcmp(mode, "AM")) {
-		ask_the_core("r1:low", AM_LOW_HZ);
-		ask_the_core("r1:high", AM_HALF_WIDTH_HZ);
+		core_request_int("r1:low", AM_LOW_HZ);
+		core_request_int("r1:high", AM_HALF_WIDTH_HZ);
 		return;
 	}
-	ask_the_core("r1:low", SSB_LOW_HZ);
-	ask_the_core("r1:high", SSB_HIGH_HZ);
+	core_request_int("r1:low", SSB_LOW_HZ);
+	core_request_int("r1:high", SSB_HIGH_HZ);
 }
 
 static void change_mode(const char *mode) {
 	strcpy(mode_now, mode);
-	ask_the_core_text("r1:mode", mode);
+	core_request("r1:mode", mode);
 	set_passband(mode);
-	tell("MODE", mode_now);
+	notify("MODE", mode_now);
 }
 
 static void change_frequency(int hz) {
-	int band = band_of(hz);
+	int band = band_for_freq(hz);
 
 	if (band != band_now) {
-		note_where_we_are();
+		save_band_state();
 		band_now = band;
-		tell("BAND", band_name(band_now));
+		notify("BAND", band_name(band_now));
 	}
 	hz_now = hz;
-	ask_the_core("r1:freq", hz_now);
-	tell_number("FREQ", hz_now);
+	core_request_int("r1:freq", hz_now);
+	notify_int("FREQ", hz_now);
 }
 
 static void change_band(int band) {
-	note_where_we_are();
+	save_band_state();
 	band_now = band;
 	hz_now = bands[band].hz;
-	ask_the_core("r1:freq", hz_now);
+	core_request_int("r1:freq", hz_now);
 	if (strcmp(mode_now, bands[band].mode))
 		change_mode(bands[band].mode);
-	tell("BAND", band_name(band_now));
-	tell_number("FREQ", hz_now);
+	notify("BAND", band_name(band_now));
+	notify_int("FREQ", hz_now);
 }
 
 static int find_band(const char *name) {
@@ -211,7 +211,7 @@ static int find_band(const char *name) {
 	return NO_BAND;
 }
 
-static int is_a_mode(const char *name) {
+static int is_valid_mode(const char *name) {
 	int i;
 
 	for (i = 0; i < MODES; i++) {
@@ -221,7 +221,7 @@ static int is_a_mode(const char *name) {
 	return 0;
 }
 
-static int is_a_number(const char *text) {
+static int is_integer(const char *text) {
 	char *end;
 
 	if (*text == 0)
@@ -230,15 +230,15 @@ static int is_a_number(const char *text) {
 	return *end == 0;
 }
 
-static int refuse(char *why, int room, const char *reason) {
+static int set_error(char *why, int room, const char *reason) {
 	snprintf(why, room, "%s", reason);
 	return -1;
 }
 
-void radio_open(radio_changed_fn changed) {
-	say_changed = changed;
+void radio_open(radio_notify_fn changed) {
+	notify_fn = changed;
 	volume_now = STARTING_VOLUME;
-	ask_the_core("r1:volume", volume_now);
+	core_request_int("r1:volume", volume_now);
 	strcpy(mode_now, "");
 	band_now = NO_BAND;
 	change_frequency(STARTING_HZ);
@@ -249,32 +249,32 @@ int radio_set(const char *label, const char *value, char *why, int room) {
 	int number = atoi(value);
 
 	if (!strcmp(label, "FREQ")) {
-		if (!is_a_number(value) || number < LOWEST_HZ || number > HIGHEST_HZ)
-			return refuse(why, room, "a frequency from 500000 to 30000000 Hz");
+		if (!is_integer(value) || number < LOWEST_HZ || number > HIGHEST_HZ)
+			return set_error(why, room, "a frequency from 500000 to 30000000 Hz");
 		change_frequency(number);
 		return 0;
 	}
 	if (!strcmp(label, "BAND")) {
 		if (find_band(value) == NO_BAND)
-			return refuse(why, room, "one of 80M 60M 40M 30M 20M 17M 15M 12M 10M");
+			return set_error(why, room, "one of 80M 60M 40M 30M 20M 17M 15M 12M 10M");
 		change_band(find_band(value));
 		return 0;
 	}
 	if (!strcmp(label, "MODE")) {
-		if (!is_a_mode(value))
-			return refuse(why, room, "one of USB LSB CW CWR AM");
+		if (!is_valid_mode(value))
+			return set_error(why, room, "one of USB LSB CW CWR AM");
 		change_mode(value);
 		return 0;
 	}
 	if (!strcmp(label, "AUDIO")) {
-		if (!is_a_number(value) || number < 0 || number > VOLUME_MAX)
-			return refuse(why, room, "a volume from 0 to 100");
+		if (!is_integer(value) || number < 0 || number > VOLUME_MAX)
+			return set_error(why, room, "a volume from 0 to 100");
 		volume_now = number;
-		ask_the_core("r1:volume", volume_now);
-		tell_number("AUDIO", volume_now);
+		core_request_int("r1:volume", volume_now);
+		notify_int("AUDIO", volume_now);
 		return 0;
 	}
-	return refuse(why, room, "no such setting");
+	return set_error(why, room, "no such setting");
 }
 
 int radio_get(const char *label, char *value, int room) {
@@ -291,7 +291,7 @@ int radio_get(const char *label, char *value, int room) {
 	return 0;
 }
 
-void radio_tell_all(radio_changed_fn tell_one) {
+void radio_send_all(radio_notify_fn tell_one) {
 	static const char *labels[] = { "FREQ", "BAND", "MODE", "AUDIO" };
 	char value[RADIO_VALUE_MAX];
 	unsigned i;

@@ -84,7 +84,7 @@ void panel_set_polling(int on) {
 	is_polling = on;
 }
 
-static long wait_before_next(long now_ms) {
+static long poll_interval(long now_ms) {
 	if (misses >= ABSENT_AFTER_MISSES)
 		return ABSENT_POLL_EVERY_MS;
 	if (now_ms < busy_until_ms)
@@ -92,7 +92,7 @@ static long wait_before_next(long now_ms) {
 	return IDLE_POLL_EVERY_MS;
 }
 
-static int read_the_answer(link_took_fn took) {
+static int read_reply(link_took_fn took) {
 	uint8_t answer[I2C_COUNTED_ROOM];
 	int count;
 
@@ -108,7 +108,7 @@ static int read_the_answer(link_took_fn took) {
 	return link_take_frame(&radio_end, answer + 1, answer[0], took, NULL);
 }
 
-static void say_what_there_is(void) {
+static void send_frame(void) {
 	uint8_t word[LINK_FRAME_MAX];
 	int count;
 
@@ -125,14 +125,14 @@ int panel_poll(long now_ms, link_took_fn took) {
 		return 0;
 
 	counted.polls++;
-	if (read_the_answer(took) == LINK_TOOK_RECORDS)
+	if (read_reply(took) == LINK_TOOK_RECORDS)
 		took_records = 1;
 	if (misses == 0 && link_has_something_to_say(&radio_end))
-		say_what_there_is();
+		send_frame();
 	if (took_records)
 		busy_until_ms = now_ms + BUSY_LASTS_MS;
 
-	next_poll_ms = now_ms + wait_before_next(now_ms);
+	next_poll_ms = now_ms + poll_interval(now_ms);
 	return took_records;
 }
 

@@ -110,7 +110,7 @@ static int center_bin = 512;
 float fft_bins[MAX_BINS]; // spectrum ampltiudes
 int spectrum_plot[MAX_BINS];
 fftw_complex *fft_spectrum;
-void set_rx1(int frequency);
+static void set_rx1(int frequency);
 
 // Wisdom Defines for the FFTW and FFTWF libraries
 // Options for WISDOM_MODE from least to most rigorous are FFTW_ESTIMATE, FFTW_MEASURE, FFTW_PATIENT, and FFTW_EXHAUSTIVE
@@ -209,7 +209,7 @@ static void take_the_newest_offer(){
 		sizeof(complex float) * MAX_BINS);
 }
 
-void radio_tune_to(u_int32_t f){
+static void radio_tune_to(u_int32_t f){
 	int freq_shift = (int)(46.875 * (1.0 * rx_wanted->tuned_bin));
 
 	if (rx_wanted->mode == MODE_CW)
@@ -226,7 +226,7 @@ uint32_t oscillator_frequency(void){
 	return oscillator_hz;
 }
 
-void fft_init(){
+static void fft_init(){
 	fft_m = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS/2);
 	fft_in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
 	fft_out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
@@ -255,6 +255,8 @@ void fft_init(){
 
 }
 
+//the T/R switch, still to come, calls this and spectrum_reset(); they
+//become static with it
 void fft_reset_m_bins(){
 	//zero up the previous 'M' bins
 	memset(fft_in, 0, sizeof(fftw_complex) * MAX_BINS);
@@ -276,7 +278,7 @@ void spectrum_reset(){
 		fft_bins[i] = 0;
 }
 
-void spectrum_update(){
+static void spectrum_update(){
 	//we are only using the lower half of the bins,
 	//so this copies twice as many bins,
 	//it can be optimized. leaving it here just in case
@@ -300,7 +302,7 @@ void spectrum_update(){
 
 #define SCALING_TRIM 200.0 // Use this to tune your meter response 2.7 worked at 51% and my inverted L
 // S-Meter test W2JON
-int calculate_s_meter() {
+static int calculate_s_meter() {
 	double signal_strength = 0.0;
 
 	// Summing up the magnitudes of the FFT output bins
@@ -344,14 +346,14 @@ int calculate_s_meter() {
 	return (s_units * 100) + additional_db;
 }
 
-void set_rx1(int frequency){
+static void set_rx1(int frequency){
 	if (frequency == freq_hdr)
 		return;
 	radio_tune_to(frequency);
 	freq_hdr = frequency;
 }
 
-void tx_init(int frequency, short mode, int bpf_low, int bpf_high){
+static void tx_init(int frequency, short mode, int bpf_low, int bpf_high){
 	(void)frequency;
 	(void)mode;
 	(void)bpf_low;
@@ -363,7 +365,7 @@ void tx_init(int frequency, short mode, int bpf_low, int bpf_high){
 	tx_filter = filter_new(1024, 1025);
 }
 
-struct rx *add_tx(int frequency, short mode, int bpf_low, int bpf_high){
+static struct rx *add_tx(int frequency, short mode, int bpf_low, int bpf_high){
 	(void)frequency;
 
 	//we assume that there are 96000 samples / sec, giving us a 48khz slice
@@ -405,7 +407,7 @@ struct rx *add_tx(int frequency, short mode, int bpf_low, int bpf_high){
 	return r;
 }
 
-struct rx *add_rx(int frequency, short mode, int bpf_low, int bpf_high){
+static struct rx *add_rx(int frequency, short mode, int bpf_low, int bpf_high){
 	(void)frequency;
 
 	//we assume that there are 96000 samples / sec, giving us a 48khz slice
@@ -449,7 +451,7 @@ struct rx *add_rx(int frequency, short mode, int bpf_low, int bpf_high){
 	return r;
 }
 
-double agc2(struct rx *r){
+static double agc2(struct rx *r){
 	int i;
 	double signal_strength, agc_gain_should_be;
 
@@ -502,12 +504,12 @@ double agc2(struct rx *r){
 	return 100000000000 / r->agc_gain;
 }
 
-void my_fftw_execute(fftw_plan f){
+static void my_fftw_execute(fftw_plan f){
 	fftw_execute(f);
 }
 
 //TODO : optimize the memory copy and moves to use the memcpy
-void rx_linear(int32_t *input_rx,  int32_t *input_mic,
+static void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 	int32_t *output_speaker, int32_t *output_tx, int n_samples)
 {
 	int i, j = 0;
@@ -663,7 +665,7 @@ void demod_am(fftw_complex *bins, int32_t *baseband_output){
 		baseband_output[i] = cabs(r->fft_time[i+(MAX_BINS/2)]);
 }
 
-const struct modem *modem_find(const char *name){
+static const struct modem *modem_find(const char *name){
 	for (int i = 0; modem_list[i] != NULL; i++){
 		if (!strcmp(modem_list[i]->name, name))
 			return modem_list[i];
@@ -688,7 +690,7 @@ void speaker_play(const int32_t *samples, int count){
 	This is called each time there is a block of signal samples ready
 	either from the mic or from the rx IF
 */
-void sound_process(
+static void sound_process(
 	int32_t *input_rx, int32_t *input_mic,
 	int32_t *output_speaker, int32_t *output_tx,
 	int n_samples)
@@ -706,7 +708,7 @@ void sound_process(
 static int32_t input_rx_halved[MAX_BINS/2];
 static int32_t input_mic_halved[MAX_BINS/2];
 
-void sound_block(struct audio_block *block){
+static void sound_block(struct audio_block *block){
 	for (int i = 0; i < block->frames; i++){
 		input_rx_halved[i] = block->from_receiver[i] / 2;
 		input_mic_halved[i] = block->from_microphone[i] / 2;
@@ -715,7 +717,7 @@ void sound_block(struct audio_block *block){
 		block->to_speaker, block->to_transmitter, block->frames);
 }
 
-void set_rx_filter(){
+static void set_rx_filter(){
 	//on AM filter at the IF level, instead of the baseband
 	//the carrier is at the tuned bin, the filter goes around it
 	if (rx_wanted->mode == MODE_AM){
@@ -738,7 +740,7 @@ void set_rx_filter(){
 	offer_the_receiver();
 }
 
-void setup_oscillators(){
+static void setup_oscillators(){
 	//initialize the SI5351
 
 	usleep(200000);

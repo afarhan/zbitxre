@@ -69,7 +69,7 @@ static int wisdom_is_read = 0;
 static int wisdom_is_written = 0;
 
 // Modified Bessel function of the 0th kind, used by the Kaiser window
-float i0(float const z){
+static float i0(float const z){
 	const float t = (z*z)/4;
 	float sum = 1 + t;
 	float term = t;
@@ -84,7 +84,7 @@ float i0(float const z){
 
 // Compute an entire Kaiser window
 // More efficient than repeatedly calling kaiser(n,M,beta)
-int make_kaiser(float * const window,unsigned int const M,float const beta){
+static int make_kaiser(float * const window,unsigned int const M,float const beta){
 	assert(window != NULL);
 	if(window == NULL)
 		return -1;
@@ -107,23 +107,12 @@ int make_kaiser(float * const window,unsigned int const M,float const beta){
 	return 0;
 }
 
-static float hann(int const n,int const M){
-	return 0.5 - 0.5 * cos(2*M_PI*n/(M-1));
-}
-
-int make_hann_window(float *window, int max_count){
-	//apply to the entire fft (MAX_BINS)
-	for (int i = 0; i < max_count; i++)
-		window[i] = hann(i, max_count);
-	return 0;
-}
-
 // Apply Kaiser window to filter frequency response
 // "response" is SIMD-aligned array of N complex floats
 // Impulse response will be limited to first M samples in the time domain
 // Phase is adjusted so "time zero" (center of impulse response) is at M/2
 // L and M refer to the decimated output
-int window_filter(int const L,int const M,complex float * const response,float const beta){
+static int window_filter(int const L,int const M,complex float * const response,float const beta){
 
 	//total length of the convolving samples
 	int const N = L + M - 1;

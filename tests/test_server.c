@@ -56,9 +56,9 @@ static void serve_a_while(void) {
 	int i;
 
 	for (i = 0; i < SERVE_ROUNDS; i++) {
-		count = server_fill_polls(polls);
+		count = server_get_pollfds(polls);
 		if (poll(polls, count, ROUND_MS) > 0)
-			server_serve(polls, count);
+			server_handle_events(polls, count);
 	}
 }
 
@@ -107,7 +107,7 @@ int main(void) {
 		printf("could not set up\n");
 		return EXIT_FAILURE;
 	}
-	radio_open(server_tell);
+	radio_open(server_broadcast);
 	expect(fcntl(STDIN_FILENO, F_GETFD) != -1,
 		"the radio telling its settings before the server opens closes nothing");
 	if (server_open(TEST_PORT) < 0) {

@@ -156,7 +156,7 @@ static void report(void) {
 		printf("the panel does not answer\n");
 }
 
-static int strongest_of(int first_bin, int after_last_bin) {
+static int max_bin_level(int first_bin, int after_last_bin) {
 	int strongest = spectrum_plot[first_bin];
 	int bin;
 
@@ -167,7 +167,7 @@ static int strongest_of(int first_bin, int after_last_bin) {
 	return strongest;
 }
 
-static void make_the_spectrum_line(void) {
+static void spectrum_line_fill(void) {
 	int first_bin;
 	int after_last_bin;
 	int level;
@@ -178,7 +178,7 @@ static void make_the_spectrum_line(void) {
 			+ (point * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
 		after_last_bin = SPECTRUM_FIRST_BIN
 			+ ((point + 1) * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
-		level = strongest_of(first_bin, after_last_bin) + SPECTRUM_ADDED_DB;
+		level = max_bin_level(first_bin, after_last_bin) + SPECTRUM_ADDED_DB;
 		if (level < 0)
 			level = 0;
 		if (level > SPECTRUM_HIGHEST)
@@ -187,15 +187,15 @@ static void make_the_spectrum_line(void) {
 	}
 }
 
-static void send_the_spectrum(long now) {
+static void spectrum_send(long now) {
 	if (!is_sending_spectrum || now < next_spectrum_ms)
 		return;
 	next_spectrum_ms = now + SPECTRUM_EVERY_MS;
-	make_the_spectrum_line();
+	spectrum_line_fill();
 	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
 }
 
-static void begin_to_measure(int seconds, long now) {
+static void measure_start(int seconds, long now) {
 	int i;
 
 	for (i = 0; i < MEASURED_BINS; i++)
@@ -206,7 +206,7 @@ static void begin_to_measure(int seconds, long now) {
 	is_measuring = 1;
 }
 
-static int by_size(const void *a, const void *b) {
+static int compare_doubles(const void *a, const void *b) {
 	double first = *(const double *)a;
 	double second = *(const double *)b;
 
@@ -217,7 +217,7 @@ static int by_size(const void *a, const void *b) {
 	return 0;
 }
 
-static void say_what_was_measured(void) {
+static void print_measurement(void) {
 	double mean = 0;
 	int i;
 
@@ -226,7 +226,7 @@ static void say_what_was_measured(void) {
 		mean += measured_power[i];
 	}
 	mean /= MEASURED_BINS;
-	qsort(measured_power, MEASURED_BINS, sizeof(double), by_size);
+	qsort(measured_power, MEASURED_BINS, sizeof(double), compare_doubles);
 	printf("measured: mean %.1f dB, middle %.1f dB, over %d bins and %d looks\n",
 		10 * log10(mean + SMALLEST_POWER),
 		10 * log10(measured_power[MEASURED_BINS / 2] + SMALLEST_POWER),
@@ -234,14 +234,14 @@ static void say_what_was_measured(void) {
 	fflush(stdout);
 }
 
-static void measure(long now) {
+static void measure_update(long now) {
 	int i;
 
 	if (!is_measuring || now < next_measure_ms)
 		return;
 	if (now >= measure_until_ms) {
 		is_measuring = 0;
-		say_what_was_measured();
+		print_measurement();
 		return;
 	}
 	next_measure_ms = now + MEASURE_EVERY_MS;
@@ -252,7 +252,7 @@ static void measure(long now) {
 }
 
 static void on_radio_changed(const char *label, const char *value) {
-	server_tell(label, value);
+	server_broadcast(label, value);
 	if (!strcmp(label, "FREQ"))
 		panel_set(LINK_FREQ, atoi(value));
 	if (!strcmp(label, "AUDIO"))
@@ -261,7 +261,7 @@ static void on_radio_changed(const char *label, const char *value) {
 	fflush(stdout);
 }
 
-static void tell_the_panel(void) {
+static void panel_send_settings(void) {
 	char value[RADIO_VALUE_MAX];
 
 	radio_get("FREQ", value, sizeof(value));
@@ -270,25 +270,25 @@ static void tell_the_panel(void) {
 	panel_set(LINK_VOLUME, atoi(value));
 }
 
-static void set_or_say_why(const char *label, const char *value) {
+static void set_setting(const char *label, const char *value) {
 	char why[RADIO_VALUE_MAX * 2];
 
 	if (radio_set(label, value, why, sizeof(why)) < 0)
 		printf("ERROR %s %s\n", label, why);
 }
 
-static void on_panel_took(int control, int32_t value) {
+static void on_panel_record(int control, int32_t value) {
 	char text[RADIO_VALUE_MAX];
 
 	snprintf(text, sizeof(text), "%d", (int)value);
 	if (control == LINK_HELLO) {
 		printf("panel: HELLO, version %d\n", (int)value);
-		tell_the_panel();
+		panel_send_settings();
 	}
 	if (control == LINK_FREQ)
-		set_or_say_why("FREQ", text);
+		set_setting("FREQ", text);
 	if (control == LINK_VOLUME)
-		set_or_say_why("AUDIO", text);
+		set_setting("AUDIO", text);
 	fflush(stdout);
 }
 
@@ -296,7 +296,7 @@ static int begins_with(const char *line, const char *with) {
 	return strncmp(line, with, strlen(with)) == 0;
 }
 
-static void obey_a_line(char *line) {
+static void handle_command(char *line) {
 	char response[RESPONSE_MAX];
 
 	if (line[0] == 0)
@@ -330,7 +330,7 @@ static void obey_a_line(char *line) {
 		return;
 	}
 	if (begins_with(line, MEASURE_FOR)) {
-		begin_to_measure(atoi(line + strlen(MEASURE_FOR)), now_ms());
+		measure_start(atoi(line + strlen(MEASURE_FOR)), now_ms());
 		printf("ok\n");
 		return;
 	}
@@ -357,24 +357,24 @@ static void obey_a_line(char *line) {
 		return;
 	}
 	if (begins_with(line, FREQ_IS)) {
-		set_or_say_why("FREQ", line + strlen(FREQ_IS));
+		set_setting("FREQ", line + strlen(FREQ_IS));
 		return;
 	}
 	if (begins_with(line, VOLUME_IS)) {
-		set_or_say_why("AUDIO", line + strlen(VOLUME_IS));
+		set_setting("AUDIO", line + strlen(VOLUME_IS));
 		return;
 	}
 	if (strchr(line, '=') == NULL && strchr(line, ' ') != NULL) {
 		char *value = strchr(line, ' ');
 		*value = 0;
-		set_or_say_why(line, value + 1);
+		set_setting(line, value + 1);
 		return;
 	}
 	sdr_request(line, response);
 	printf("%s\n", response);
 }
 
-static void take_from_the_terminal(void) {
+static void read_terminal(void) {
 	static char line[LINE_MAX_LENGTH];
 	static int length;
 	char c;
@@ -385,7 +385,7 @@ static void take_from_the_terminal(void) {
 		if (c == '\n' || c == '\r') {
 			line[length] = 0;
 			length = 0;
-			obey_a_line(line);
+			handle_command(line);
 			fflush(stdout);
 			return;
 		}
@@ -397,24 +397,24 @@ static void take_from_the_terminal(void) {
 		is_done = 1;
 }
 
-static void obey(void) {
+static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
 
 	while (!is_done) {
-		send_the_spectrum(now_ms());
-		measure(now_ms());
-		panel_poll(now_ms(), on_panel_took);
+		spectrum_send(now_ms());
+		measure_update(now_ms());
+		panel_poll(now_ms(), on_panel_record);
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
 		polls[0].revents = 0;
-		count = 1 + server_fill_polls(polls + 1);
+		count = 1 + server_get_pollfds(polls + 1);
 		if (poll(polls, count, WAIT_ON_TERMINAL_MS) <= 0)
 			continue;
-		server_serve(polls + 1, count - 1);
+		server_handle_events(polls + 1, count - 1);
 		if (polls[0].revents & (POLLIN | POLLHUP))
-			take_from_the_terminal();
+			read_terminal();
 	}
 }
 
@@ -442,12 +442,12 @@ int main(int argc, char **argv) {
 	panel_open();
 	radio_open(on_radio_changed);
 	if (hz != NULL)
-		set_or_say_why("FREQ", hz);
+		set_setting("FREQ", hz);
 	if (mode != NULL)
-		set_or_say_why("MODE", mode);
+		set_setting("MODE", mode);
 	if (volume != NULL)
-		set_or_say_why("AUDIO", volume);
-	tell_the_panel();
+		set_setting("AUDIO", volume);
+	panel_send_settings();
 
 	if (server_open(SERVER_PORT) < 0)
 		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);
@@ -455,7 +455,7 @@ int main(int argc, char **argv) {
 		printf("clients connect on port %d\n", SERVER_PORT);
 	fflush(stdout);
 
-	obey();
+	main_loop();
 	report();
 	server_close();
 	teardown();

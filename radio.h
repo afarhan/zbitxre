@@ -8,9 +8,9 @@
 #define RADIO_LABEL_MAX 16
 #define RADIO_VALUE_MAX 32
 
-typedef void (*radio_changed_fn)(const char *label, const char *value);
+typedef void (*radio_notify_fn)(const char *label, const char *value);
 
-void radio_open(radio_changed_fn changed);
+void radio_open(radio_notify_fn changed);
 int radio_set(const char *label, const char *value, char *why, int room);
 int radio_get(const char *label, char *value, int room);
-void radio_tell_all(radio_changed_fn tell);
+void radio_send_all(radio_notify_fn tell);

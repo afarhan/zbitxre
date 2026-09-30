@@ -48,7 +48,7 @@
 //
 // There is no thread for it. The thread that owns the controls waits on the
 // server's sockets along with everything else it waits on, with poll():
-// server_fill_polls() gives the sockets to wait on, and server_serve() deals
+// server_get_pollfds() gives the sockets to wait on, and server_handle_events() deals
 // with whatever they have. A line is acted on when it is whole.
 //
 // Nothing here waits. Sockets are non-blocking. What is to be sent to a
@@ -58,7 +58,7 @@
 //
 // At most SERVER_CLIENTS_MAX clients at once; one more is turned away.
 //
-// server_tell() may be called before server_open(), since the radio says
+// server_broadcast() may be called before server_open(), since the radio says
 // what its settings are as it opens, and it then does nothing. Before the
 // server is open its list of clients holds nothing to be trusted.
 
@@ -91,7 +91,7 @@ struct client {
 
 static int listener = NOBODY;
 static struct client clients[SERVER_CLIENTS_MAX];
-static struct client *being_told;
+static struct client *settings_target;
 
 static int make_non_blocking(int fd) {
 	int flags = fcntl(fd, F_GETFL, 0);
@@ -126,7 +126,7 @@ int server_open(int port) {
 	return 0;
 }
 
-static void drop(struct client *c) {
+static void client_close(struct client *c) {
 	close(c->fd);
 	c->fd = NOBODY;
 	c->in_count = 0;
@@ -138,14 +138,14 @@ void server_close(void) {
 
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
 		if (clients[i].fd != NOBODY)
-			drop(&clients[i]);
+			client_close(&clients[i]);
 	}
 	if (listener != NOBODY)
 		close(listener);
 	listener = NOBODY;
 }
 
-static void send_what_is_kept(struct client *c) {
+static void client_flush(struct client *c) {
 	ssize_t sent;
 
 	if (c->out_count == 0)
@@ -153,28 +153,28 @@ static void send_what_is_kept(struct client *c) {
 	sent = send(c->fd, c->out, c->out_count, MSG_NOSIGNAL | MSG_DONTWAIT);
 	if (sent < 0) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
-			drop(c);
+			client_close(c);
 		return;
 	}
 	memmove(c->out, c->out + sent, c->out_count - sent);
 	c->out_count -= sent;
 }
 
-static void say_to(struct client *c, const char *line) {
+static void client_queue_line(struct client *c, const char *line) {
 	int length = strlen(line);
 
 	if (c->fd == NOBODY)
 		return;
 	if (c->out_count + length > OUT_MAX) {
-		drop(c);
+		client_close(c);
 		return;
 	}
 	memcpy(c->out + c->out_count, line, length);
 	c->out_count += length;
-	send_what_is_kept(c);
+	client_flush(c);
 }
 
-void server_tell(const char *label, const char *value) {
+void server_broadcast(const char *label, const char *value) {
 	char line[LINE_MAX_LENGTH];
 	int i;
 
@@ -182,23 +182,23 @@ void server_tell(const char *label, const char *value) {
 		return;
 	snprintf(line, sizeof(line), "%s %s\n", label, value);
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++)
-		say_to(&clients[i], line);
+		client_queue_line(&clients[i], line);
 }
 
-static void tell_one(const char *label, const char *value) {
+static void queue_setting(const char *label, const char *value) {
 	char line[LINE_MAX_LENGTH];
 
 	snprintf(line, sizeof(line), "%s %s\n", label, value);
-	say_to(being_told, line);
+	client_queue_line(settings_target, line);
 }
 
-static void tell_everything(struct client *c) {
-	being_told = c;
-	radio_tell_all(tell_one);
-	being_told = NULL;
+static void send_all_settings(struct client *c) {
+	settings_target = c;
+	radio_send_all(queue_setting);
+	settings_target = NULL;
 }
 
-static void take_in(void) {
+static void accept_client(void) {
 	int fd;
 	int i;
 
@@ -216,40 +216,40 @@ static void take_in(void) {
 	clients[i].fd = fd;
 	clients[i].in_count = 0;
 	clients[i].out_count = 0;
-	tell_everything(&clients[i]);
+	send_all_settings(&clients[i]);
 }
 
-static void obey(struct client *c, char *line) {
+static void handle_line(struct client *c, char *line) {
 	char why[WHY_MAX];
 	char answer[LINE_MAX_LENGTH + WHY_MAX + LABEL_ROOM];
 	char *value;
 
 	if (!strcmp(line, "?")) {
-		tell_everything(c);
+		send_all_settings(c);
 		return;
 	}
 	value = strchr(line, ' ');
 	if (value == NULL) {
 		snprintf(answer, sizeof(answer), "ERROR %s a label and a value\n", line);
-		say_to(c, answer);
+		client_queue_line(c, answer);
 		return;
 	}
 	*value = 0;
 	value++;
 	if (radio_set(line, value, why, sizeof(why)) < 0) {
 		snprintf(answer, sizeof(answer), "ERROR %s %s\n", line, why);
-		say_to(c, answer);
+		client_queue_line(c, answer);
 	}
 }
 
-static void hear(struct client *c) {
+static void read_client(struct client *c) {
 	char got[LINE_MAX_LENGTH];
 	ssize_t count;
 	ssize_t i;
 
 	count = recv(c->fd, got, sizeof(got), MSG_DONTWAIT);
 	if (count == 0 || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-		drop(c);
+		client_close(c);
 		return;
 	}
 	for (i = 0; i < count && c->fd != NOBODY; i++) {
@@ -263,11 +263,11 @@ static void hear(struct client *c) {
 		c->in[c->in_count] = 0;
 		c->in_count = 0;
 		if (c->in[0] != 0)
-			obey(c, c->in);
+			handle_line(c, c->in);
 	}
 }
 
-int server_fill_polls(struct pollfd *polls) {
+int server_get_pollfds(struct pollfd *polls) {
 	int count = 0;
 	int i;
 
@@ -288,7 +288,7 @@ int server_fill_polls(struct pollfd *polls) {
 	return count;
 }
 
-static struct client *client_of(int fd) {
+static struct client *find_client(int fd) {
 	int i;
 
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
@@ -298,7 +298,7 @@ static struct client *client_of(int fd) {
 	return NULL;
 }
 
-void server_serve(const struct pollfd *polls, int count) {
+void server_handle_events(const struct pollfd *polls, int count) {
 	struct client *c;
 	int i;
 
@@ -306,15 +306,15 @@ void server_serve(const struct pollfd *polls, int count) {
 		if (polls[i].revents == 0)
 			continue;
 		if (polls[i].fd == listener) {
-			take_in();
+			accept_client();
 			continue;
 		}
-		c = client_of(polls[i].fd);
+		c = find_client(polls[i].fd);
 		if (c == NULL)
 			continue;
 		if (polls[i].revents & POLLOUT)
-			send_what_is_kept(c);
+			client_flush(c);
 		if (c->fd != NOBODY && (polls[i].revents & (POLLIN | POLLHUP | POLLERR)))
-			hear(c);
+			read_client(c);
 	}
 }

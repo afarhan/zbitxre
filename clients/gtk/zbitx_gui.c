@@ -123,7 +123,7 @@ static void tune(int steps) {
 	send_number("FREQ", hz);
 }
 
-static void take_what_the_radio_says(const char *label, const char *value) {
+static void handle_setting(const char *label, const char *value) {
 	is_catching_up = TRUE;
 	if (!strcmp(label, "FREQ")) {
 		hz_now = atoi(value);
@@ -142,7 +142,7 @@ static void take_what_the_radio_says(const char *label, const char *value) {
 	is_catching_up = FALSE;
 }
 
-static void forget_the_radio(const char *why) {
+static void disconnect(const char *why) {
 	char text[LINE_MAX_LENGTH];
 
 	g_clear_object(&reader);
@@ -164,13 +164,13 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 	if (line == NULL) {
 		if (error != NULL)
 			g_error_free(error);
-		forget_the_radio("gone");
+		disconnect("gone");
 		return;
 	}
 	value = strchr(line, ' ');
 	if (value != NULL) {
 		*value = 0;
-		take_what_the_radio_says(line, value + 1);
+		handle_setting(line, value + 1);
 	}
 	g_free(line);
 	g_data_input_stream_read_line_async(reader, G_PRIORITY_DEFAULT, NULL,
@@ -185,7 +185,7 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 	connection = g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(source),
 		result, &error);
 	if (connection == NULL) {
-		forget_the_radio(error->message);
+		disconnect(error->message);
 		g_error_free(error);
 		return;
 	}
@@ -268,7 +268,7 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	return FALSE;
 }
 
-static GtkWidget *drop_down_of(const char **names) {
+static GtkWidget *combo_new(const char **names) {
 	GtkWidget *box = gtk_combo_box_text_new();
 	int i;
 
@@ -277,7 +277,7 @@ static GtkWidget *drop_down_of(const char **names) {
 	return box;
 }
 
-static GtkWidget *labelled(const char *label, GtkWidget *control) {
+static GtkWidget *labelled_row(const char *label, GtkWidget *control) {
 	GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, GAP);
 
 	gtk_box_pack_start(GTK_BOX(row), gtk_label_new(label), FALSE, FALSE, 0);
@@ -285,7 +285,7 @@ static GtkWidget *labelled(const char *label, GtkWidget *control) {
 	return row;
 }
 
-static GtkWidget *make_the_window(void) {
+static GtkWidget *create_window(void) {
 	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	GtkWidget *column = gtk_box_new(GTK_ORIENTATION_VERTICAL, GAP);
 	GtkWidget *tuning = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, GAP);
@@ -308,12 +308,12 @@ static GtkWidget *make_the_window(void) {
 	gtk_box_pack_start(GTK_BOX(tuning), wheel_area, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(tuning), up, FALSE, FALSE, 0);
 
-	band_choice = drop_down_of(band_names);
-	mode_choice = drop_down_of(mode_names);
+	band_choice = combo_new(band_names);
+	mode_choice = combo_new(mode_names);
 	g_signal_connect(band_choice, "changed", G_CALLBACK(on_band_chosen), NULL);
 	g_signal_connect(mode_choice, "changed", G_CALLBACK(on_mode_chosen), NULL);
-	gtk_box_pack_start(GTK_BOX(choices), labelled("Band", band_choice), TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(choices), labelled("Mode", mode_choice), TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(choices), labelled_row("Band", band_choice), TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(choices), labelled_row("Mode", mode_choice), TRUE, TRUE, 0);
 
 	volume_slider = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0,
 		VOLUME_MAX, 1);
@@ -324,7 +324,7 @@ static GtkWidget *make_the_window(void) {
 
 	gtk_box_pack_start(GTK_BOX(column), tuning, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(column), choices, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(column), labelled("Volume", volume_slider), FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(column), labelled_row("Volume", volume_slider), FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(column), status_label, FALSE, FALSE, 0);
 	gtk_container_add(GTK_CONTAINER(window), column);
 
@@ -342,7 +342,7 @@ int main(int argc, char **argv) {
 	if (argc > 2)
 		radio_port = atoi(argv[2]);
 
-	window = make_the_window();
+	window = create_window();
 	show_frequency();
 	gtk_widget_show_all(window);
 

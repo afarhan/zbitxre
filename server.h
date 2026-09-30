@@ -13,6 +13,6 @@
 
 int server_open(int port);
 void server_close(void);
-int server_fill_polls(struct pollfd *polls);
-void server_serve(const struct pollfd *polls, int count);
-void server_tell(const char *label, const char *value);
+int server_get_pollfds(struct pollfd *polls);
+void server_handle_events(const struct pollfd *polls, int count);
+void server_broadcast(const char *label, const char *value);

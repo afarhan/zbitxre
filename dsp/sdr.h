@@ -124,7 +124,6 @@ struct filter {
 
 struct filter *filter_new(int input_length, int impulse_length);
 int filter_tune(struct filter *f, float const low,float const high,float const kaiser_beta);
-int make_hann_window(float *window, int max_count);
 void filter_print(struct filter *f);
 
 // Complex norm (sum of squares of real and imaginary parts)
@@ -190,12 +189,8 @@ int setup(const struct board *board);
 void teardown(void);
 
 void sdr_request(char *request, char *response);
-void sound_process(int32_t *input_rx, int32_t *input_mic,
-	int32_t *output_speaker, int32_t *output_tx, int n_samples);
-void sound_block(struct audio_block *block);
-double agc2(struct rx *r);
-int calculate_s_meter();
 uint32_t oscillator_frequency(void);
+void set_spectrum_speed(int speed);
 
 // what a modem has to work with; modem.h says what a modem is
 void demod_ssb(fftw_complex *bins, int32_t *baseband_output);
