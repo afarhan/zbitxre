@@ -106,8 +106,11 @@ The settings themselves, and what each change does to the radio, are kept
 by `radio.c`. Changes from the front panel and the terminal go through it
 too, so every client, the panel and the desktop see the same radio.
 
-`clients/gtk/` is a small window for the desktop, with the frequency, tuned
-in 1 kHz steps, the band, the mode and the volume:
+`clients/gtk/` is a window for the desktop that fits an 800 by 600 screen.
+On the left are the frequency, a line of the main settings, and the
+spectrum and waterfall; on the right, a scrolling list of the controls,
+made from the radio's schema. The mouse wheel over any of them moves it a
+step, as the radio's knob would:
 
     make gui
     build/zbitx_gui 192.168.1.76
