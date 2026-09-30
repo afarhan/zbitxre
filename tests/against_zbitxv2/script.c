@@ -12,13 +12,19 @@
 // The script goes through USB, LSB, CW and CWR, the four speeds of the AGC
 // and four passbands. AM is left out because there the two differ, and are
 // meant to: zbitxv2 filters AM around 24 kHz whatever bin the radio works
-// at, and zbitxre around the tuned bin. tests/test_am.c looks after AM. For each it plays a quiet, a usual
-// and a very loud stretch of a made-up band: three carriers, an AM station
-// and noise, all between 24 and 30 kHz, where the radio's IF is.
+// at, and zbitxre around the tuned bin. tests/test_am.c looks after AM.
+// For each it plays a quiet, a usual and a very loud stretch of a made-up
+// band: three carriers, an AM station and noise, all between 24 and 30 kHz,
+// where the radio's IF is.
 //
 // What is written down: the oscillator's frequency after every request, and
 // after every block the samples for the speaker, the samples for the
-// transmitter, the spectrum, and the S meter.
+// transmitter, and the S meter. These must be the same, byte for byte.
+//
+// The spectrum is written to a file of its own, the name given second. It
+// is not the same, and is not meant to be: zbitxre puts the Hann window on
+// the bins where zbitxv2 put it on the samples. run.sh says by how many dB
+// the two spectra differ at most.
 //
 // Both receivers take what FFTW knows from the same two files, w.wis and
 // wf.wis in the directory the program is run from, so that both do their
@@ -137,6 +143,7 @@ static void give_a_block(int32_t *from_receiver, int32_t *from_microphone,
 #endif
 
 static FILE *written;
+static FILE *spectrum_written;
 static long blocks;
 static long loudest;
 static unsigned long noise_state = NOISE_FIRST;
@@ -186,7 +193,7 @@ static void one_block(int32_t *from_receiver) {
 	meter = atoi(answer);
 	fwrite(to_speaker, sizeof(to_speaker), 1, written);
 	fwrite(to_transmitter, sizeof(to_transmitter), 1, written);
-	fwrite(spectrum_plot + SPECTRUM_FIRST, sizeof(int), SPECTRUM_COUNT, written);
+	fwrite(spectrum_plot + SPECTRUM_FIRST, sizeof(int), SPECTRUM_COUNT, spectrum_written);
 	fwrite(&meter, sizeof(meter), 1, written);
 }
 
@@ -244,12 +251,13 @@ static void every_setting(void) {
 }
 
 int main(int argc, char **argv) {
-	if (argc < 2) {
-		printf("script <file to write>\n");
+	if (argc < 3) {
+		printf("script <file to write> <file for the spectrum>\n");
 		return EXIT_FAILURE;
 	}
 	written = fopen(argv[1], "wb");
-	if (written == NULL) {
+	spectrum_written = fopen(argv[2], "wb");
+	if (written == NULL || spectrum_written == NULL) {
 		printf("cannot write %s\n", argv[1]);
 		return EXIT_FAILURE;
 	}
@@ -269,6 +277,7 @@ int main(int argc, char **argv) {
 	play(LAST_BLOCKS, USUAL_LEVEL);
 
 	fclose(written);
+	fclose(spectrum_written);
 	printf("%ld blocks, %ld samples, the loudest %ld\n",
 		blocks, blocks * BLOCK, loudest);
 	return EXIT_SUCCESS;

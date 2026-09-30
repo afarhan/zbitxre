@@ -28,10 +28,38 @@
 // follow the bin: a filter left at 24 kHz on a radio that works at bin 600
 // passes what is 4 kHz below the station and cuts the station off.
 //
-// THE MODEM
+// RECEIVING, AND THE MODEMS
 //
-// rx_linear() ends, as zbitxv2's did, by handing the audio it has made for
-// the speaker to modem_rx(). modems.c says what may happen to it there.
+// rx_linear() does what every mode needs: it turns each block of samples
+// from the sound card into frequency bins, with one forward FFT, and paints
+// the spectrum from those bins. Then it hands the bins to the modem of the
+// mode in use, which does the rest.
+//
+// A modem is a file in modems/, and modem.h says what one is. Its rx() is
+// given the bins. It uses the primitives here to turn them into sound:
+// demod_ssb() and demod_am() carry on from the bins to demodulated audio,
+// filtered and levelled, in the steps of zbitxv2's rx_linear(), and
+// speaker_play() sends audio to the speaker. What else it does with the
+// audio, decoding CW or FT8, is its own business.
+//
+// The modem follows the mode. sdr_request() finds the modem of the mode's
+// name and offers it to the audio thread with the rest of the receiver; the
+// audio thread takes it at the start of a block and resets it, so a mode
+// never changes halfway through a block. A mode with no modem of its own,
+// FT8 or DIGI for now, is received by the USB modem.
+//
+// THE SPECTRUM
+//
+// zbitxv2 did a second forward FFT, of the samples multiplied by a Hann
+// window, only for the spectrum: without a window the spectrum looks
+// horrible, and the demodulator must not have one. The same window can be
+// put on the bins after the FFT, and cheaply: a Hann window in time is, in
+// frequency, each bin taken at a half, less a quarter of each of its two
+// neighbours. So the spectrum now comes from the demodulator's own bins, and
+// the receiver does two FFTs a block where it did three. The window put on
+// this way is the periodic Hann window where zbitxv2's was the symmetric
+// one, so the spectrum differs from zbitxv2's by a little; the sound does
+// not differ at all.
 //
 // WHO CHANGES WHAT
 //
@@ -75,15 +103,13 @@
 #include "i2c.h"
 #include "si5351.h"
 #include "sdr.h"
-#include "modems.h"
+#include "modem.h"
 
 static int center_bin = 512;
 
 float fft_bins[MAX_BINS]; // spectrum ampltiudes
 int spectrum_plot[MAX_BINS];
 fftw_complex *fft_spectrum;
-fftw_plan plan_spectrum;
-float spectrum_window[MAX_BINS];
 void set_rx1(int frequency);
 
 // Wisdom Defines for the FFTW and FFTWF libraries
@@ -125,6 +151,7 @@ static int mute_count = 50;
 #define IS_NEW 4u
 
 struct offer {
+	const struct modem *modem;
 	short mode;
 	int agc_speed;
 	long tuned_bin;
@@ -143,9 +170,14 @@ static atomic_int s_meter;
 static int is_set_up = 0;
 static uint32_t oscillator_hz = 0;
 
+static const struct modem *modem_wanted = NULL;
+static const struct modem *modem_in_use = NULL;
+static int32_t *speaker_now = NULL;
+
 static void offer_the_receiver(){
 	struct offer *o = &offers[offer_filling];
 
+	o->modem = modem_wanted;
 	o->mode = rx_wanted->mode;
 	o->agc_speed = rx_wanted->agc_speed;
 	o->tuned_bin = rx_wanted->tuned_bin;
@@ -163,6 +195,11 @@ static void take_the_newest_offer(){
 	offer_in_use = atomic_exchange(&offer_waiting, offer_in_use) & WHICH_OFFER;
 
 	struct offer *o = &offers[offer_in_use];
+	if (o->modem != modem_in_use && o->modem != NULL){
+		modem_in_use = o->modem;
+		if (modem_in_use->reset)
+			modem_in_use->reset();
+	}
 	rx_list->mode = o->mode;
 	rx_list->agc_speed = o->agc_speed;
 	rx_list->tuned_bin = o->tuned_bin;
@@ -208,7 +245,6 @@ void fft_init(){
 		printf("Generating Wisdom File...\n");
 	}
 	plan_fwd = fftw_plan_dft_1d(MAX_BINS, fft_in, fft_out, FFTW_FORWARD, WISDOM_MODE); // Was FFTW_ESTIMATE N3SB
-	plan_spectrum = fftw_plan_dft_1d(MAX_BINS, fft_in, fft_spectrum, FFTW_FORWARD, WISDOM_MODE); // Was FFTW_ESTIMATE N3SB
 	fftw_export_wisdom_to_filename(wisdom_file);
 
 	//zero up the previous 'M' bins
@@ -217,7 +253,6 @@ void fft_init(){
 		__imag__ fft_m[i]  = 0.0;
 	}
 
-	make_hann_window(spectrum_window, MAX_BINS);
 }
 
 void fft_reset_m_bins(){
@@ -512,44 +547,70 @@ void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 	// values to paint the spectrum in the user interface
 	// I discovered that the raw time samples give horrible spectrum
 	// and they need to be multiplied wiht a window function
-	// they use a separate fft plan
+	// the window is put on the bins themselves: a hann window is
+	// each bin at a half, less a quarter of each of its neighbours
 	// NOTE: the spectrum update has nothing to do with the actual
 	// signal processing. If you are not showing the spectrum or the
 	// waterfall, you can skip these steps
-	for (i = 0; i < MAX_BINS; i++)
-		__real__ fft_in[i] *= spectrum_window[i];
-	my_fftw_execute(plan_spectrum);
+	for (i = 0; i < MAX_BINS; i++){
+		int before = i - 1;
+		int after = i + 1;
+		if (before < 0)
+			before = MAX_BINS - 1;
+		if (after >= MAX_BINS)
+			after = 0;
+		fft_spectrum[i] = 0.5 * fft_out[i] - 0.25 * (fft_out[before] + fft_out[after]);
+	}
 
 	// the spectrum display is updated
 	spectrum_update();
 
 	// ... back to the actual processing, after spectrum update
 
-	// we may add another sub receiver within the pass band later,
-	// hence, the linkced list of receivers here
-	// at present, we handle just the first receiver
-	struct rx *r = rx_list;
+	//keep transmit buffer empty
+	memset(output_tx, 0, MAX_BINS/2 * sizeof(int32_t));
+
+	//STEP 4 onwards are the modem's, it demodulates the bins and
+	//sends what it wants heard to the speaker
+	speaker_now = output_speaker;
+	memset(output_speaker, 0, MAX_BINS/2 * sizeof(int32_t));
+	if (modem_in_use)
+		modem_in_use->rx(fft_out);
+	speaker_now = NULL;
+
+	if (mute_count){
+		memset(output_speaker, 0, MAX_BINS/2 * sizeof(int32_t));
+		mute_count--;
+	}
+}
+
+/*
+	the steps 4 to 8 of the receiver, that every mode that is
+	demodulated from one sideband shares. the bins are rotated to
+	bring the tuned frequency to zero, the other sideband is cut
+	off, the filter is applied and they are turned back into time.
+	CW and CWR are single sideband signals too.
+*/
+static void baseband(struct rx *r, fftw_complex *bins, int shift, int one_sideband){
+	int i;
 
 	//STEP 4: we rotate the bins around by r-tuned_bin
-	int shift = r->tuned_bin;
-	if (r->mode == MODE_AM)
-		shift = 0;
 	for (i = 0; i < MAX_BINS; i++){
 		int b =  i + shift;
 		if (b >= MAX_BINS)
 			b = b - MAX_BINS;
 		if (b < 0)
 			b = b + MAX_BINS;
-		r->fft_freq[i] = fft_out[b];
+		r->fft_freq[i] = bins[b];
 	}
 
 	// STEP 5:zero out the other sideband
-	if (r->mode == MODE_LSB || r->mode == MODE_CWR)
+	if (one_sideband && (r->mode == MODE_LSB || r->mode == MODE_CWR))
 		for (i = 0; i < MAX_BINS/2; i++){
 			__real__ r->fft_freq[i] = 0;
 			__imag__ r->fft_freq[i] = 0;
 		}
-	else if (r->mode != MODE_AM)
+	else if (one_sideband)
 		for (i = MAX_BINS/2; i < MAX_BINS; i++){
 			__real__ r->fft_freq[i] = 0;
 			__imag__ r->fft_freq[i] = 0;
@@ -566,34 +627,61 @@ void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 
 	//STEP 8 : AGC
 	agc2(r);
+}
+
+/*
+	single sideband: USB, LSB, CW, CWR, and the digital modes that
+	ride on USB. the sideband is the receiver's mode.
+	fills baseband_output with MAX_BINS/2 samples of audio
+*/
+void demod_ssb(fftw_complex *bins, int32_t *baseband_output){
+	// we may add another sub receiver within the pass band later,
+	// hence, the linkced list of receivers here
+	// at present, we handle just the first receiver
+	struct rx *r = rx_list;
+	int i;
+
+	baseband(r, bins, r->tuned_bin, 1);
 
 	//STEP 9: send the output back to where it needs to go
-	if (rx_list->output == 0){
-		if (r->mode == MODE_AM)
-			for (i= 0; i < MAX_BINS/2; i++){
-				int32_t sample;
-				sample = cabs(r->fft_time[i+(MAX_BINS/2)]);
-				//keep transmit buffer empty
-				output_speaker[i] = sample;
-				output_tx[i] = 0;
-			}
-		else
-			for (i= 0; i < MAX_BINS/2; i++){
-				int32_t sample;
-				sample = cimag(r->fft_time[i+(MAX_BINS/2)]);
-				//keep transmit buffer empty
-				output_speaker[i] = sample;
-				output_tx[i] = 0;
-			}
-	}
+	for (i= 0; i < MAX_BINS/2; i++)
+		baseband_output[i] = cimag(r->fft_time[i+(MAX_BINS/2)]);
+}
 
-	if (mute_count){
-		memset(output_speaker, 0, MAX_BINS/2 * sizeof(int32_t));
-		mute_count--;
-	}
+/*
+	AM is not rotated to baseband, it is filtered around its carrier
+	where it is, both sidebands kept, and rectified
+*/
+void demod_am(fftw_complex *bins, int32_t *baseband_output){
+	struct rx *r = rx_list;
+	int i;
 
-	//push the data to any potential modem
-	modem_rx(rx_list->mode, output_speaker, MAX_BINS/2);
+	baseband(r, bins, 0, 0);
+
+	//STEP 9: send the output back to where it needs to go
+	for (i= 0; i < MAX_BINS/2; i++)
+		baseband_output[i] = cabs(r->fft_time[i+(MAX_BINS/2)]);
+}
+
+const struct modem *modem_find(const char *name){
+	for (int i = 0; modem_list[i] != NULL; i++){
+		if (!strcmp(modem_list[i]->name, name))
+			return modem_list[i];
+	}
+	return NULL;
+}
+
+/*
+	what a modem wants heard. it is given the audio of one block,
+	MAX_BINS/2 samples, and it goes to the speaker with this block.
+	a modem that plays nothing leaves the speaker silent.
+*/
+void speaker_play(const int32_t *samples, int count){
+	if (speaker_now == NULL)
+		return;
+	if (count > MAX_BINS/2)
+		count = MAX_BINS/2;
+	memcpy(speaker_now, samples, count * sizeof(int32_t));
 }
 
 /*
@@ -678,6 +766,13 @@ int setup(const struct board *board){
 	fft_init();
 	vfo_init_phase_table();
 	setup_oscillators();
+
+	for (int m = 0; modem_list[m] != NULL; m++){
+		if (modem_list[m]->start)
+			modem_list[m]->start();
+	}
+	modem_wanted = modem_find("LSB");
+	modem_in_use = modem_wanted;
 
 	add_rx(7000000, MODE_LSB, -3000, -300);
 	add_tx(7000000, MODE_LSB, -3000, -300);
@@ -764,6 +859,11 @@ void sdr_request(char *request, char *response){
 			strcpy(response, "error");
 			return;
 		}
+
+		//the modem of the mode's name, and USB for a mode with none
+		modem_wanted = modem_find(value);
+		if (modem_wanted == NULL)
+			modem_wanted = modem_find("USB");
 
 		//set the tx mode to that of the rx1
 		tx_list->mode = rx_wanted->mode;

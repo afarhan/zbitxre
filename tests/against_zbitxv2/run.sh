@@ -39,21 +39,36 @@ gcc -std=gnu11 -O2 -w -DOLD -I"$here" -I"$old" -o "$work/old" \
 	"$old/sbitx.c" "$old/fft_filter.c" "$old/vfo.c" \
 	"$old/ini.c" "$old/queue.c" $libs
 
+"$new/tools/make_modem_list.sh" "$new"/modems/*.c > "$work/modem_list.c"
+
 gcc -std=gnu11 -O2 -Wall -Wextra -I"$new" -I"$new/hw" -I"$new/dsp" -I"$new/tests" \
 	-o "$work/new" \
 	"$here/script.c" \
-	"$new/core_sdr.c" "$new/signal_block.c" "$new/modems.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
+	"$new/core_sdr.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
+	"$new"/modems/*.c "$work/modem_list.c" \
 	"$new/tests/hw_stand_ins.c" "$new/hw/board.c" "$new/hw/si5351.c" $libs
 
 cd "$work"
 rm -f w.wis wf.wis
-./new first.bin > /dev/null
-./new new.bin
-HOME="$work/home" ./old old.bin
+./new first.bin first.spectrum > /dev/null
+./new new.bin new.spectrum
+HOME="$work/home" ./old old.bin old.spectrum
+
+python3 - <<'PY'
+import struct
+a = open("new.spectrum", "rb").read()
+b = open("old.spectrum", "rb").read()
+n = len(a) // 4
+x = struct.unpack("<%di" % n, a)
+y = struct.unpack("<%di" % n, b)
+worst = max(abs(p - q) for p, q in zip(x, y))
+mean = sum(abs(p - q) for p, q in zip(x, y)) / n
+print("the spectrum differs from zbitxv2's by %.2f dB on average, %d dB at most" % (mean, worst))
+PY
 
 if cmp new.bin old.bin
 then
-	echo "the same, every byte"
+	echo "the sound, the S meter and the oscillator are the same, every byte"
 else
 	echo "THEY DIFFER"
 	exit 1

@@ -196,3 +196,8 @@ void sound_block(struct audio_block *block);
 double agc2(struct rx *r);
 int calculate_s_meter();
 uint32_t oscillator_frequency(void);
+
+// what a modem has to work with; modem.h says what a modem is
+void demod_ssb(fftw_complex *bins, int32_t *baseband_output);
+void demod_am(fftw_complex *bins, int32_t *baseband_output);
+void speaker_play(const int32_t *samples, int count);

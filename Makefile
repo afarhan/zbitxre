@@ -22,14 +22,17 @@ LINK_HEADERS = front_panel/link.h
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h signal_block.h modems.h
+DSP_HEADERS = dsp/sdr.h modem.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
 	$(LINK)
-DSP         = core_sdr.c signal_block.c modems.c dsp/filter.c dsp/vfo.c
+# every file in modems/ is a modem, and the list of them is made from the
+# files at build time; modem.h says how
+MODEMS      = $(wildcard modems/*.c)
+MODEM_LIST  = $(BUILD)/modem_list.c
+DSP         = core_sdr.c dsp/filter.c dsp/vfo.c $(MODEMS) $(MODEM_LIST)
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
-HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
-	$(BUILD)/test_chain
+HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = $(BUILD)/sdr
@@ -43,7 +46,7 @@ PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
-.PHONY: all check radio clean panel panel-flash
+.PHONY: all check radio clean panel panel-flash FORCE
 
 all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
 
@@ -51,7 +54,6 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
-	$(BUILD)/test_chain
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -61,6 +63,15 @@ radio: $(RADIO_TESTS)
 
 $(BUILD):
 	mkdir -p $(BUILD) data
+
+# the list is made afresh on every build, because a modem taken out of
+# modems/ leaves no newer file behind to say so; it replaces the old list
+# only when it differs, so that nothing is rebuilt for nothing
+$(MODEM_LIST): $(MODEMS) tools/make_modem_list.sh FORCE | $(BUILD)
+	tools/make_modem_list.sh $(MODEMS) > $@.new
+	if cmp -s $@.new $@; then rm $@.new; else mv $@.new $@; fi
+
+FORCE:
 
 $(BUILD)/sdr: tools/sdr.c $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tools/sdr.c $(DSP) $(HW) $(RADIO_LIBS)
@@ -74,9 +85,6 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
-
-$(BUILD)/test_chain: tests/test_chain.c signal_block.c modems.c signal_block.h modems.h | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_chain.c signal_block.c modems.c
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)
