@@ -17,7 +17,10 @@
 //   name     what it is called, in the protocol and everywhere else: "WPM".
 //            Names are unique; a second control of the same name is refused.
 //   kind     a number, from min to max in steps of step; a choice, one of
-//            choices, separated by "/"; or text.
+//            choices, separated by "/"; text; or a reading, which the
+//            radio works out and tells, and which no client may set, such
+//            as the frequency the receiver is on while RIT is on. A reading
+//            is changed only with control_update().
 //   value    what it is now, as text. Its owner gives it its first value.
 //   apply    makes a new value so: asks the core, the keyer, whatever the
 //            control works. It is given a value already checked. It returns
@@ -150,6 +153,10 @@ static int check(const struct control *c, const char *value, char *taken,
 	int number;
 
 	snprintf(taken, CONTROL_VALUE_MAX, "%s", value);
+	if (c->kind == CONTROL_READING) {
+		snprintf(why, room, "is set by the radio alone");
+		return -1;
+	}
 	if (c->kind == CONTROL_CHOICE) {
 		if (is_a_choice(c->choices, value))
 			return 0;

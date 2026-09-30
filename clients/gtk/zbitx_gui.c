@@ -15,10 +15,10 @@
 // maximised or not. It is in two: a main area on the left, and a list of
 // the controls down the right side, where the radio's knob is.
 //
-// The main area has the frequency in large figures, a line under it with
-// the settings that matter most (the mode, the band, VOL, IF and the
-// mode's own), and below them the spectrum and the
-// waterfall. The spectrum is drawn with the passband shaded, the part of it
+// The main area has the frequency in large figures, and under it the
+// frequency's own controls, STEP, RIT, SPLIT and VFO, which the radio keeps
+// in the group TUNING; below them are the spectrum and the waterfall. The
+// frequency, and each of its controls, are 50 pixels high. The spectrum is drawn with the passband shaded, the part of it
 // the receiver hears, and a line at the frequency that is tuned.
 //
 // The list has a row to each control, its name and its value, and scrolls
@@ -44,11 +44,19 @@
 // Every control is worked as the radio's knob would work it. The mouse
 // wheel over a row moves its value a step, a number by its step and a
 // choice to the next one; the wheel over the frequency, the spectrum or
-// the waterfall tunes, in steps of 1 kHz. On the keyboard, Tab and
-// Shift-Tab move the focus down and up the list, from the frequency and
-// back to it, and the up and down keys move whatever has the focus. A click
-// on a row gives it the focus; Escape, or a click on the frequency, gives
-// it back to the frequency.
+// the waterfall tunes. On the keyboard, Tab and Shift-Tab move the focus
+// along the frequency's controls and down the list, from the frequency and
+// back to it, and the up and down keys move whatever has the focus. A
+// click on a row gives it the focus; Escape, or a click on the frequency,
+// gives it back to the frequency.
+//
+// Tuning, and what RIT, SPLIT and VFO do, are the radio's, so that every
+// client behaves alike. The window tells the radio how many steps the
+// wheel has turned, "tune 1", and the radio moves the frequency by STEP,
+// or, while RIT is on, the receiver's offset. The large figures are
+// RX_FREQ, where the receiver listens, and when TX_FREQ, where the
+// transmitter is to be, differs, as it does with RIT or SPLIT on, it is
+// shown beside them. radio.c on the radio says how each is worked out.
 //
 // THE RADIO
 //
@@ -76,11 +84,8 @@
 #define DEFAULT_RADIO "sbitx.local"
 #define DEFAULT_PORT 8081
 #define RETRY_EVERY_MS 3000
-#define STEP_HZ 1000
 #define HZ_PER_MHZ 1000000
 #define HZ_PER_KHZ 1000
-#define LOWEST_HZ 500000
-#define HIGHEST_HZ 30000000
 #define LINE_MAX_LENGTH 128
 #define TEXT_MAX 64
 #define GAP 6
@@ -92,7 +97,6 @@
 #define ROW_HEIGHT 50
 #define ROW_MARGIN_SIDE 12
 #define UNDER_MODE_MARGIN 28
-#define SUMMARY_MAX 256
 
 #define KNOWN_MAX 64
 #define CONTROL_NAME_MAX 16
@@ -126,14 +130,23 @@ struct known {
 
 // a row of the list: the control it works, or BW, which works BW_VOICE or
 // BW_CW with the mode
+// where a row is put: in the list, set in under the mode, or under the
+// frequency with its own controls
+enum place {
+	IN_LIST,
+	UNDER_MODE,
+	UNDER_FREQUENCY,
+};
+
 struct row {
 	char control[CONTROL_NAME_MAX];
+	enum place place;
 	GtkWidget *box;
 	GtkWidget *value_label;
 };
 
 static const char *core_rows[] = { "AUDIO", "BAND", "IF", "DRIVE", NULL };
-static const char *summary_rows[] = { "AUDIO", "IF", NULL };
+static const char *tuning_rows[] = { "STEP", "RIT", "SPLIT", "VFO", NULL };
 
 static const char *radio_name = DEFAULT_RADIO;
 static int radio_port = DEFAULT_PORT;
@@ -145,7 +158,7 @@ static GOutputStream *writer;
 
 static GtkWidget *frequency_box;
 static GtkWidget *frequency_label;
-static GtkWidget *summary_label;
+static GtkWidget *tuning_bar;
 static GtkWidget *spectrum_area;
 static GtkWidget *status_label;
 static GtkWidget *list;
@@ -228,55 +241,43 @@ static int is_row_shown(const struct row *r) {
 
 	if (k == NULL)
 		return 0;
-	if (!strcmp(r->control, "BW") || !strcmp(k->group, "RADIO"))
+	if (!strcmp(r->control, "BW") || !strcmp(k->group, "RADIO")
+			|| r->place == UNDER_FREQUENCY)
 		return 1;
 	return !strcmp(k->group, mode_group());
 }
 
+static void format_frequency(char *text, int room, int hz) {
+	snprintf(text, room, "%d.%03d.%03d", hz / HZ_PER_MHZ,
+		(hz % HZ_PER_MHZ) / HZ_PER_KHZ, hz % HZ_PER_KHZ);
+}
+
+// the frequency in large figures, where the receiver listens, and beside
+// it, smaller, where the transmitter is to be, when that is elsewhere
 static void show_frequency(void) {
-	int hz = atoi(value_of("FREQ"));
-	char markup[TEXT_MAX * 2];
+	int receive_hz = atoi(value_of("RX_FREQ"));
+	int transmit_hz = atoi(value_of("TX_FREQ"));
+	char markup[TEXT_MAX * 4];
+	char receive[TEXT_MAX];
+	char transmit[TEXT_MAX];
 	const char *colour = "#d0d0d0";
 
 	if (focus == ON_FREQUENCY)
 		colour = "#ffd040";
-	snprintf(markup, sizeof(markup),
-		"<span font_desc='Monospace Bold 28' foreground='%s'>%d.%03d.%03d</span>",
-		colour, hz / HZ_PER_MHZ, (hz % HZ_PER_MHZ) / HZ_PER_KHZ, hz % HZ_PER_KHZ);
+	format_frequency(receive, sizeof(receive), receive_hz);
+	if (transmit_hz == receive_hz) {
+		snprintf(markup, sizeof(markup),
+			"<span font_desc='Monospace Bold 28' foreground='%s'>%s</span>",
+			colour, receive);
+	}
+	else {
+		format_frequency(transmit, sizeof(transmit), transmit_hz);
+		snprintf(markup, sizeof(markup),
+			"<span font_desc='Monospace Bold 28' foreground='%s'>%s</span>"
+			"<span font_desc='Monospace 11' foreground='#8090a0'>  TX %s</span>",
+			colour, receive, transmit);
+	}
 	gtk_label_set_markup(GTK_LABEL(frequency_label), markup);
-}
-
-// what the summary shows, after the mode and the band: VOL, IF, and the
-// mode's own
-static int is_row_in_summary(const struct row *r) {
-	struct known *k = find_known(row_control(r));
-	int i;
-
-	if (!is_row_shown(r) || k == NULL)
-		return 0;
-	for (i = 0; summary_rows[i] != NULL; i++) {
-		if (!strcmp(summary_rows[i], r->control))
-			return 1;
-	}
-	return strcmp(k->group, "RADIO") != 0 || !strcmp(r->control, "BW");
-}
-
-static void show_summary(void) {
-	char text[SUMMARY_MAX];
-	char *markup;
-	int length;
-	int i;
-
-	length = snprintf(text, sizeof(text), "%s  %s", value_of("MODE"), value_of("BAND"));
-	for (i = 0; i < row_count; i++) {
-		if (!is_row_in_summary(&rows[i]) || length >= (int)sizeof(text))
-			continue;
-		length += snprintf(text + length, sizeof(text) - length, "    %s %s",
-			label_of(rows[i].control), value_of(row_control(&rows[i])));
-	}
-	markup = g_markup_printf_escaped("<span font_desc='Sans 12'>%s</span>", text);
-	gtk_label_set_markup(GTK_LABEL(summary_label), markup);
-	g_free(markup);
 }
 
 static void show_values(void) {
@@ -296,7 +297,6 @@ static void show_values(void) {
 			gtk_style_context_remove_class(style, "focused");
 	}
 	show_frequency();
-	show_summary();
 	gtk_widget_queue_draw(spectrum_area);
 }
 
@@ -309,15 +309,15 @@ static void send_line(const char *name, const char *value) {
 	g_output_stream_write_all(writer, line, strlen(line), NULL, NULL, NULL);
 }
 
+// a turn of the knob, or of the wheel: the radio tunes by it, and tells
+// where it has tuned to
 static void tune(int steps) {
-	struct known *k = find_known("FREQ");
-	int hz = (atoi(k->value) / STEP_HZ + steps) * STEP_HZ;
+	char text[CONTROL_VALUE_MAX];
 
-	if (hz < LOWEST_HZ || hz > HIGHEST_HZ)
+	if (steps == 0)
 		return;
-	snprintf(k->value, CONTROL_VALUE_MAX, "%d", hz);
-	show_values();
-	send_line("FREQ", k->value);
+	snprintf(text, sizeof(text), "%d", steps);
+	send_line("tune", text);
 }
 
 // the choice a step away from the present one, in a list such as
@@ -609,7 +609,7 @@ static void scroll_to_focus(void) {
 	double top;
 	double page;
 
-	if (focus == ON_FREQUENCY)
+	if (focus == ON_FREQUENCY || rows[focus].place == UNDER_FREQUENCY)
 		return;
 	scroll = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(list_scroller));
 	gtk_widget_get_allocation(rows[focus].box, &where);
@@ -780,7 +780,7 @@ static int has_row(const char *control) {
 	return 0;
 }
 
-static void add_row(const char *control, int is_under_mode) {
+static void add_row(const char *control, enum place place) {
 	GtkWidget *box;
 	GtkWidget *line;
 	GtkWidget *label;
@@ -801,7 +801,7 @@ static void add_row(const char *control, int is_under_mode) {
 	gtk_box_pack_start(GTK_BOX(line), label, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(line), value, FALSE, FALSE, 0);
 	gtk_widget_set_margin_start(line, ROW_MARGIN_SIDE);
-	if (is_under_mode)
+	if (place == UNDER_MODE)
 		gtk_widget_set_margin_start(line, UNDER_MODE_MARGIN);
 	gtk_widget_set_margin_end(line, ROW_MARGIN_SIDE);
 	gtk_widget_set_size_request(box, -1, ROW_HEIGHT);
@@ -812,8 +812,12 @@ static void add_row(const char *control, int is_under_mode) {
 	g_signal_connect(box, "scroll-event", G_CALLBACK(on_row_wheel), GINT_TO_POINTER(index));
 	g_signal_connect(box, "button-press-event", G_CALLBACK(on_row_click),
 		GINT_TO_POINTER(index));
-	gtk_box_pack_start(GTK_BOX(list), box, FALSE, FALSE, 0);
+	if (place == UNDER_FREQUENCY)
+		gtk_box_pack_start(GTK_BOX(tuning_bar), box, TRUE, TRUE, 0);
+	else
+		gtk_box_pack_start(GTK_BOX(list), box, FALSE, FALSE, 0);
 	snprintf(rows[index].control, CONTROL_NAME_MAX, "%s", control);
+	rows[index].place = place;
 	rows[index].box = box;
 	rows[index].value_label = value;
 	row_count++;
@@ -824,9 +828,10 @@ static int is_in_list(const char *control) {
 		&& strcmp(control, "BW_CW");
 }
 
-// the list, made again each time the radio sends its schema: the core
-// controls, the rest of the radio's own, the mode, and under it BW and the
-// modems' own; of those, only the mode in use's are shown
+// the rows, made again each time the radio sends its schema: under the
+// frequency, its own controls; in the list, the core controls, the rest of
+// the radio's own, the mode, and under it BW and the modems' own, of which
+// only the mode in use's are shown
 static void make_list(void) {
 	int i;
 
@@ -834,19 +839,21 @@ static void make_list(void) {
 		gtk_widget_destroy(rows[i].box);
 	row_count = 0;
 	focus = ON_FREQUENCY;
+	for (i = 0; tuning_rows[i] != NULL; i++)
+		add_row(tuning_rows[i], UNDER_FREQUENCY);
 	for (i = 0; core_rows[i] != NULL; i++)
-		add_row(core_rows[i], 0);
+		add_row(core_rows[i], IN_LIST);
 	for (i = 0; i < known_count; i++) {
 		if (!strcmp(known[i].group, "RADIO") && strcmp(known[i].name, "MODE")
 				&& is_in_list(known[i].name))
-			add_row(known[i].name, 0);
+			add_row(known[i].name, IN_LIST);
 	}
-	add_row("MODE", 0);
-	add_row("BW", 1);
+	add_row("MODE", IN_LIST);
+	add_row("BW", UNDER_MODE);
 	for (i = 0; i < known_count; i++) {
 		if (known[i].group[0] != 0 && strcmp(known[i].group, "RADIO")
-				&& is_in_list(known[i].name))
-			add_row(known[i].name, 1);
+				&& strcmp(known[i].group, "TUNING") && is_in_list(known[i].name))
+			add_row(known[i].name, UNDER_MODE);
 	}
 	show_values();
 }
@@ -884,9 +891,8 @@ static GtkWidget *create_main_area(void) {
 	gtk_label_set_xalign(GTK_LABEL(status_label), 1);
 	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
 
-	summary_label = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(summary_label), 0);
-	gtk_label_set_ellipsize(GTK_LABEL(summary_label), PANGO_ELLIPSIZE_END);
+	tuning_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_box_set_homogeneous(GTK_BOX(tuning_bar), TRUE);
 
 	spectrum_area = gtk_drawing_area_new();
 	gtk_widget_set_size_request(spectrum_area, -1, SPECTRUM_MIN_HEIGHT);
@@ -898,7 +904,7 @@ static GtkWidget *create_main_area(void) {
 	gtk_box_pack_start(GTK_BOX(top), frequency_box, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(top), status_label, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(column), top, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(column), summary_label, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(column), tuning_bar, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(column), spectrum_area, TRUE, TRUE, 0);
 	return column;
 }

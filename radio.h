@@ -6,3 +6,4 @@
 #pragma once
 
 int radio_open(void);
+int radio_tune(int steps, char *why, int room);
