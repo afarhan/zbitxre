@@ -9,7 +9,8 @@
 // looking at what came back, it lets the server work, as the radio program's
 // loop does.
 //
-// The checks: a client is told every setting when it connects; a band
+// The checks: the radio telling its settings as it opens, before the
+// server does, closes nothing; a client is told every setting when it connects; a band
 // chosen moves the frequency and the mode to that band's; the other client
 // is told of it too; a frequency tuned out of a band says so, and one tuned
 // back in is where the band's memory was; a setting the radio will not take
@@ -19,6 +20,7 @@
 // Exits 0 when every check passes.
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
@@ -101,11 +103,17 @@ int main(void) {
 	int one;
 	int other;
 
-	if (setup(&board_zbitx_1) < 0 || server_open(TEST_PORT) < 0) {
+	if (setup(&board_zbitx_1) < 0) {
 		printf("could not set up\n");
 		return EXIT_FAILURE;
 	}
 	radio_open(server_tell);
+	expect(fcntl(STDIN_FILENO, F_GETFD) != -1,
+		"the radio telling its settings before the server opens closes nothing");
+	if (server_open(TEST_PORT) < 0) {
+		printf("could not open the server\n");
+		return EXIT_FAILURE;
+	}
 
 	one = connect_a_client();
 	other = connect_a_client();

@@ -57,6 +57,10 @@
 // client never holds up the radio.
 //
 // At most SERVER_CLIENTS_MAX clients at once; one more is turned away.
+//
+// server_tell() may be called before server_open(), since the radio says
+// what its settings are as it opens, and it then does nothing. Before the
+// server is open its list of clients holds nothing to be trusted.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -174,6 +178,8 @@ void server_tell(const char *label, const char *value) {
 	char line[LINE_MAX_LENGTH];
 	int i;
 
+	if (listener == NOBODY)
+		return;
 	snprintf(line, sizeof(line), "%s %s\n", label, value);
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++)
 		say_to(&clients[i], line);
