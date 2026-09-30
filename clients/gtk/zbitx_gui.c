@@ -18,13 +18,14 @@
 //   the volume      a slider.
 //
 // It speaks the radio's control protocol, which server.c on the radio
-// describes: lines of a label and a value. It sends a line when a control
-// is moved, and it shows what the radio tells it, whoever made the change.
-// So the window follows the radio when the front panel is turned, and a
-// control only shows a value once the radio has taken it.
+// describes: lines of a name and a value. It sends a line when a control is
+// moved, and shows the change at once, since the radio does not tell a
+// client of its own changes. It shows what the radio tells it of everyone
+// else's, so the window follows the radio when the front panel is turned.
 //
-// Showing what the radio says must not send it back again, so while the
-// window is being brought up to date the controls' own handlers do nothing.
+// Showing what the radio says must not send it back again: that is how a
+// change goes round in a loop. So while the window is being brought up to
+// date the controls' own handlers do nothing.
 //
 // If the radio cannot be reached, or goes, the window says so and tries
 // again every three seconds.
@@ -120,6 +121,8 @@ static void tune(int steps) {
 
 	if (hz < LOWEST_HZ || hz > HIGHEST_HZ)
 		return;
+	hz_now = hz;
+	show_frequency();
 	send_number("FREQ", hz);
 }
 

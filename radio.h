@@ -5,12 +5,4 @@
 
 #pragma once
 
-#define RADIO_LABEL_MAX 16
-#define RADIO_VALUE_MAX 32
-
-typedef void (*radio_notify_fn)(const char *label, const char *value);
-
-void radio_open(radio_notify_fn changed);
-int radio_set(const char *label, const char *value, char *why, int room);
-int radio_get(const char *label, char *value, int room);
-void radio_send_all(radio_notify_fn tell);
+int radio_open(void);

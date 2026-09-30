@@ -44,7 +44,7 @@ gcc -std=gnu11 -O2 -w -DOLD -I"$here" -I"$old" -o "$work/old" \
 gcc -std=gnu11 -O2 -Wall -Wextra -I"$new" -I"$new/hw" -I"$new/dsp" -I"$new/tests" \
 	-o "$work/new" \
 	"$here/script.c" \
-	"$new/core_sdr.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
+	"$new/core_sdr.c" "$new/control.c" "$new/dsp/filter.c" "$new/dsp/vfo.c" \
 	"$new"/modems/*.c "$work/modem_list.c" \
 	"$new/tests/hw_stand_ins.c" "$new/hw/board.c" "$new/hw/si5351.c" $libs
 

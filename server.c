@@ -11,8 +11,9 @@
 //
 // THE PROTOCOL
 //
-// A line is a label, a space, and a value, ending in a newline. The labels
-// are the settings radio.c keeps: FREQ, BAND, MODE and AUDIO.
+// A line is a name, a space, and a value, ending in a newline. The names are
+// those of the radio's controls, in control.c's table: FREQ, BAND, MODE and
+// AUDIO of the radio's own, and those a modem adds, such as WPM.
 //
 // The client sets:
 //
@@ -21,28 +22,46 @@
 //     MODE CW
 //     AUDIO 80
 //
-// The radio tells. Whenever a setting changes, whoever changed it, the radio
-// sends it to every client, the one that asked included:
+// The radio tells. Whenever a control changes, whoever changed it, the radio
+// sends it to every client but the one that changed it:
 //
 //     FREQ 7074000
 //
-// A client learns of a change only this way, so it never has to ask again.
-// When a client connects, it is sent every setting, one line each. A
-// client that sends ? alone on a line is sent them all again.
+// A client learns of others' changes only this way, so it never has to ask.
+// It already knows its own, so it is not told them, unless the radio took a
+// value other than the one asked for: then it is told what was taken. A
+// change that moves other controls, a band moving the frequency and the
+// mode, is told to everyone, the one who made it included.
+//
+// Two rules keep a change from going round in a loop, as it could in
+// zbitxv2. A value a control already has changes nothing and is told to
+// nobody. And a client never sends a change because it was told one: it
+// shows it, and that is all.
+//
+// When a client connects, it is sent every control's value, one line each.
+// A client that sends ? alone on a line is sent them all again.
+//
+// A client that sends schema is sent the table of controls, a line each and
+// then a line of its own to end it, so that it can build itself without
+// knowing beforehand what the radio has:
+//
+//     CONTROL RADIO FREQ number 500000 30000000 1
+//     CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM
+//     CONTROL CW WPM number 5 50 1
+//     CONTROL END
 //
 // A line the radio will not take is answered, to that client alone, with
-// ERROR, the label, and what it would take:
+// ERROR, the name, and what it would take:
 //
-//     ERROR FREQ a frequency from 500000 to 30000000 Hz
+//     ERROR FREQ a number from 500000 to 30000000
 //
 // Nothing is polled. A client that says nothing is sent only what changes,
 // and the radio sends nothing when nothing changes. That matters on a radio
 // whose receiver hears its own traffic.
 //
-// This is zbitxv2's remote protocol on the same port, with its labels,
+// This is zbitxv2's remote protocol on the same port, with its names,
 // except that zbitxv2's clients asked with ? many times a second and here
-// the radio tells unasked. Settings will be added to it as the radio gains
-// them; a client passes over a label it does not know.
+// the radio tells unasked.
 //
 // HOW IT IS SERVED
 //
@@ -71,14 +90,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "radio.h"
+#include "control.h"
 #include "server.h"
 
 #define LINE_MAX_LENGTH 128
 #define OUT_MAX 4096
 #define LISTEN_QUEUE 4
 #define NOBODY (-1)
-#define WHY_MAX 80
+#define WHY_MAX CONTROL_WHY_MAX
 #define LABEL_ROOM 16
 
 struct client {
@@ -91,7 +110,6 @@ struct client {
 
 static int listener = NOBODY;
 static struct client clients[SERVER_CLIENTS_MAX];
-static struct client *settings_target;
 
 static int make_non_blocking(int fd) {
 	int flags = fcntl(fd, F_GETFL, 0);
@@ -174,28 +192,49 @@ static void client_queue_line(struct client *c, const char *line) {
 	client_flush(c);
 }
 
-void server_broadcast(const char *label, const char *value) {
+void server_broadcast(const struct control *c, int origin) {
 	char line[LINE_MAX_LENGTH];
 	int i;
 
 	if (listener == NOBODY)
 		return;
-	snprintf(line, sizeof(line), "%s %s\n", label, value);
-	for (i = 0; i < SERVER_CLIENTS_MAX; i++)
-		client_queue_line(&clients[i], line);
+	snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
+	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
+		if (i != origin)
+			client_queue_line(&clients[i], line);
+	}
 }
 
-static void queue_setting(const char *label, const char *value) {
+static void send_all_settings(struct client *client) {
 	char line[LINE_MAX_LENGTH];
+	const struct control *c;
+	int i;
 
-	snprintf(line, sizeof(line), "%s %s\n", label, value);
-	client_queue_line(settings_target, line);
+	for (i = 0; i < control_count(); i++) {
+		c = control_at(i);
+		snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
+		client_queue_line(client, line);
+	}
 }
 
-static void send_all_settings(struct client *c) {
-	settings_target = c;
-	radio_send_all(queue_setting);
-	settings_target = NULL;
+static void send_schema(struct client *client) {
+	char line[LINE_MAX_LENGTH];
+	const struct control *c;
+	int i;
+
+	for (i = 0; i < control_count(); i++) {
+		c = control_at(i);
+		if (c->kind == CONTROL_NUMBER)
+			snprintf(line, sizeof(line), "CONTROL %s %s number %d %d %d\n",
+				c->group, c->name, c->min, c->max, c->step);
+		else if (c->kind == CONTROL_CHOICE)
+			snprintf(line, sizeof(line), "CONTROL %s %s choice %s\n",
+				c->group, c->name, c->choices);
+		else
+			snprintf(line, sizeof(line), "CONTROL %s %s text\n", c->group, c->name);
+		client_queue_line(client, line);
+	}
+	client_queue_line(client, "CONTROL END\n");
 }
 
 static void accept_client(void) {
@@ -228,6 +267,10 @@ static void handle_line(struct client *c, char *line) {
 		send_all_settings(c);
 		return;
 	}
+	if (!strcmp(line, "schema")) {
+		send_schema(c);
+		return;
+	}
 	value = strchr(line, ' ');
 	if (value == NULL) {
 		snprintf(answer, sizeof(answer), "ERROR %s a label and a value\n", line);
@@ -236,7 +279,7 @@ static void handle_line(struct client *c, char *line) {
 	}
 	*value = 0;
 	value++;
-	if (radio_set(line, value, why, sizeof(why)) < 0) {
+	if (control_set(line, value, (int)(c - clients), why, sizeof(why)) < 0) {
 		snprintf(answer, sizeof(answer), "ERROR %s %s\n", line, why);
 		client_queue_line(c, answer);
 	}

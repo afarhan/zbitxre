@@ -9,13 +9,19 @@
 // looking at what came back, it lets the server work, as the radio program's
 // loop does.
 //
-// The checks: the radio telling its settings as it opens, before the
-// server does, closes nothing; a client is told every setting when it connects; a band
-// chosen moves the frequency and the mode to that band's; the other client
-// is told of it too; a frequency tuned out of a band says so, and one tuned
-// back in is where the band's memory was; a setting the radio will not take
-// is answered with ERROR, to the one who asked alone; ? gets every setting
-// again; a client that goes is forgotten and another can come.
+// The checks: a change told before the server opens closes nothing; a
+// client is told every setting when it connects, a modem's among them; a
+// change is told to the other clients and not to the one who made it; a
+// value already set is told to nobody; a number snapped onto its steps is
+// told back to the one who asked; a band chosen moves the frequency and the
+// mode, and those are told to everyone; tuning out of a band says so, and a
+// band returned to is where it was left; a value the radio will not take is
+// an ERROR, to the one who asked alone; ? gets every setting again; the
+// schema lists the controls in their groups; a client that goes is
+// forgotten and another can come.
+//
+// It registers one control of its own, STEPPED, a number in steps of 5, to
+// see a value snapped; no control of the radio's is snapped yet.
 //
 // Exits 0 when every check passes.
 
@@ -31,6 +37,7 @@
 
 #include "board.h"
 #include "sdr.h"
+#include "control.h"
 #include "radio.h"
 #include "server.h"
 
@@ -97,6 +104,22 @@ static int has(const char *heard, const char *line) {
 	return strstr(heard, line) != NULL;
 }
 
+static int test_apply_calls;
+
+static int count_applies(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)value;
+	(void)why;
+	(void)room;
+	test_apply_calls++;
+	return 0;
+}
+
+static struct control stepped = {
+	.group = "TEST", .name = "STEPPED", .kind = CONTROL_NUMBER,
+	.min = 0, .max = 100, .step = 5, .value = "0", .apply = count_applies,
+};
+
 int main(void) {
 	char heard[HEARD_MAX];
 	char other_heard[HEARD_MAX];
@@ -107,9 +130,12 @@ int main(void) {
 		printf("could not set up\n");
 		return EXIT_FAILURE;
 	}
-	radio_open(server_broadcast);
+	radio_open();
+	control_register(&stepped);
+	control_on_change(server_broadcast);
+	control_update("AUDIO", "61");
 	expect(fcntl(STDIN_FILENO, F_GETFD) != -1,
-		"the radio telling its settings before the server opens closes nothing");
+		"a change told before the server opens closes nothing");
 	if (server_open(TEST_PORT) < 0) {
 		printf("could not open the server\n");
 		return EXIT_FAILURE;
@@ -120,17 +146,40 @@ int main(void) {
 	hear(one, heard);
 	hear(other, other_heard);
 	expect(has(heard, "FREQ 7088000\n") && has(heard, "BAND 40M\n")
-		&& has(heard, "MODE LSB\n") && has(heard, "AUDIO 60\n"),
-		"a client is told every setting when it connects");
+		&& has(heard, "MODE LSB\n") && has(heard, "AUDIO 61\n")
+		&& has(heard, "WPM 20\n"),
+		"a client is told every setting when it connects, a modem's too");
+
+	say(one, "AUDIO 70\n");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(!has(heard, "AUDIO") && has(other_heard, "AUDIO 70\n"),
+		"a change is told to the other client, not to the one who made it");
+
+	say(other, "AUDIO 70\n");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(!has(heard, "AUDIO") && !has(other_heard, "AUDIO"),
+		"a value already set is told to nobody");
+
+	test_apply_calls = 0;
+	say(one, "STEPPED 17\n");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(has(heard, "STEPPED 15\n") && has(other_heard, "STEPPED 15\n")
+		&& test_apply_calls == 1,
+		"17 snapped onto steps of 5 is 15, and the one who asked is told");
+	say(one, "STEPPED 15\n");
+	expect(test_apply_calls == 1, "setting it to 15 again applies nothing");
 
 	say(one, "BAND 20M\n");
 	hear(one, heard);
 	hear(other, other_heard);
-	expect(has(heard, "BAND 20M\n") && has(heard, "FREQ 14200000\n")
+	expect(!has(heard, "BAND") && has(heard, "FREQ 14200000\n")
 		&& has(heard, "MODE USB\n"),
-		"BAND 20M goes to 20 m, at its frequency and in its mode");
-	expect(has(other_heard, "FREQ 14200000\n"),
-		"and the other client is told of it too");
+		"BAND 20M moves FREQ and MODE, and the one who asked is told of those");
+	expect(has(other_heard, "BAND 20M\n") && has(other_heard, "FREQ 14200000\n"),
+		"and the other client is told all of it");
 
 	say(one, "FREQ 14074000\n");
 	say(one, "FREQ 10500000\n");
@@ -154,8 +203,16 @@ int main(void) {
 	say(other, "?\n");
 	hear(other, other_heard);
 	hear(one, heard);
-	expect(has(other_heard, "AUDIO 60\n") && !has(heard, "AUDIO 60\n"),
+	expect(has(other_heard, "AUDIO 70\n") && !has(heard, "AUDIO 70\n"),
 		"? gets every setting again, to the one who asked");
+
+	say(one, "schema\n");
+	hear(one, heard);
+	expect(has(heard, "CONTROL RADIO FREQ number 500000 30000000 1\n")
+		&& has(heard, "CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM\n")
+		&& has(heard, "CONTROL CW WPM number 5 50 1\n")
+		&& has(heard, "CONTROL END\n"),
+		"the schema lists the controls in their groups, CW's WPM among them");
 
 	close(other);
 	serve_a_while();

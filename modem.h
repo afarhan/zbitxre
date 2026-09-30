@@ -22,7 +22,9 @@
 //   order    where the mode comes in a list shown to the operator. The list
 //            of modems is in the order of the files' names; order is for a
 //            user interface to sort by.
-//   start    is called once, when the radio starts. It may be left out.
+//   start    is called once, when the radio starts. It registers the
+//            modem's own controls, in a group of its own; control.c says how.
+//            It may be left out.
 //   reset    is called when the modem is put to use, and whenever the signal
 //            breaks off and starts again. It clears what the modem remembers.
 //            It may be left out.

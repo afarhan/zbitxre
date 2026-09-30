@@ -6,19 +6,19 @@
 // This opens the radio, tunes it, and then does what it is told, from three
 // places at once: the terminal, the front panel, and clients on the network.
 //
-// The radio's settings, frequency, band, mode and volume, are kept by
-// radio.c. Every change to them goes through radio_set(), wherever it comes
-// from, and every change is passed on to everyone: to each network client,
-// to the front panel, and printed on the terminal. So a band chosen on the
-// desktop moves the panel's dial, and a turn of the panel's knob moves the
-// desktop's.
+// The radio's settings are controls, in control.c's table: the radio's own,
+// registered by radio.c, and each modem's. Every change goes through
+// control_set(), wherever it comes from, and is passed on to everyone who
+// did not make it: to each network client, to the front panel, and printed
+// on the terminal. So a band chosen on the desktop moves the panel's dial,
+// and a turn of the panel's knob moves the desktop's.
 //
 // Clients connect on port 8081. server.c says what they say.
 //
 // From the terminal it takes a setting as a client sends it, "FREQ 7074000",
 // or a request in the words of sdr_request(), "r1:agc=FAST", which goes to
 // the core as it is. A frequency or volume set that way, r1:freq= or
-// r1:volume=, goes through radio.c like any other change.
+// r1:volume=, goes through the controls like any other change.
 //
 // From the panel it takes the frequency and the volume, over the link that
 // hw/panel.c keeps. When the panel says HELLO, which it does when it starts,
@@ -80,6 +80,7 @@
 #include "audio.h"
 #include "board.h"
 #include "panel.h"
+#include "control.h"
 #include "radio.h"
 #include "server.h"
 #include "si5351.h"
@@ -251,34 +252,30 @@ static void measure_update(long now) {
 	measured_times++;
 }
 
-static void on_radio_changed(const char *label, const char *value) {
-	server_broadcast(label, value);
-	if (!strcmp(label, "FREQ"))
-		panel_set(LINK_FREQ, atoi(value));
-	if (!strcmp(label, "AUDIO"))
-		panel_set(LINK_VOLUME, atoi(value));
-	printf("%s %s\n", label, value);
+static void on_control_changed(const struct control *c, int origin) {
+	server_broadcast(c, origin);
+	if (origin != ORIGIN_PANEL && !strcmp(c->name, "FREQ"))
+		panel_set(LINK_FREQ, atoi(c->value));
+	if (origin != ORIGIN_PANEL && !strcmp(c->name, "AUDIO"))
+		panel_set(LINK_VOLUME, atoi(c->value));
+	printf("%s %s\n", c->name, c->value);
 	fflush(stdout);
 }
 
 static void panel_send_settings(void) {
-	char value[RADIO_VALUE_MAX];
-
-	radio_get("FREQ", value, sizeof(value));
-	panel_set(LINK_FREQ, atoi(value));
-	radio_get("AUDIO", value, sizeof(value));
-	panel_set(LINK_VOLUME, atoi(value));
+	panel_set(LINK_FREQ, control_get_int("FREQ"));
+	panel_set(LINK_VOLUME, control_get_int("AUDIO"));
 }
 
-static void set_setting(const char *label, const char *value) {
-	char why[RADIO_VALUE_MAX * 2];
+static void set_setting(const char *name, const char *value, int origin) {
+	char why[CONTROL_WHY_MAX];
 
-	if (radio_set(label, value, why, sizeof(why)) < 0)
-		printf("ERROR %s %s\n", label, why);
+	if (control_set(name, value, origin, why, sizeof(why)) < 0)
+		printf("ERROR %s %s\n", name, why);
 }
 
 static void on_panel_record(int control, int32_t value) {
-	char text[RADIO_VALUE_MAX];
+	char text[CONTROL_VALUE_MAX];
 
 	snprintf(text, sizeof(text), "%d", (int)value);
 	if (control == LINK_HELLO) {
@@ -286,9 +283,9 @@ static void on_panel_record(int control, int32_t value) {
 		panel_send_settings();
 	}
 	if (control == LINK_FREQ)
-		set_setting("FREQ", text);
+		set_setting("FREQ", text, ORIGIN_PANEL);
 	if (control == LINK_VOLUME)
-		set_setting("AUDIO", text);
+		set_setting("AUDIO", text, ORIGIN_PANEL);
 	fflush(stdout);
 }
 
@@ -357,17 +354,17 @@ static void handle_command(char *line) {
 		return;
 	}
 	if (begins_with(line, FREQ_IS)) {
-		set_setting("FREQ", line + strlen(FREQ_IS));
+		set_setting("FREQ", line + strlen(FREQ_IS), ORIGIN_TERMINAL);
 		return;
 	}
 	if (begins_with(line, VOLUME_IS)) {
-		set_setting("AUDIO", line + strlen(VOLUME_IS));
+		set_setting("AUDIO", line + strlen(VOLUME_IS), ORIGIN_TERMINAL);
 		return;
 	}
 	if (strchr(line, '=') == NULL && strchr(line, ' ') != NULL) {
 		char *value = strchr(line, ' ');
 		*value = 0;
-		set_setting(line, value + 1);
+		set_setting(line, value + 1, ORIGIN_TERMINAL);
 		return;
 	}
 	sdr_request(line, response);
@@ -440,13 +437,14 @@ int main(int argc, char **argv) {
 	printf("radio open on the %s\n", board_zbitx_1.name);
 
 	panel_open();
-	radio_open(on_radio_changed);
+	radio_open();
+	control_on_change(on_control_changed);
 	if (hz != NULL)
-		set_setting("FREQ", hz);
+		set_setting("FREQ", hz, ORIGIN_TERMINAL);
 	if (mode != NULL)
-		set_setting("MODE", mode);
+		set_setting("MODE", mode, ORIGIN_TERMINAL);
 	if (volume != NULL)
-		set_setting("AUDIO", volume);
+		set_setting("AUDIO", volume, ORIGIN_TERMINAL);
 	panel_send_settings();
 
 	if (server_open(SERVER_PORT) < 0)

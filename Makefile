@@ -23,14 +23,14 @@ LINK_HEADERS = front_panel/link.h
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h modem.h
+DSP_HEADERS = dsp/sdr.h modem.h control.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
 	$(LINK)
 # every file in modems/ is a modem, and the list of them is made from the
 # files at build time; modem.h says how
 MODEMS      = $(wildcard modems/*.c)
 MODEM_LIST  = $(BUILD)/modem_list.c
-DSP         = core_sdr.c dsp/filter.c dsp/vfo.c $(MODEMS) $(MODEM_LIST)
+DSP         = core_sdr.c control.c dsp/filter.c dsp/vfo.c $(MODEMS) $(MODEM_LIST)
 RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
@@ -76,7 +76,7 @@ $(MODEM_LIST): $(MODEMS) tools/make_modem_list.sh FORCE | $(BUILD)
 
 FORCE:
 
-$(BUILD)/sdr: tools/sdr.c radio.c server.c radio.h server.h $(DSP) $(HW) \
+$(BUILD)/sdr: tools/sdr.c radio.c server.c radio.h server.h control.h $(DSP) $(HW) \
 		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tools/sdr.c radio.c server.c $(DSP) $(HW) $(RADIO_LIBS)
 
@@ -90,7 +90,7 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
 
-$(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h \
+$(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h control.h \
 		$(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c $(DSP) $(STAND_INS) \
 		-lfftw3 -lfftw3f -lm
