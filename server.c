@@ -65,24 +65,6 @@
 // client that cannot keep up misses lines rather than falling behind; the
 // next line is as good as the one missed.
 //
-// A client that has a knob, or a mouse wheel, tunes by telling the radio
-// how many steps it has turned, up or down:
-//
-//     tune 1
-//     tune -3
-//
-// The radio moves the frequency by that many of its STEPs, or, while RIT
-// is on, the receiver's offset, RIT_DELTA; radio.c says how. What moved is
-// told to every client, the one that turned included. So every client
-// tunes alike, and none has to know of STEP or RIT to do it.
-//
-// A reading is a control that the radio works out and tells, and that no
-// client may set: RX_FREQ, where the receiver listens, and TX_FREQ, where
-// the transmitter is to be. They differ while RIT or SPLIT is on. In the
-// schema a reading is
-//
-//     CONTROL TUNING RX_FREQ reading
-//
 // A line the radio will not take is answered, to that client alone, with
 // ERROR, the name, and what it would take:
 //
@@ -120,13 +102,11 @@
 #include <netinet/tcp.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "control.h"
-#include "radio.h"
 #include "server.h"
 
 #define LINE_MAX_LENGTH 128
@@ -135,7 +115,6 @@
 #define NOBODY (-1)
 #define WHY_MAX CONTROL_WHY_MAX
 #define LABEL_ROOM 16
-#define TUNE_WORD "tune "
 #define SPECTRUM_LINE_MAX (2 * SERVER_SPECTRUM_POINTS_MAX + 32)
 #define HEX_DIGITS "0123456789abcdef"
 
@@ -308,8 +287,6 @@ static void send_schema(struct client *client) {
 		else if (c->kind == CONTROL_CHOICE)
 			snprintf(line, sizeof(line), "CONTROL %s %s choice %s\n",
 				c->group, c->name, c->choices);
-		else if (c->kind == CONTROL_READING)
-			snprintf(line, sizeof(line), "CONTROL %s %s reading\n", c->group, c->name);
 		else
 			snprintf(line, sizeof(line), "CONTROL %s %s text\n", c->group, c->name);
 		client_queue_line(client, line);
@@ -350,13 +327,6 @@ static void handle_line(struct client *c, char *line) {
 	}
 	if (!strcmp(line, "schema")) {
 		send_schema(c);
-		return;
-	}
-	if (!strncmp(line, TUNE_WORD, strlen(TUNE_WORD))) {
-		if (radio_tune(atoi(line + strlen(TUNE_WORD)), why, sizeof(why)) < 0) {
-			snprintf(answer, sizeof(answer), "ERROR tune %s\n", why);
-			client_queue_line(c, answer);
-		}
 		return;
 	}
 	if (!strcmp(line, "spectrum on")) {

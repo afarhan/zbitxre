@@ -15,10 +15,9 @@
 //
 // Clients connect on port 8081. server.c says what they say.
 //
-// From the terminal it takes a setting as a client sends it, "FREQ
-// 7074000", a turn of the knob as a client sends it, "tune -2", or a
-// request in the words of sdr_request(), "r1:agc=FAST", which goes to the
-// core as it is. A frequency or volume set that way, r1:freq= or
+// From the terminal it takes a setting as a client sends it, "FREQ 7074000",
+// or a request in the words of sdr_request(), "r1:agc=FAST", which goes to
+// the core as it is. A frequency or volume set that way, r1:freq= or
 // r1:volume=, goes through the controls like any other change.
 //
 // From the panel it takes the frequency and the volume, over the link that
@@ -104,7 +103,6 @@
 
 #define FREQ_IS         "r1:freq="
 #define VOLUME_IS       "r1:volume="
-#define TUNE_WORD       "tune "
 
 #define SPECTRUM_EVERY_MS 250
 #define SPECTRUM_FIRST_BIN 1269
@@ -384,13 +382,6 @@ static void handle_command(char *line) {
 		si5351_set_freq(BFO_CLOCK, bfo_freq);
 		si5351_reset_plls();
 		printf("ok\n");
-		return;
-	}
-	if (begins_with(line, TUNE_WORD)) {
-		char why[CONTROL_WHY_MAX];
-
-		if (radio_tune(atoi(line + strlen(TUNE_WORD)), why, sizeof(why)) < 0)
-			printf("ERROR tune %s\n", why);
 		return;
 	}
 	if (begins_with(line, FREQ_IS)) {

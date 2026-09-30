@@ -27,13 +27,6 @@
 // each change, as the audio thread would, so that it takes up what it was
 // offered. And the spectrum: sent only to a client that asked for it, and
 // no longer once it says "spectrum off".
-//
-// And the frequency's own controls: each VFO keeps its frequency, and one
-// not yet used opens where the other is; SPLIT ON goes to VFO A; RIT moves
-// the receiver by RIT_DELTA, only while it is on, and keeps it there as the
-// frequency is tuned. And tuning as a knob does, with "tune": by STEP, or
-// RIT_DELTA while RIT is on, told to everyone; and the readings, RX_FREQ
-// and TX_FREQ, following RIT and SPLIT, and not to be set by a client.
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -246,10 +239,6 @@ int main(void) {
 		&& has(heard, "CONTROL RADIO DRIVE number 0 100 1\n")
 		&& has(heard, "CONTROL VOICE BW_VOICE number 300 3000 50\n")
 		&& has(heard, "CONTROL CW BW_CW number 50 3000 50\n")
-		&& has(heard, "CONTROL TUNING STEP choice 10H/100H/500H/1K/10K\n")
-		&& has(heard, "CONTROL TUNING VFO choice A/B\n")
-		&& has(heard, "CONTROL TUNING RIT_DELTA number -25000 25000 1\n")
-		&& has(heard, "CONTROL TUNING RX_FREQ reading\n")
 		&& has(heard, "CONTROL END\n"),
 		"the schema lists the controls in their groups, CW's WPM among them");
 
@@ -270,69 +259,6 @@ int main(void) {
 	expect(is_passband(300, 3000), "back in USB, the voice bandwidth is as it was left");
 	say(one, "MODE CWR\n");
 	expect(is_passband(600, 800), "and CWR has CW's");
-
-	say(one, "FREQ 14100000\n");
-	say(one, "VFO B\n");
-	hear(one, heard);
-	expect(has(heard, "FREQ 14100000\n") || control_get_int("FREQ") == 14100000,
-		"VFO B, not yet used, opens where A is");
-	say(one, "FREQ 14150000\n");
-	say(one, "VFO A\n");
-	hear(one, heard);
-	expect(has(heard, "FREQ 14100000\n"), "back on VFO A, the radio is where A was left");
-	say(one, "VFO B\n");
-	hear(one, heard);
-	expect(has(heard, "FREQ 14150000\n"), "and on VFO B, where B was left");
-	say(one, "SPLIT ON\n");
-	hear(one, heard);
-	expect(has(heard, "VFO A\n") && has(heard, "FREQ 14100000\n"),
-		"SPLIT ON goes to VFO A, to receive on A and transmit on B");
-	say(one, "SPLIT OFF\n");
-
-	oscillator_before = oscillator_frequency();
-	say(one, "RIT_DELTA 500\n");
-	expect(oscillator_frequency() == oscillator_before,
-		"RIT_DELTA moves nothing while RIT is off");
-	say(one, "RIT ON\n");
-	expect(labs((long)oscillator_frequency() - (long)oscillator_before) == 500,
-		"RIT ON moves the receiver by RIT_DELTA");
-	say(one, "FREQ 14101000\n");
-	expect(labs((long)oscillator_frequency() - (long)oscillator_before) == 1500,
-		"and it stays RIT_DELTA from the frequency as it is tuned");
-	say(one, "RIT OFF\n");
-	expect(labs((long)oscillator_frequency() - (long)oscillator_before) == 1000,
-		"RIT OFF brings the receiver back to the frequency");
-
-	say(one, "FREQ 14101500\n");
-	hear(one, heard);
-	say(one, "tune 1\n");
-	hear(one, heard);
-	hear(other, other_heard);
-	expect(has(heard, "FREQ 14102000\n") && has(other_heard, "FREQ 14102000\n"),
-		"tune 1 moves FREQ a STEP, onto a multiple of it, and tells everyone");
-	say(one, "STEP 100H\n");
-	say(one, "tune -3\n");
-	hear(one, heard);
-	expect(has(heard, "FREQ 14101700\n"), "tune -3 moves it three STEPs down");
-	say(one, "RIT ON\n");
-	hear(one, heard);
-	say(one, "tune 2\n");
-	hear(one, heard);
-	expect(has(heard, "RIT_DELTA 700\n") && control_get_int("FREQ") == 14101700
-		&& has(heard, "RX_FREQ 14102400\n") && control_get_int("TX_FREQ") == 14101700,
-		"with RIT on, tune moves RIT_DELTA and RX_FREQ, and not FREQ or TX_FREQ");
-	say(one, "RIT OFF\n");
-	hear(one, heard);
-	expect(has(heard, "RX_FREQ 14101700\n"), "RIT OFF brings RX_FREQ back to FREQ");
-	say(one, "SPLIT ON\n");
-	hear(one, heard);
-	expect(has(heard, "TX_FREQ 14150000\n"), "with SPLIT on, TX_FREQ is the other VFO's");
-	say(one, "SPLIT OFF\n");
-	hear(one, heard);
-	expect(has(heard, "TX_FREQ 14101700\n"), "and with SPLIT off, FREQ again");
-	say(one, "RX_FREQ 7000000\n");
-	hear(one, heard);
-	expect(has(heard, "ERROR RX_FREQ"), "a reading cannot be set by a client");
 
 	say(one, "spectrum on\n");
 	server_send_spectrum(25031, spectrum_points, sizeof(spectrum_points));

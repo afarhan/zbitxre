@@ -16,10 +16,10 @@
 // the controls down the right side, where the radio's knob is.
 //
 // The main area has the frequency in large figures, and under it the
-// frequency's own controls, STEP, RIT, SPLIT and VFO, which the radio keeps
-// in the group TUNING; below them are the spectrum and the waterfall. The
-// frequency, and each of its controls, are 50 pixels high. The spectrum is drawn with the passband shaded, the part of it
-// the receiver hears, and a line at the frequency that is tuned.
+// frequency's own controls, STEP, RIT, SPLIT and VFO; below them are the
+// spectrum and the waterfall. The frequency, and each of its controls, are
+// 50 pixels high. The spectrum is drawn with the passband shaded, the part
+// of it the receiver hears, and a line at the frequency that is tuned.
 //
 // The list has a row to each control, its name and its value, and scrolls
 // when there are more than it can show. It is made from the radio's schema,
@@ -50,13 +50,35 @@
 // click on a row gives it the focus; Escape, or a click on the frequency,
 // gives it back to the frequency.
 //
-// Tuning, and what RIT, SPLIT and VFO do, are the radio's, so that every
-// client behaves alike. The window tells the radio how many steps the
-// wheel has turned, "tune 1", and the radio moves the frequency by STEP,
-// or, while RIT is on, the receiver's offset. The large figures are
-// RX_FREQ, where the receiver listens, and when TX_FREQ, where the
-// transmitter is to be, differs, as it does with RIT or SPLIT on, it is
-// shown beside them. radio.c on the radio says how each is worked out.
+// TUNING
+//
+// The radio knows only FREQ, the frequency it is tuned to. STEP, RIT,
+// SPLIT and VFO are the window's own, as they were zbitxv2's window's, and
+// every client keeps its own: the front panel's knob is on the panel, and
+// tunes it as the wheel tunes this.
+//
+//   STEP     how far a turn of the wheel tunes: 10H, 100H, 500H, 1K or
+//            10K. The dial moves by STEP, onto a multiple of it.
+//   VFO      A or B, each with a dial of its own. Choosing the other keeps
+//            the dial of the one left, and goes to the other's; one not
+//            yet used opens where the other is.
+//   RIT      OFF or ON. While it is on, the wheel moves the receiver's
+//            offset, RIT_DELTA, by STEP, up to 25 kHz either way, and the
+//            dial stays; the receiver listens at the dial + RIT_DELTA, and
+//            the transmitter is to be on the dial.
+//   SPLIT    OFF or ON. While it is on, the transmitter is to be on the
+//            other VFO's dial. Turning it on goes to VFO A, so that it
+//            receives on A and transmits on B.
+//
+// The window sends the radio, as FREQ, where the receiver listens. The
+// large figures are that frequency, and where the transmitter is to be is
+// beside them when it is elsewhere, as it is with RIT or SPLIT on. With
+// RIT or SPLIT on, FREQ is to change at each switch between receive and
+// transmit, to where the transmitter is to be and back: the radio does not
+// say yet when it switches, since it has no transmitter yet.
+//
+// When the radio tells a new FREQ, from a band chosen or the front panel,
+// that is where the receiver listens, and the dial is worked back from it.
 //
 // THE RADIO
 //
@@ -115,12 +137,21 @@
 #define GRAPH_SHARE 3
 #define VOICE_LOW_HZ 300
 
-// what the radio has told of a control: its value, and from the schema its
-// kind and range
+#define LOWEST_HZ 500000
+#define HIGHEST_HZ 30000000
+#define RIT_MAX_HZ 25000
+#define HZ_PER_K 1000
+#define VFO_A 0
+#define VFO_B 1
+#define VFOS 2
+
+// a control: one the radio has told of, its value, and from the schema its
+// kind and range; or one of the window's own, which it never sends
 struct known {
 	char name[CONTROL_NAME_MAX];
 	char group[CONTROL_NAME_MAX];
 	char value[CONTROL_VALUE_MAX];
+	int is_own;
 	int is_choice;
 	int min;
 	int max;
@@ -169,6 +200,10 @@ static int known_count;
 static struct row rows[KNOWN_MAX];
 static int row_count;
 static int focus = ON_FREQUENCY;
+
+static int dial_hz;
+static int vfo_dial_hz[VFOS];
+static int vfo_in_use = VFO_A;
 
 static int span_hz;
 static int point_count;
@@ -247,6 +282,31 @@ static int is_row_shown(const struct row *r) {
 	return !strcmp(k->group, mode_group());
 }
 
+static int is_on(const char *name) {
+	return !strcmp(value_of(name), "ON");
+}
+
+// where the receiver listens: the dial, moved by RIT_DELTA while RIT is on
+static int receiver_hz(void) {
+	if (is_on("RIT"))
+		return dial_hz + atoi(value_of("RIT_DELTA"));
+	return dial_hz;
+}
+
+// where the transmitter is to be: the dial, or while SPLIT is on the other
+// VFO's dial, if that VFO has been used
+static int transmitter_hz(void) {
+	int other = VFO_B;
+
+	if (!is_on("SPLIT"))
+		return dial_hz;
+	if (vfo_in_use == VFO_B)
+		other = VFO_A;
+	if (vfo_dial_hz[other] == 0)
+		return dial_hz;
+	return vfo_dial_hz[other];
+}
+
 static void format_frequency(char *text, int room, int hz) {
 	snprintf(text, room, "%d.%03d.%03d", hz / HZ_PER_MHZ,
 		(hz % HZ_PER_MHZ) / HZ_PER_KHZ, hz % HZ_PER_KHZ);
@@ -255,8 +315,8 @@ static void format_frequency(char *text, int room, int hz) {
 // the frequency in large figures, where the receiver listens, and beside
 // it, smaller, where the transmitter is to be, when that is elsewhere
 static void show_frequency(void) {
-	int receive_hz = atoi(value_of("RX_FREQ"));
-	int transmit_hz = atoi(value_of("TX_FREQ"));
+	int receive_hz = receiver_hz();
+	int transmit_hz = transmitter_hz();
 	char markup[TEXT_MAX * 4];
 	char receive[TEXT_MAX];
 	char transmit[TEXT_MAX];
@@ -309,15 +369,99 @@ static void send_line(const char *name, const char *value) {
 	g_output_stream_write_all(writer, line, strlen(line), NULL, NULL, NULL);
 }
 
-// a turn of the knob, or of the wheel: the radio tunes by it, and tells
-// where it has tuned to
-static void tune(int steps) {
+// the radio is sent where the receiver listens
+static void send_frequency(void) {
 	char text[CONTROL_VALUE_MAX];
+	struct known *k = find_known("FREQ");
 
-	if (steps == 0)
+	snprintf(text, sizeof(text), "%d", receiver_hz());
+	if (k != NULL)
+		snprintf(k->value, CONTROL_VALUE_MAX, "%s", text);
+	send_line("FREQ", text);
+}
+
+// STEP in Hz: 10H is 10, 1K is 1000
+static int step_hz(void) {
+	const char *step = value_of("STEP");
+	int hz = atoi(step);
+
+	if (strchr(step, 'K') != NULL)
+		hz *= HZ_PER_K;
+	if (hz <= 0)
+		hz = HZ_PER_K;
+	return hz;
+}
+
+static int clamp(int value, int lowest, int highest) {
+	if (value < lowest)
+		return lowest;
+	if (value > highest)
+		return highest;
+	return value;
+}
+
+// a turn of the wheel on the frequency, as zbitxv2 tuned: the dial by
+// STEP, onto a multiple of it, or while RIT is on, RIT_DELTA by STEP
+static void tune(int steps) {
+	struct known *k = find_known("RIT_DELTA");
+	int step = step_hz();
+
+	if (steps == 0 || k == NULL)
 		return;
-	snprintf(text, sizeof(text), "%d", steps);
-	send_line("tune", text);
+	if (is_on("RIT"))
+		snprintf(k->value, CONTROL_VALUE_MAX, "%d",
+			clamp(atoi(k->value) + steps * step, -RIT_MAX_HZ, RIT_MAX_HZ));
+	else
+		dial_hz = clamp((dial_hz / step + steps) * step, LOWEST_HZ, HIGHEST_HZ);
+	send_frequency();
+	show_values();
+}
+
+// a VFO chosen: the dial of the one left is kept, and the other's taken up
+static void choose_vfo(int vfo) {
+	if (vfo == vfo_in_use)
+		return;
+	vfo_dial_hz[vfo_in_use] = dial_hz;
+	if (vfo_dial_hz[vfo] == 0)
+		vfo_dial_hz[vfo] = dial_hz;
+	vfo_in_use = vfo;
+	dial_hz = vfo_dial_hz[vfo];
+}
+
+// one of the window's own controls has changed
+static void apply_own(struct known *k) {
+	struct known *vfo = find_known("VFO");
+
+	if (!strcmp(k->name, "SPLIT") && is_on("SPLIT") && vfo != NULL)
+		snprintf(vfo->value, CONTROL_VALUE_MAX, "A");
+	if (vfo != NULL && !strcmp(vfo->value, "B"))
+		choose_vfo(VFO_B);
+	else
+		choose_vfo(VFO_A);
+	send_frequency();
+}
+
+// the window's own controls, which it keeps and never sends
+static void add_own_control(const char *name, const char *choices, const char *value) {
+	struct known *k = find_known(name);
+
+	if (k == NULL)
+		return;
+	k->is_own = 1;
+	snprintf(k->group, CONTROL_NAME_MAX, "WINDOW");
+	snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
+	if (choices == NULL)
+		return;
+	k->is_choice = 1;
+	snprintf(k->choices, CHOICES_MAX, "%s", choices);
+}
+
+static void add_own_controls(void) {
+	add_own_control("STEP", "10H/100H/500H/1K/10K", "1K");
+	add_own_control("RIT", "OFF/ON", "OFF");
+	add_own_control("RIT_DELTA", NULL, "0");
+	add_own_control("SPLIT", "OFF/ON", "OFF");
+	add_own_control("VFO", "A/B", "A");
 }
 
 // the choice a step away from the present one, in a list such as
@@ -374,8 +518,11 @@ static void step_row(int row, int steps) {
 		step_number(k, steps);
 	if (!strcmp(before, k->value))
 		return;
+	if (k->is_own)
+		apply_own(k);
+	else
+		send_line(k->name, k->value);
 	show_values();
-	send_line(k->name, k->value);
 }
 
 static void step_focused(int steps) {
@@ -472,6 +619,14 @@ static void take_spectrum_line(const char *rest) {
 	gtk_widget_queue_draw(spectrum_area);
 }
 
+// the radio tells where the receiver listens; the dial is that, less
+// RIT_DELTA while RIT is on
+static void take_radio_frequency(int hz) {
+	dial_hz = hz;
+	if (is_on("RIT"))
+		dial_hz -= atoi(value_of("RIT_DELTA"));
+}
+
 static void handle_line(const char *name, char *value) {
 	struct known *k;
 
@@ -491,9 +646,11 @@ static void handle_line(const char *name, char *value) {
 		return;
 	}
 	k = find_known(name);
-	if (k == NULL)
+	if (k == NULL || k->is_own)
 		return;
 	snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
+	if (!strcmp(name, "FREQ"))
+		take_radio_frequency(atoi(value));
 	show_values();
 }
 
@@ -852,7 +1009,7 @@ static void make_list(void) {
 	add_row("BW", UNDER_MODE);
 	for (i = 0; i < known_count; i++) {
 		if (known[i].group[0] != 0 && strcmp(known[i].group, "RADIO")
-				&& strcmp(known[i].group, "TUNING") && is_in_list(known[i].name))
+				&& strcmp(known[i].group, "WINDOW") && is_in_list(known[i].name))
 			add_row(known[i].name, UNDER_MODE);
 	}
 	show_values();
@@ -948,6 +1105,7 @@ int main(int argc, char **argv) {
 		radio_port = atoi(argv[2]);
 
 	fall = cairo_image_surface_create(CAIRO_FORMAT_RGB24, POINTS_MAX, FALL_ROWS);
+	add_own_controls();
 	window = create_window();
 	gtk_widget_show_all(window);
 	show_values();
