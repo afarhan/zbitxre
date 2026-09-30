@@ -16,7 +16,7 @@
 // the controls down the right side, where the radio's knob is.
 //
 // The main area has the frequency in large figures, a line under it with
-// the settings that matter most (the mode, the band, VOL, BW, IF and the
+// the settings that matter most (the mode, the band, VOL, IF and the
 // mode's own), and below them the spectrum and the
 // waterfall. The spectrum is drawn with the passband shaded, the part of it
 // the receiver hears, and a line at the frequency that is tuned.
@@ -24,11 +24,15 @@
 // The list has a row to each control, its name and its value, and scrolls
 // when there are more than it can show. It is made from the radio's schema,
 // so a control that a modem adds comes into the list without this program
-// knowing of it beforehand. The rows are in the order they are used:
+// knowing of it beforehand. The rows are in this order:
 //
-//   VOL, BW, IF      the volume, the bandwidth and the IF gain
-//   the mode's own   PITCH and WPM in CW, and so on
-//   DRIVE, MODE, BAND, and whatever else the radio has
+//   VOL, BAND, IF, DRIVE    the radio's core controls, and any other of the
+//                           radio's own
+//   MODE
+//     the mode's own        under the mode, set in: BW, and then PITCH and
+//                           WPM in CW, and so on
+//
+// The rows, and the frequency's readout, are each 50 pixels high.
 //
 // VOL is the radio's AUDIO. BW is BW_VOICE in the voice modes and BW_CW in
 // CW: the radio keeps one for each, as zbitxv2 did. For voice the
@@ -85,8 +89,9 @@
 #define WINDOW_HEIGHT 520
 #define SPECTRUM_MIN_HEIGHT 240
 #define SIDEBAR_WIDTH 210
-#define ROW_MARGIN_TOP 8
+#define ROW_HEIGHT 50
 #define ROW_MARGIN_SIDE 12
+#define UNDER_MODE_MARGIN 28
 #define SUMMARY_MAX 256
 
 #define KNOWN_MAX 64
@@ -127,8 +132,8 @@ struct row {
 	GtkWidget *value_label;
 };
 
-static const char *first_rows[] = { "AUDIO", "BW", "IF", NULL };
-static const char *later_rows[] = { "DRIVE", "MODE", "BAND", NULL };
+static const char *core_rows[] = { "AUDIO", "BAND", "IF", "DRIVE", NULL };
+static const char *summary_rows[] = { "AUDIO", "IF", NULL };
 
 static const char *radio_name = DEFAULT_RADIO;
 static int radio_port = DEFAULT_PORT;
@@ -236,24 +241,24 @@ static void show_frequency(void) {
 	if (focus == ON_FREQUENCY)
 		colour = "#ffd040";
 	snprintf(markup, sizeof(markup),
-		"<span font_desc='Monospace Bold 30' foreground='%s'>%d.%03d.%03d</span>",
+		"<span font_desc='Monospace Bold 28' foreground='%s'>%d.%03d.%03d</span>",
 		colour, hz / HZ_PER_MHZ, (hz % HZ_PER_MHZ) / HZ_PER_KHZ, hz % HZ_PER_KHZ);
 	gtk_label_set_markup(GTK_LABEL(frequency_label), markup);
 }
 
-// what the summary shows, after the mode and the band: the common controls
-// at the top of the list, and the mode's own
+// what the summary shows, after the mode and the band: VOL, IF, and the
+// mode's own
 static int is_row_in_summary(const struct row *r) {
 	struct known *k = find_known(row_control(r));
 	int i;
 
 	if (!is_row_shown(r) || k == NULL)
 		return 0;
-	for (i = 0; first_rows[i] != NULL; i++) {
-		if (!strcmp(first_rows[i], r->control))
+	for (i = 0; summary_rows[i] != NULL; i++) {
+		if (!strcmp(summary_rows[i], r->control))
 			return 1;
 	}
-	return strcmp(k->group, "RADIO") != 0;
+	return strcmp(k->group, "RADIO") != 0 || !strcmp(r->control, "BW");
 }
 
 static void show_summary(void) {
@@ -775,7 +780,7 @@ static int has_row(const char *control) {
 	return 0;
 }
 
-static void add_row(const char *control) {
+static void add_row(const char *control, int is_under_mode) {
 	GtkWidget *box;
 	GtkWidget *line;
 	GtkWidget *label;
@@ -795,10 +800,11 @@ static void add_row(const char *control) {
 	gtk_style_context_add_class(gtk_widget_get_style_context(value), "row-value");
 	gtk_box_pack_start(GTK_BOX(line), label, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(line), value, FALSE, FALSE, 0);
-	gtk_widget_set_margin_top(line, ROW_MARGIN_TOP);
-	gtk_widget_set_margin_bottom(line, ROW_MARGIN_TOP);
 	gtk_widget_set_margin_start(line, ROW_MARGIN_SIDE);
+	if (is_under_mode)
+		gtk_widget_set_margin_start(line, UNDER_MODE_MARGIN);
 	gtk_widget_set_margin_end(line, ROW_MARGIN_SIDE);
+	gtk_widget_set_size_request(box, -1, ROW_HEIGHT);
 	gtk_container_add(GTK_CONTAINER(box), line);
 	gtk_widget_set_no_show_all(box, TRUE);
 	gtk_widget_show_all(line);
@@ -818,8 +824,9 @@ static int is_in_list(const char *control) {
 		&& strcmp(control, "BW_CW");
 }
 
-// the list, made again each time the radio sends its schema: the common
-// controls, the modems' own, and the rest of the radio's
+// the list, made again each time the radio sends its schema: the core
+// controls, the rest of the radio's own, the mode, and under it BW and the
+// modems' own; of those, only the mode in use's are shown
 static void make_list(void) {
 	int i;
 
@@ -827,18 +834,19 @@ static void make_list(void) {
 		gtk_widget_destroy(rows[i].box);
 	row_count = 0;
 	focus = ON_FREQUENCY;
-	for (i = 0; first_rows[i] != NULL; i++)
-		add_row(first_rows[i]);
+	for (i = 0; core_rows[i] != NULL; i++)
+		add_row(core_rows[i], 0);
+	for (i = 0; i < known_count; i++) {
+		if (!strcmp(known[i].group, "RADIO") && strcmp(known[i].name, "MODE")
+				&& is_in_list(known[i].name))
+			add_row(known[i].name, 0);
+	}
+	add_row("MODE", 0);
+	add_row("BW", 1);
 	for (i = 0; i < known_count; i++) {
 		if (known[i].group[0] != 0 && strcmp(known[i].group, "RADIO")
 				&& is_in_list(known[i].name))
-			add_row(known[i].name);
-	}
-	for (i = 0; later_rows[i] != NULL; i++)
-		add_row(later_rows[i]);
-	for (i = 0; i < known_count; i++) {
-		if (!strcmp(known[i].group, "RADIO") && is_in_list(known[i].name))
-			add_row(known[i].name);
+			add_row(known[i].name, 1);
 	}
 	show_values();
 }
@@ -866,6 +874,7 @@ static GtkWidget *create_main_area(void) {
 	frequency_box = gtk_event_box_new();
 	frequency_label = gtk_label_new("");
 	gtk_container_add(GTK_CONTAINER(frequency_box), frequency_label);
+	gtk_widget_set_size_request(frequency_box, -1, ROW_HEIGHT);
 	gtk_widget_add_events(frequency_box, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
 	g_signal_connect(frequency_box, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
 	g_signal_connect(frequency_box, "button-press-event",
