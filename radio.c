@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// radio.c — the radio as its operator sees it: a frequency, a band, a mode
-// and a volume.
+// radio.c — the radio as its operator sees it: a frequency, a band, a mode,
+// a volume, the IF gain and the drive.
 //
 // core_sdr.c is the first level: it does what it is told, a request at a
 // time, and remembers nothing an operator would call a setting. This is the
-// second level. Its four controls are registered in the table of controls,
+// second level. Its controls are registered in the table of controls,
 // control.c, in the group RADIO, and each one's apply turns a new value into
 // the requests the core needs. control.c says how a change is made and who
 // is told of it.
@@ -19,6 +19,10 @@
 //           goes to that band, to the frequency and mode last used on it.
 //   MODE    USB, LSB, CW, CWR or AM.
 //   AUDIO   the volume, 0 to 100.
+//   IF      the gain of the sound card's input, 0 to 100, which is where
+//           the second IF comes in.
+//   DRIVE   the transmitter's drive, 0 to 100. There is no transmitter yet,
+//           so it is only kept.
 //
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.
@@ -33,9 +37,11 @@
 //
 // THE PASSBAND FOLLOWS THE MODE
 //
-// The core keeps one passband and does not change it with the mode. Here a
-// mode brings its own: 300 to 3000 Hz for SSB, 400 Hz wide around the pitch
-// for CW, 3 kHz either side of the carrier for AM.
+// The core keeps one passband and does not change it with the mode. Each
+// mode brings its own: when a mode is chosen, its modem's select() is
+// called, and sets the passband from the modem's own controls. SSB and AM
+// keep one bandwidth, CW another, as zbitxv2 did; modems/modem_ssb.c and
+// modems/modem_cw.c say how each is used.
 //
 // This is all for the thread that owns the controls, the same thread that
 // calls sdr_request().
@@ -46,6 +52,7 @@
 
 #include "sdr.h"
 #include "control.h"
+#include "modem.h"
 #include "radio.h"
 
 #define LOWEST_HZ 500000
@@ -55,15 +62,12 @@
 #define STARTING_BAND "40M"
 #define STARTING_MODE "LSB"
 #define STARTING_VOLUME "60"
+#define STARTING_IF "60"
+#define STARTING_DRIVE "40"
+#define GAIN_MAX 100
+#define DRIVE_MAX 100
 #define REQUEST_MAX 64
 #define ANSWER_MAX 100
-
-#define SSB_LOW_HZ 300
-#define SSB_HIGH_HZ 3000
-#define CW_PITCH_HZ 700
-#define CW_HALF_WIDTH_HZ 200
-#define AM_HALF_WIDTH_HZ 3000
-#define AM_LOW_HZ 50
 
 #define NO_BAND (-1)
 
@@ -95,13 +99,6 @@ static void core_request(const char *key, const char *value) {
 
 	snprintf(request, sizeof(request), "%s=%s", key, value);
 	sdr_request(request, answer);
-}
-
-static void core_request_int(const char *key, int value) {
-	char text[CONTROL_VALUE_MAX];
-
-	snprintf(text, sizeof(text), "%d", value);
-	core_request(key, text);
 }
 
 static int band_for_freq(int hz) {
@@ -139,28 +136,19 @@ static void save_band_state(void) {
 	snprintf(bands[band].mode, sizeof(bands[band].mode), "%s", control_get("MODE"));
 }
 
-static void set_passband(const char *mode) {
-	if (!strcmp(mode, "CW") || !strcmp(mode, "CWR")) {
-		core_request_int("rx_pitch", CW_PITCH_HZ);
-		core_request_int("r1:low", CW_PITCH_HZ - CW_HALF_WIDTH_HZ);
-		core_request_int("r1:high", CW_PITCH_HZ + CW_HALF_WIDTH_HZ);
-		return;
-	}
-	if (!strcmp(mode, "AM")) {
-		core_request_int("r1:low", AM_LOW_HZ);
-		core_request_int("r1:high", AM_HALF_WIDTH_HZ);
-		return;
-	}
-	core_request_int("r1:low", SSB_LOW_HZ);
-	core_request_int("r1:high", SSB_HIGH_HZ);
+static void select_modem(const char *mode) {
+	const struct modem *m = modem_find(mode);
+
+	if (m != NULL && m->select != NULL)
+		m->select();
 }
 
 static int apply_mode(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
 	(void)room;
+	select_modem(value);
 	core_request("r1:mode", value);
-	set_passband(value);
 	return 0;
 }
 
@@ -204,6 +192,14 @@ static int apply_audio(struct control *c, const char *value, char *why, int room
 	return 0;
 }
 
+static int apply_if(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	core_request("r1:gain", value);
+	return 0;
+}
+
 static struct control freq = {
 	.group = "RADIO", .name = "FREQ", .kind = CONTROL_NUMBER,
 	.min = LOWEST_HZ, .max = HIGHEST_HZ, .step = 1,
@@ -228,12 +224,26 @@ static struct control audio = {
 	.value = STARTING_VOLUME, .apply = apply_audio,
 };
 
+static struct control if_gain = {
+	.group = "RADIO", .name = "IF", .kind = CONTROL_NUMBER,
+	.min = 0, .max = GAIN_MAX, .step = 1,
+	.value = STARTING_IF, .apply = apply_if,
+};
+
+static struct control drive = {
+	.group = "RADIO", .name = "DRIVE", .kind = CONTROL_NUMBER,
+	.min = 0, .max = DRIVE_MAX, .step = 1,
+	.value = STARTING_DRIVE,
+};
+
 int radio_open(void) {
 	if (control_register(&freq) < 0 || control_register(&band) < 0
-			|| control_register(&mode) < 0 || control_register(&audio) < 0)
+			|| control_register(&mode) < 0 || control_register(&audio) < 0
+			|| control_register(&if_gain) < 0 || control_register(&drive) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);
 	core_request("r1:volume", audio.value);
+	core_request("r1:gain", if_gain.value);
 	return 0;
 }

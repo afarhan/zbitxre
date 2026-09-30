@@ -50,6 +50,21 @@
 //     CONTROL CW WPM number 5 50 1
 //     CONTROL END
 //
+// A client that sends "spectrum on" is sent, ten times a second, what the
+// receiver hears either side of the tuned frequency, for a graph and a
+// waterfall, until it sends "spectrum off":
+//
+//     SPECTRUM 25031 1c1d1f2a...
+//
+// The first number is how many Hz the line spans, the tuned frequency in its
+// middle. Then comes a strength for each point across that span, from the
+// lowest frequency up, two hex digits each, in dB with 30 added so that the
+// noise sits a little above the bottom. It is the line the front panel is
+// sent, but at the full resolution of the receiver's bins, 534 points. A
+// line is sent to a client only when all it was sent before has gone, so a
+// client that cannot keep up misses lines rather than falling behind; the
+// next line is as good as the one missed.
+//
 // A line the radio will not take is answered, to that client alone, with
 // ERROR, the name, and what it would take:
 //
@@ -85,6 +100,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -99,6 +115,8 @@
 #define NOBODY (-1)
 #define WHY_MAX CONTROL_WHY_MAX
 #define LABEL_ROOM 16
+#define SPECTRUM_LINE_MAX (2 * SERVER_SPECTRUM_POINTS_MAX + 32)
+#define HEX_DIGITS "0123456789abcdef"
 
 struct client {
 	int fd;
@@ -106,6 +124,7 @@ struct client {
 	int in_count;
 	char out[OUT_MAX];
 	int out_count;
+	int wants_spectrum;
 };
 
 static int listener = NOBODY;
@@ -149,6 +168,7 @@ static void client_close(struct client *c) {
 	c->fd = NOBODY;
 	c->in_count = 0;
 	c->out_count = 0;
+	c->wants_spectrum = 0;
 }
 
 void server_close(void) {
@@ -205,6 +225,43 @@ void server_broadcast(const struct control *c, int origin) {
 	}
 }
 
+int server_wants_spectrum(void) {
+	int i;
+
+	if (listener == NOBODY)
+		return 0;
+	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
+		if (clients[i].fd != NOBODY && clients[i].wants_spectrum)
+			return 1;
+	}
+	return 0;
+}
+
+void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
+	char line[SPECTRUM_LINE_MAX];
+	int length;
+	int i;
+
+	if (listener == NOBODY)
+		return;
+	if (count > SERVER_SPECTRUM_POINTS_MAX)
+		count = SERVER_SPECTRUM_POINTS_MAX;
+	length = snprintf(line, sizeof(line), "SPECTRUM %d ", span_hz);
+	for (i = 0; i < count; i++) {
+		line[length++] = HEX_DIGITS[points[i] >> 4];
+		line[length++] = HEX_DIGITS[points[i] & 0xf];
+	}
+	line[length++] = '\n';
+	line[length] = 0;
+	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
+		if (clients[i].fd == NOBODY || !clients[i].wants_spectrum)
+			continue;
+		if (clients[i].out_count > 0)
+			continue;
+		client_queue_line(&clients[i], line);
+	}
+}
+
 static void send_all_settings(struct client *client) {
 	char line[LINE_MAX_LENGTH];
 	const struct control *c;
@@ -255,6 +312,7 @@ static void accept_client(void) {
 	clients[i].fd = fd;
 	clients[i].in_count = 0;
 	clients[i].out_count = 0;
+	clients[i].wants_spectrum = 0;
 	send_all_settings(&clients[i]);
 }
 
@@ -269,6 +327,14 @@ static void handle_line(struct client *c, char *line) {
 	}
 	if (!strcmp(line, "schema")) {
 		send_schema(c);
+		return;
+	}
+	if (!strcmp(line, "spectrum on")) {
+		c->wants_spectrum = 1;
+		return;
+	}
+	if (!strcmp(line, "spectrum off")) {
+		c->wants_spectrum = 0;
 		return;
 	}
 	value = strchr(line, ' ');

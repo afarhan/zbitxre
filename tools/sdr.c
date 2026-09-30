@@ -32,6 +32,10 @@
 // the highest frequency down, so the line is turned round to have the
 // lowest frequency first.
 //
+// Ten times a second, while a network client has asked for it, it sends the
+// same spectrum at the full resolution of the bins, 534 points, one to a
+// bin. server.c says how.
+//
 // Some words are the program's own. "report" prints how the sound card and
 // the link have been doing. "panel=off" stops the radio polling the panel
 // and "panel=on" starts it again. "spectrum=off" stops the spectrum being
@@ -105,6 +109,8 @@
 #define SPECTRUM_BINS   534
 #define SPECTRUM_ADDED_DB 30
 #define SPECTRUM_HIGHEST 255
+#define SPECTRUM_HZ_PER_BIN 46.875
+#define CLIENT_SPECTRUM_EVERY_MS 100
 
 // what is measured: 3 kHz either side of the tuned frequency, which is bin
 // 1536 of the spectrum, a bin being 46.875 Hz
@@ -118,6 +124,8 @@ static int is_done;
 static int is_sending_spectrum = 1;
 static long next_spectrum_ms;
 static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
+static long next_client_spectrum_ms;
+static uint8_t client_spectrum_line[SPECTRUM_BINS];
 
 static double measured_power[MEASURED_BINS];
 static int measured_times;
@@ -168,6 +176,16 @@ static int max_bin_level(int first_bin, int after_last_bin) {
 	return strongest;
 }
 
+static uint8_t spectrum_level(int bin) {
+	int level = spectrum_plot[bin] + SPECTRUM_ADDED_DB;
+
+	if (level < 0)
+		level = 0;
+	if (level > SPECTRUM_HIGHEST)
+		level = SPECTRUM_HIGHEST;
+	return (uint8_t)level;
+}
+
 static void spectrum_line_fill(void) {
 	int first_bin;
 	int after_last_bin;
@@ -194,6 +212,19 @@ static void spectrum_send(long now) {
 	next_spectrum_ms = now + SPECTRUM_EVERY_MS;
 	spectrum_line_fill();
 	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
+}
+
+static void client_spectrum_send(long now) {
+	int bin;
+
+	if (now < next_client_spectrum_ms || !server_wants_spectrum())
+		return;
+	next_client_spectrum_ms = now + CLIENT_SPECTRUM_EVERY_MS;
+	for (bin = 0; bin < SPECTRUM_BINS; bin++)
+		client_spectrum_line[SPECTRUM_BINS - 1 - bin]
+			= spectrum_level(SPECTRUM_FIRST_BIN + bin);
+	server_send_spectrum((int)(SPECTRUM_BINS * SPECTRUM_HZ_PER_BIN),
+		client_spectrum_line, SPECTRUM_BINS);
 }
 
 static void measure_start(int seconds, long now) {
@@ -400,6 +431,7 @@ static void main_loop(void) {
 
 	while (!is_done) {
 		spectrum_send(now_ms());
+		client_spectrum_send(now_ms());
 		measure_update(now_ms());
 		panel_poll(now_ms(), on_panel_record);
 

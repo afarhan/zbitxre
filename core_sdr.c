@@ -665,7 +665,25 @@ void demod_am(fftw_complex *bins, int32_t *baseband_output){
 		baseband_output[i] = cabs(r->fft_time[i+(MAX_BINS/2)]);
 }
 
-static const struct modem *modem_find(const char *name){
+/*
+	the passband a modem wants, as the core's r1:low and r1:high,
+	with zbitxv2's limits: the low edge no lower than 50 Hz and the
+	high edge no higher than 5 kHz
+*/
+void set_passband(int low_hz, int high_hz){
+	char request[64], response[100];
+
+	if (low_hz < 50)
+		low_hz = 50;
+	if (high_hz > 5000)
+		high_hz = 5000;
+	sprintf(request, "r1:low=%d", low_hz);
+	sdr_request(request, response);
+	sprintf(request, "r1:high=%d", high_hz);
+	sdr_request(request, response);
+}
+
+const struct modem *modem_find(const char *name){
 	for (int i = 0; modem_list[i] != NULL; i++){
 		if (!strcmp(modem_list[i]->name, name))
 			return modem_list[i];

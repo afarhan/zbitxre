@@ -196,3 +196,4 @@ void set_spectrum_speed(int speed);
 void demod_ssb(fftw_complex *bins, int32_t *baseband_output);
 void demod_am(fftw_complex *bins, int32_t *baseband_output);
 void speaker_play(const int32_t *samples, int count);
+void set_passband(int low_hz, int high_hz);
