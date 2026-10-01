@@ -47,8 +47,7 @@ static void rx_cw(fftw_complex *bins) {
 }
 
 //the core moves the oscillator by the pitch only when the mode is set, as
-//zbitxv2 did, so this is called before the mode is set, and after a new
-//pitch the mode is set again
+//zbitxv2 did, so the mode is set again after this, and after a new pitch
 static void cw_select(void) {
 	char request[REQUEST_MAX];
 	char answer[ANSWER_MAX];

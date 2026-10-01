@@ -25,7 +25,10 @@
 // changed, the oscillator moving with the pitch; a mode chosen again finds
 // the bandwidth it was left with. The receiver is run for a block after
 // each change, as the audio thread would, so that it takes up what it was
-// offered. And the spectrum: sent only to a client that asked for it, and
+// offered. And the sideband: with a tone fed in on each side of the tuned
+// frequency and the AGC off, USB hears one side alone and LSB the other,
+// whichever mode it was changed from; a filter left on the last mode's side
+// hears neither. And the spectrum: sent only to a client that asked for it, and
 // no longer once it says "spectrum off". And a client that stalls while
 // the radio changes much: it is not dropped, it is sent the last value of
 // FREQ though not every one, and few lines of the spectrum, not the
@@ -33,6 +36,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <math.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
@@ -54,6 +58,16 @@
 #define ROUND_MS 5
 #define BLOCK_FRAMES 1024
 
+#define ANSWER_MAX 100
+#define SAMPLE_RATE 96000.0
+#define TUNED_HZ 28125.0
+#define TONE_OFFSET_HZ 1000.0
+#define TONE_LEVEL 2.0e6
+#define TONE_BLOCKS 24
+#define TONE_SETTLING_BLOCKS 12
+#define ONE_SIDED 30.0
+// the receiver says nothing for its first blocks after it starts
+#define START_UP_MUTE_BLOCKS 50
 
 #define STALLED_CHANGES 3000
 #define STALLED_CHANGES_A_LINE 10
@@ -137,6 +151,53 @@ static int is_passband(int low_hz, int high_hz) {
 	block.frames = BLOCK_FRAMES;
 	hw_stand_in_block(&block);
 	return rx_list->low_hz == low_hz && rx_list->high_hz == high_hz;
+}
+
+// how loud the speaker is with a steady tone coming in, this far from the
+// tuned frequency: the receiver is run for some blocks to settle, and the
+// speaker's samples in the blocks after are measured
+static double tone_heard(double offset_hz) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t to_speaker[BLOCK_FRAMES];
+	static int32_t to_transmitter[BLOCK_FRAMES];
+	static double seconds;
+	struct audio_block block;
+	double sum = 0;
+	int blocks;
+	int i;
+
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.to_speaker = to_speaker;
+	block.to_transmitter = to_transmitter;
+	block.frames = BLOCK_FRAMES;
+	for (blocks = 0; blocks < TONE_BLOCKS; blocks++) {
+		for (i = 0; i < BLOCK_FRAMES; i++) {
+			from_receiver[i] = (int32_t)(TONE_LEVEL
+				* sin(2 * M_PI * (TUNED_HZ + offset_hz) * seconds));
+			seconds += 1.0 / SAMPLE_RATE;
+		}
+		hw_stand_in_block(&block);
+		if (blocks < TONE_SETTLING_BLOCKS)
+			continue;
+		for (i = 0; i < BLOCK_FRAMES; i++)
+			sum += (double)to_speaker[i] * to_speaker[i];
+	}
+	return sqrt(sum);
+}
+
+// which side of the tuned frequency is heard: 1 for above, -1 for below,
+// 0 when neither is much louder than the other
+static int side_heard(void) {
+	double above = tone_heard(TONE_OFFSET_HZ);
+	double below = tone_heard(-TONE_OFFSET_HZ);
+
+	if (above > below * ONE_SIDED)
+		return 1;
+	if (below > above * ONE_SIDED)
+		return -1;
+	return 0;
 }
 
 static const uint8_t spectrum_points[] = { 0x00, 0x1c, 0xff };
@@ -233,6 +294,10 @@ int main(void) {
 	int one;
 	int other;
 	uint32_t oscillator_before;
+	char answer[ANSWER_MAX];
+	int usb_side;
+	int lsb_side;
+	int i;
 
 	if (setup(&board_zbitx_1) < 0) {
 		printf("could not set up\n");
@@ -344,6 +409,21 @@ int main(void) {
 	say(one, "MODE CWR\n");
 	expect(is_passband(600, 800), "and CWR has CW's");
 
+	sdr_request("r1:agc=OFF", answer);
+	for (i = 0; i < START_UP_MUTE_BLOCKS; i += TONE_BLOCKS)
+		tone_heard(TONE_OFFSET_HZ);
+	say(one, "MODE USB\n");
+	usb_side = side_heard();
+	say(one, "MODE LSB\n");
+	lsb_side = side_heard();
+	expect(usb_side != 0 && lsb_side == -usb_side,
+		"changed from USB to LSB, the receiver hears the other sideband, and that one alone");
+	say(one, "MODE USB\n");
+	expect(side_heard() == usb_side, "and changed back to USB, the first again");
+	say(one, "MODE CW\n");
+	say(one, "MODE LSB\n");
+	expect(side_heard() == lsb_side, "from CW to LSB, LSB's sideband");
+	sdr_request("r1:agc=SLOW", answer);
 
 	say(one, "spectrum on\n");
 	server_send_spectrum(25031, spectrum_points, sizeof(spectrum_points));

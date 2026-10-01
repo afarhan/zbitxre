@@ -26,9 +26,10 @@
 //            modem's own controls, in a group of its own; control.c says how.
 //            It may be left out.
 //   select   is called when its mode is chosen, by the thread that owns the
-//            controls, just before the mode is set in the core. It sets the
+//            controls, once the mode is set in the core. It sets the
 //            receiver as the mode wants it, its passband above all, with
-//            sdr_request(). It may be left out.
+//            sdr_request(). The mode is set in the core once more after
+//            it; radio.c says why. It may be left out.
 //   reset    is called when the modem is put to use, and whenever the signal
 //            breaks off and starts again. It clears what the modem remembers.
 //            It may be left out.

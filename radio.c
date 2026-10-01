@@ -143,10 +143,20 @@ static void select_modem(const char *mode) {
 		m->select();
 }
 
+// The mode is set in the core, then the modem sets the receiver for it, and
+// then the mode is set once more. The order matters twice over. The core
+// builds the receiver's filter when the passband is set, on the side of
+// the tuned frequency that the mode it then has listens to; so the mode
+// has to be set before the modem sets the passband, or the filter is left
+// on the last mode's side, the sideband the new mode has cut off, and all
+// that is heard is the AGC at full gain on what little leaks through. And
+// the core moves the oscillator by CW's pitch only when the mode is set;
+// so the mode is set again after the modem has set the pitch.
 static int apply_mode(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
 	(void)room;
+	core_request("r1:mode", value);
 	select_modem(value);
 	core_request("r1:mode", value);
 	return 0;
