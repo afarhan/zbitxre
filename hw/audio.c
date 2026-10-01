@@ -22,12 +22,24 @@
 // written when its control moves and at no other time. In receive the radio
 // sends silence to the transmitter, and in transmit it ignores the receiver.
 //
-// A level is 0 to 100 and is spread over the chip's whole range of steps,
-// rounding down. zbitxv2 counts levels the same way, so its settings carry
-// over unchanged. The chip plays nothing below step 48 of its 127, so the
-// speaker is silent under 38. An input has only 31 steps, so several levels
-// share a step; a level read back is the lowest that gives the step the chip
-// is on, and writing it back changes nothing.
+// A level is 0 to 100. For the transmitter and the two inputs it is spread
+// over the chip's whole range of steps, rounding down, as zbitxv2 counts
+// levels, so its settings for those carry over unchanged. An input has only
+// 31 steps, so several levels share a step; a level read back is the lowest
+// that gives the step the chip is on, and writing it back changes nothing.
+//
+// The speaker's level is counted differently, because spread over the
+// whole range most of it is of no use. An output has 127 steps of 1 dB, of
+// which the chip plays nothing below step 48, and what the receiver sends
+// is well under full scale: the author found the speaker almost silent at
+// 85 of zbitxv2's 100, and overdriven at 100. So for the speaker 0 is
+// silence, and 1 to 100 are spread evenly over the top SPEAKER_SPAN_STEPS
+// steps of the chip, 40 dB, with 100 the chip's highest step as before.
+// That is 0.4 dB to a level, so two or three levels share a step. What
+// was 85 is now about 52, and what was 95, the chip's 0 dB, about 85. The
+// top 6 dB are above the chip's 0 dB and overdrive a little; the author
+// keeps them, since a little overdrive is no harm when the volume has to
+// be topped off.
 //
 // One thread does the work. It waits for the card to gather a block, hands
 // that to the radio's function together with two empty blocks to fill, and
@@ -84,6 +96,7 @@
 
 #define CARD                 "hw:audioinjectorpi"
 #define CHANNELS             2
+#define SPEAKER_SPAN_STEPS   40
 #define CAPTURE_PERIODS      4
 #define PLAYBACK_PERIODS     4
 #define PRIMED_PERIODS       1
@@ -175,6 +188,25 @@ static int set_joined_volume(const char *name, long value) {
 	return snd_mixer_selem_set_playback_volume_all(found, value);
 }
 
+// the chip's step for a speaker level
+static long speaker_step(int level, long highest) {
+	if (level == 0)
+		return 0;
+	return highest - (long)(AUDIO_LEVEL_MAX - level) * SPEAKER_SPAN_STEPS
+		/ (AUDIO_LEVEL_MAX - 1);
+}
+
+// the lowest speaker level that gives a step of the chip
+static int speaker_level(long step, long highest) {
+	int level;
+
+	for (level = 0; level < AUDIO_LEVEL_MAX; level++) {
+		if (speaker_step(level, highest) >= step)
+			return level;
+	}
+	return AUDIO_LEVEL_MAX;
+}
+
 static int percent_ok(int percent) {
 	return percent >= 0 && percent <= AUDIO_LEVEL_MAX;
 }
@@ -217,8 +249,21 @@ static int as_percent(long value, long highest) {
 	return (int)((value * AUDIO_LEVEL_MAX + highest - 1) / highest);
 }
 
-int audio_set_speaker(int percent) {
-	return set_output(LEFT, percent);
+int audio_set_speaker(int level) {
+	snd_mixer_elem_t *found;
+	long lowest;
+	long highest;
+
+	if (mixer == NULL || !percent_ok(level))
+		return -1;
+	found = control("Master");
+	if (found == NULL)
+		return -1;
+	snd_mixer_selem_get_playback_volume_range(found, &lowest, &highest);
+	if (snd_mixer_selem_set_playback_volume(found, LEFT,
+			speaker_step(level, highest)) < 0)
+		return -1;
+	return 0;
 }
 
 int audio_set_transmitter(int percent) {
@@ -250,7 +295,7 @@ int audio_get_levels(struct audio_levels *levels) {
 
 	snd_mixer_selem_get_playback_volume_range(output, &lowest, &highest);
 	snd_mixer_selem_get_playback_volume(output, LEFT, &value);
-	levels->speaker = as_percent(value, highest);
+	levels->speaker = speaker_level(value, highest);
 	snd_mixer_selem_get_playback_volume(output, RIGHT, &value);
 	levels->transmitter = as_percent(value, highest);
 

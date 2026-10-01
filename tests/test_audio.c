@@ -49,7 +49,7 @@
 #define TONE_HZ             700.0
 #define TONE_SECONDS        1
 #define TONE_AMPLITUDE      200000000.0
-#define TONE_SPEAKER_LEVEL  80
+#define TONE_SPEAKER_LEVEL  50
 #define TWO_PI              6.283185307179586
 
 #define SPEAKER_LEVEL       40

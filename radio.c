@@ -18,7 +18,9 @@
 //           17M, 15M, 12M or 10M, or OUT when it is in none. Setting BAND
 //           goes to that band, to the frequency and mode last used on it.
 //   MODE    USB, LSB, CW, CWR or AM.
-//   AUDIO   the volume, 0 to 100.
+//   AUDIO   the volume, 0 to 100: 0 is silence, and 1 to 100 are spread
+//           over the 40 dB of the sound card's range that are of use;
+//           hw/audio.c says how.
 //   IF      the gain of the sound card's input, 0 to 100, which is where
 //           the second IF comes in.
 //   DRIVE   the transmitter's drive, 0 to 100. There is no transmitter yet,
