@@ -180,6 +180,8 @@ struct rx {
 
 extern struct rx *rx_list;
 extern struct rx *tx_list;
+#define HW_SETTINGS_PATH_MAX 256
+extern char hw_settings_file[];
 extern int freq_hdr;
 extern int bfo_freq;
 
@@ -195,3 +197,4 @@ void demod_ssb(complex float *bins, int32_t *baseband_output);
 void demod_am(complex float *bins, int32_t *baseband_output);
 void speaker_play(const int32_t *samples, int count);
 void set_passband(int low_hz, int high_hz);
+int tr_wait_to_tx_ms(void);

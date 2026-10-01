@@ -25,10 +25,10 @@ BUILD  = build
 LINK        = front_panel/link.c
 LINK_HEADERS = front_panel/link.h
 
-HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h \
+HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw/key.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h modem.h control.h
-HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
+DSP_HEADERS = dsp/sdr.h modem.h control.h modems/cw_keyer.h
+HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	$(LINK)
 # every file in modems/ is a modem, and the list of them is made from the
 # files at build time; modem.h says how
@@ -43,7 +43,7 @@ DSP         = core_sdr.c control.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
 RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
-	$(BUILD)/test_server
+	$(BUILD)/test_cw_keyer $(BUILD)/test_server
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -66,6 +66,7 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
+	$(BUILD)/test_cw_keyer
 	$(BUILD)/test_server
 
 radio: $(RADIO_TESTS)
@@ -108,6 +109,9 @@ $(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h cont
 		$(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c $(DSP) $(STAND_INS) \
 		-lm
+
+$(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
+	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_keyer.c modems/cw_keyer.c -lm
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

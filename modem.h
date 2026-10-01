@@ -41,11 +41,27 @@
 //            longer, as decoding FT8 does, hands its samples to a thread of
 //            its own and returns.
 //
+//   tx       is called by the audio thread once for each block while the
+//            radio transmits, with the block's samples from the microphone.
+//            It fills samples with what is to be sent, MAX_BINS/2 of them,
+//            as audio, at the levels zbitxv2's tx_process() worked at: the
+//            microphone's sample over 2000000000 for speech. The core makes
+//            the transmitted signal of them. It may be left out, and the
+//            mode then does not transmit.
+//
+//   wants_tx is asked by the thread that owns the controls, many times a
+//            second: whether the modem has something to send. The radio
+//            goes to transmit while it says so and back to receive when it
+//            no longer does. CW says so from the moment a paddle closes
+//            until its hang time after the last element. It may be left
+//            out: a mode that is keyed only by the PTT or by TX.
+//
 // Several modes may share a file and its functions, as USB and LSB do.
 
 #pragma once
 
 #include <complex.h>
+#include <stdint.h>
 
 struct modem {
 	const char *name;
@@ -54,6 +70,8 @@ struct modem {
 	void (*select)(void);
 	void (*reset)(void);
 	void (*rx)(complex float *bins);
+	void (*tx)(const int32_t *mic, double *samples);
+	int (*wants_tx)(void);
 };
 
 extern const struct modem *modem_list[];

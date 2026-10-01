@@ -67,8 +67,9 @@
 // lever is the dot is the keyer's business, not the board's.
 //
 // Nothing here waits or decides an order. Going to transmit is a sequence of
-// these calls with time for the relays between them; the order and the
-// timing belong to whoever calls.
+// these calls with time between them, which the boards that switch with
+// relays need and the ones with PIN diodes do not; the order and the timing
+// belong to whoever calls.
 //
 // board_open() leaves the radio receiving: transmitter off, filters released,
 // receiver on if there is a line for it. Each pin is given its level before

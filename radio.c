@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Ashhar Farhan
 //
 // radio.c — the radio as its operator sees it: a frequency, a band, a mode,
-// a volume, the IF gain and the drive.
+// a volume, the IF gain, the microphone's gain, the drive, and whether it
+// is transmitting.
 //
 // core_sdr.c is the first level: it does what it is told, a request at a
 // time, and remembers nothing an operator would call a setting. This is the
@@ -17,14 +18,21 @@
 //   BAND    the amateur band the frequency is in: 80M, 60M, 40M, 30M, 20M,
 //           17M, 15M, 12M or 10M, or OUT when it is in none. Setting BAND
 //           goes to that band, to the frequency and mode last used on it.
-//   MODE    USB, LSB, CW, CWR or AM.
+//   MODE    USB, LSB, CW, CWR, AM or 2TONE.
 //   AUDIO   the volume, 0 to 100: 0 is silence, and 1 to 100 are spread
 //           over the 40 dB of the sound card's range that are of use;
 //           hw/audio.c says how.
 //   IF      the gain of the sound card's input, 0 to 100, which is where
 //           the second IF comes in.
-//   DRIVE   the transmitter's drive, 0 to 100. There is no transmitter yet,
-//           so it is only kept.
+//   DRIVE   the transmitter's drive, 0 to 100. The core scales it for the
+//           band the radio is on.
+//   MIC     the gain of the sound card's input from the microphone, 0 to
+//           100.
+//   TX      OFF or ON: whether the radio is transmitting. Setting it ON
+//           goes to transmit, if the mode in use can transmit: USB, LSB,
+//           CW, CWR and 2TONE can; AM cannot yet, and setting TX ON in it
+//           is refused. Changing the mode or the band goes back to
+//           receive first.
 //
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.
@@ -66,6 +74,7 @@
 #define STARTING_VOLUME "60"
 #define STARTING_IF "60"
 #define STARTING_DRIVE "40"
+#define STARTING_MIC "40"
 #define GAIN_MAX 100
 #define DRIVE_MAX 100
 #define REQUEST_MAX 64
@@ -95,12 +104,21 @@ static struct band bands[] = {
 
 #define BANDS ((int)(sizeof(bands) / sizeof(bands[0])))
 
-static void core_request(const char *key, const char *value) {
+static int core_request(const char *key, const char *value) {
 	char request[REQUEST_MAX];
 	char answer[ANSWER_MAX];
 
 	snprintf(request, sizeof(request), "%s=%s", key, value);
 	sdr_request(request, answer);
+	return !strcmp(answer, "ok");
+}
+
+// back to receive, if the radio is transmitting
+static void stop_transmitting(void) {
+	if (strcmp(control_get("TX"), "ON"))
+		return;
+	core_request("tx", "off");
+	control_update("TX", "OFF");
 }
 
 static int band_for_freq(int hz) {
@@ -158,6 +176,7 @@ static int apply_mode(struct control *c, const char *value, char *why, int room)
 	(void)c;
 	(void)why;
 	(void)room;
+	stop_transmitting();
 	core_request("r1:mode", value);
 	select_modem(value);
 	core_request("r1:mode", value);
@@ -185,6 +204,7 @@ static int apply_band(struct control *c, const char *value, char *why, int room)
 	(void)c;
 	(void)why;
 	(void)room;
+	stop_transmitting();
 	save_band_state();
 	snprintf(hz, sizeof(hz), "%d", bands[band].hz);
 	core_request("r1:freq", hz);
@@ -212,6 +232,34 @@ static int apply_if(struct control *c, const char *value, char *why, int room) {
 	return 0;
 }
 
+static int apply_drive(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	core_request("tx_power", value);
+	return 0;
+}
+
+static int apply_mic(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	core_request("tx_gain", value);
+	return 0;
+}
+
+static int apply_tx(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	if (!strcmp(value, "OFF")) {
+		core_request("tx", "off");
+		return 0;
+	}
+	if (core_request("tx", "on"))
+		return 0;
+	snprintf(why, room, "this mode does not transmit");
+	return -1;
+}
+
 static struct control freq = {
 	.group = "RADIO", .name = "FREQ", .kind = CONTROL_NUMBER,
 	.min = LOWEST_HZ, .max = HIGHEST_HZ, .step = 1,
@@ -226,7 +274,7 @@ static struct control band = {
 
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
-	.choices = "USB/LSB/CW/CWR/AM",
+	.choices = "USB/LSB/CW/CWR/AM/2TONE",
 	.value = STARTING_MODE, .apply = apply_mode,
 };
 
@@ -245,17 +293,32 @@ static struct control if_gain = {
 static struct control drive = {
 	.group = "RADIO", .name = "DRIVE", .kind = CONTROL_NUMBER,
 	.min = 0, .max = DRIVE_MAX, .step = 1,
-	.value = STARTING_DRIVE,
+	.value = STARTING_DRIVE, .apply = apply_drive,
+};
+
+static struct control mic = {
+	.group = "RADIO", .name = "MIC", .kind = CONTROL_NUMBER,
+	.min = 0, .max = GAIN_MAX, .step = 1,
+	.value = STARTING_MIC, .apply = apply_mic,
+};
+
+static struct control tx = {
+	.group = "RADIO", .name = "TX", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF", .apply = apply_tx,
 };
 
 int radio_open(void) {
 	if (control_register(&freq) < 0 || control_register(&band) < 0
 			|| control_register(&mode) < 0 || control_register(&audio) < 0
-			|| control_register(&if_gain) < 0 || control_register(&drive) < 0)
+			|| control_register(&if_gain) < 0 || control_register(&drive) < 0
+			|| control_register(&mic) < 0 || control_register(&tx) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);
 	core_request("r1:volume", audio.value);
 	core_request("r1:gain", if_gain.value);
+	core_request("tx_power", drive.value);
+	core_request("tx_gain", mic.value);
 	return 0;
 }

@@ -7,6 +7,9 @@
 // speaker. Which sideband is the receiver's mode, set by sdr_request(), so
 // the two modes are one function.
 //
+// To transmit, the microphone's samples are what is sent, at the level
+// zbitxv2's tx_process() took them at. The core makes one sideband of them.
+//
 // The modem's own control is registered in its start(), in the group VOICE:
 //
 //   BW_VOICE  the width of the passband, 300 to 3000 Hz in steps of 50.
@@ -35,6 +38,15 @@ static int32_t baseband_output[MAX_BINS/2];
 static void rx_ssb(complex float *bins) {
 	demod_ssb(bins, baseband_output);
 	speaker_play(baseband_output, MAX_BINS/2);
+}
+
+#define MIC_FULL_SCALE 2000000000.0
+
+static void tx_ssb(const int32_t *mic, double *samples) {
+	int i;
+
+	for (i = 0; i < MAX_BINS/2; i++)
+		samples[i] = (1.0 * mic[i]) / MIC_FULL_SCALE;
 }
 
 static void ssb_select(void) {
@@ -76,6 +88,7 @@ const struct modem modem_usb = {
 	.start = ssb_start,
 	.select = ssb_select,
 	.rx = rx_ssb,
+	.tx = tx_ssb,
 };
 
 const struct modem modem_lsb = {
@@ -83,4 +96,5 @@ const struct modem modem_lsb = {
 	.order = 2,
 	.select = ssb_select,
 	.rx = rx_ssb,
+	.tx = tx_ssb,
 };

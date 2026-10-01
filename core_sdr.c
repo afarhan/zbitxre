@@ -55,6 +55,64 @@
 // speaker_play() sends audio to the speaker. What else it does with the
 // audio, decoding CW or FT8, is its own business.
 //
+// TRANSMITTING
+//
+// tx_process() is zbitxv2's, and is to transmitting what rx_linear() is to
+// receiving. The modem of the mode in use says what is to be sent: its
+// tx() is given the block of samples from the microphone and fills a block
+// with the audio to transmit, the microphone's for SSB, two tones for
+// 2TONE. tx_process() does the rest, as zbitxv2 did: the forward FFT, the
+// transmit filter, the unwanted sideband cut off, the bins moved up to the
+// IF at center_bin, and back to samples for the sound card, at the level
+// the band and the drive call for. A mode whose modem has no tx() does not
+// transmit, and asking it to is refused.
+//
+// The transmitter's gain varies widely from band to band. band_power[] has
+// a scale for each band, and the level sent is the drive, 0 to 100, times
+// the band's scale. The scales are zbitxv2's unless data/hw_settings.ini
+// is there, the radio's own calibration, in the form zbitxv2 keeps at
+// ~/sbitx/data/hw_settings.ini; read_hw_ini() reads its [tx_band] entries.
+//
+// GOING BETWEEN RECEIVE AND TRANSMIT
+//
+// tr_switch() is zbitxv2's tr_switch_v4(), in its order and with its waits.
+// To transmit: the receiver's power is taken off and the filters released;
+// 23 ms are waited, for the receiver's circuits to drain; the band's filter
+// is selected and 10 ms waited for it to settle; then the transmitter's power
+// is put on. To receive: the transmitter's power is taken off first, the
+// filters released, and 16 ms waited before the receiver's power is put
+// on. The author's reason for the order: the capacitors in the transmit
+// circuitry must discharge fully before the receiver is powered, or the
+// circuits, which work in both directions, oscillate.
+//
+// The three waits belong to the hardware and not to the program, and are
+// kept in hw_settings.ini as tr_rx_drain_ms, tr_filter_settle_ms and
+// tr_tx_drain_ms. The author's reason: the earlier sbitx boards switched
+// with relays, which need their milliseconds; from sbitx v3 on, and in
+// every zbitx, the switching is electronic, by PIN diodes, and is done at
+// once. So one program has to serve boards that differ in just these
+// numbers. The author says of the waits themselves that he chose them out
+// of thin air, and that they are to be shortened as far as each board
+// allows, since CW's first element waits for the first two. A radio whose
+// file does not give them works with zbitxv2's, which are safe for relays.
+//
+// The request "tr_waits=23,10,15", in that order, sets them while the
+// radio runs, for finding on an oscilloscope what a board allows; what is
+// found goes into the file. tr_wait_to_tx_ms() gives the sum of the first
+// two to a modem that has to know how long the transmitter takes to come
+// on.
+//
+// It is called by the thread that owns the controls, which waits through
+// it. The audio thread is told by in_tx, which it reads at the start of
+// each block, and it is the audio thread that clears the transform's
+// buffers when it is told to, since they are its own. Going to transmit,
+// in_tx is set before the lines are touched, where zbitxv2 set it after
+// the 23 ms: the samples to be sent take some 20 ms to reach the sound
+// card's output, and CW's first element is kept short of the transmitter
+// by no more than it must be. No level of the sound
+// card is changed: the transmitter's and the microphone's are channels of
+// their own, and hw/audio.c says so.
+//
 // The modem follows the mode. sdr_request() finds the modem of the mode's
 // name and offers it to the audio thread with the rest of the receiver; the
 // audio thread takes it at the start of a block and resets it, so a mode
@@ -135,14 +193,80 @@ int freq_hdr = -1;
 static int rx_gain = 100;
 static int rx_vol = 100;
 static double spectrum_speed = 0.3;
-static int in_tx = 0;
+static atomic_int in_tx = 0;
 struct rx *rx_list = NULL;
 struct rx *tx_list = NULL;
 struct filter *tx_filter;	//convolution filter
 static int rx_pitch = 700; //used only to offset the lo for CW,CWR
 
 #define MUTE_MAX 6
-static int mute_count = 50;
+static atomic_int mute_count = 50;
+
+/* the power gain of the tx varies widely from
+band to band. these data structures help in flattening
+the gain */
+
+struct power_settings {
+	int f_start;
+	int f_stop;
+	int	max_watts;
+	double scale;
+};
+
+static struct power_settings band_power[] ={
+	{ 3500000,  4000000, 37, 0.002},
+	{ 5200000,  5800009, 40, 0.0015},
+	{ 7000000,  7300009, 40, 0.0015},
+	{10000000, 10200000, 35, 0.0019},
+	{14000000, 14300000, 35, 0.0025},
+	{18000000, 18200000, 20, 0.0023},
+	{21000000, 21450000, 20, 0.003},
+	{24800000, 25000000, 20, 0.0034},
+	{28000000, 29700000, 20, 0.0037}
+};
+#define BANDS_WITH_POWER ((int)(sizeof(band_power)/sizeof(struct power_settings)))
+
+char hw_settings_file[HW_SETTINGS_PATH_MAX] = "data/hw_settings.ini";
+
+static atomic_int tx_drive = 40;
+static int tx_gain = 100;
+//tx_amp in millionths, so that the audio thread reads it whole
+static atomic_int tx_amp_millionths = 0;
+//zbitxv2's user interface sets this as it starts, with set_volume(20000000),
+//and tx_process() scales what it sends by it
+static double volume = 20000000.0;
+//set by tr_switch() for the audio thread: the transform's buffers are to
+//be cleared at the first block of transmitting, at the first of receiving
+//again, and the spectrum's smoothing begun afresh
+static atomic_int tx_process_restart = 0;
+static atomic_int rx_process_restart = 0;
+static atomic_int reset_wanted = 0;
+
+#define MICROS_PER_MILLI 1000
+#define MILLIONTHS 1000000.0
+#define TX_MUTE_BLOCKS 20
+
+//the waits of tr_switch(), in milliseconds, as zbitxv2 had them
+#define TR_RX_DRAIN_MS 23
+#define TR_FILTER_SETTLE_MS 10
+#define TR_TX_OFF_MS 1
+#define TR_TX_DRAIN_MS 15
+#define TR_WAIT_MAX_MS 200
+#define TR_WAITS 3
+
+static atomic_int tr_rx_drain_ms = TR_RX_DRAIN_MS;
+static atomic_int tr_filter_settle_ms = TR_FILTER_SETTLE_MS;
+static atomic_int tr_tx_drain_ms = TR_TX_DRAIN_MS;
+
+static int tr_wait_ok(int ms){
+	return ms >= 0 && ms <= TR_WAIT_MAX_MS;
+}
+
+//how long tr_switch() takes to put the transmitter on
+int tr_wait_to_tx_ms(void){
+	return tr_rx_drain_ms + tr_filter_settle_ms;
+}
+#define TRANSMITTER_LEVEL 95
 
 #define TUNING_SHIFT (0)
 
@@ -693,6 +817,113 @@ void speaker_play(const int32_t *samples, int count){
 }
 
 /*
+	the transmitter's side of a block. the modem says what is to be
+	sent, and the rest is zbitxv2's tx_process(): the samples are
+	turned to bins, filtered, the unwanted sideband cut off, moved
+	up to the IF and turned back to samples for the sound card
+*/
+static double tx_samples[MAX_BINS/2];
+
+static void tx_process(
+	int32_t *input_rx, int32_t *input_mic,
+	int32_t *output_speaker, int32_t *output_tx,
+	int n_samples)
+{
+	int i;
+	struct rx *r = tx_list;
+	(void)input_rx;
+
+	memset(output_speaker, 0, n_samples * sizeof(int32_t));
+	memset(output_tx, 0, n_samples * sizeof(int32_t));
+	if (modem_in_use == NULL || modem_in_use->tx == NULL)
+		return;
+
+	//fix the burst at the start of transmission: what the receiver left
+	//in the transform's buffers must go before the first block is sent,
+	//and no sooner, since the receiver runs until then and fills them
+	if (atomic_exchange(&tx_process_restart, 0))
+		fft_reset_m_bins();
+
+	if (mute_count && (r->mode == MODE_USB || r->mode == MODE_LSB
+		|| r->mode == MODE_AM)){
+		memset(input_mic, 0, n_samples * sizeof(int32_t));
+		mute_count--;
+	}
+
+	speaker_now = output_speaker;
+	modem_in_use->tx(input_mic, tx_samples);
+	speaker_now = NULL;
+
+	//first add the previous M samples
+	for (i = 0; i < MAX_BINS/2; i++)
+		fft_in[i]  = fft_m[i];
+
+	//gather the samples into a time domain array
+	int m = 0;
+	for (i= MAX_BINS/2; i < MAX_BINS; i++){
+		__real__ fft_m[m] = tx_samples[m];
+		__imag__ fft_m[m] = 0;
+
+		__real__ fft_in[i]  = tx_samples[m];
+		__imag__ fft_in[i]  = 0;
+		m++;
+	}
+
+	//convert to frequency
+	fft_execute(plan_fwd, fft_in, fft_out);
+
+	// NOTE: fft_out holds the fft output (in freq domain) of the
+	// incoming mic samples
+	// the naming is unfortunate
+
+	// apply the filter
+	for (i = 0; i < MAX_BINS; i++)
+		fft_out[i] *= tx_filter->fir_coeff[i];
+
+	// the usb extends from 0 to MAX_BINS/2 - 1,
+	// the lsb extends from MAX_BINS - 1 to MAX_BINS/2 (reverse direction)
+	// zero out the other sideband
+
+	// TBD: Something strange is going on, this should have been the otherway
+
+	if (r->mode == MODE_LSB || r->mode == MODE_CWR)
+		// zero out the LSB
+		for (i = 0; i < MAX_BINS/2; i++){
+			__real__ fft_out[i] = 0;
+			__imag__ fft_out[i] = 0;
+		}
+	else if (r->mode != MODE_AM)
+		// zero out the USB
+		for (i = MAX_BINS/2; i < MAX_BINS; i++){
+			__real__ fft_out[i] = 0;
+			__imag__ fft_out[i] = 0;
+		}
+
+	//now rotate to the tx_bin
+	//rememeber the AM is already a carrier modulated at 24 KHz
+	int shift = center_bin;
+	if (r->mode == MODE_AM)
+		shift = 0;
+	for (i = 0; i < MAX_BINS; i++){
+		int b = i + shift;
+		if (b >= MAX_BINS)
+			b = b - MAX_BINS;
+		if (b < 0)
+			b = b + MAX_BINS;
+		r->fft_freq[b] = fft_out[i];
+	}
+
+	//convert back to time domain
+	fft_execute(r->plan_rev, r->fft_freq, r->fft_time);
+	float scale = volume;
+	double tx_amp = atomic_load(&tx_amp_millionths) / MILLIONTHS;
+	for (i= 0; i < MAX_BINS/2; i++){
+		double s = creal(r->fft_time[i+(MAX_BINS/2)]);
+		output_tx[i] = s * scale * tx_amp;
+	}
+}
+
+/*
 	This is called each time there is a block of signal samples ready
 	either from the mic or from the rx IF
 */
@@ -702,8 +933,15 @@ static void sound_process(
 	int n_samples)
 {
 	take_the_newest_offer();
-	if (!in_tx)
-		rx_linear(input_rx, input_mic, output_speaker, output_tx, n_samples);
+	if (atomic_exchange(&reset_wanted, 0))
+		spectrum_reset();
+	if (in_tx){
+		tx_process(input_rx, input_mic, output_speaker, output_tx, n_samples);
+		return;
+	}
+	if (atomic_exchange(&rx_process_restart, 0))
+		fft_reset_m_bins();
+	rx_linear(input_rx, input_mic, output_speaker, output_tx, n_samples);
 	atomic_store(&s_meter, calculate_s_meter());
 }
 
@@ -746,6 +984,121 @@ static void set_rx_filter(){
 	offer_the_receiver();
 }
 
+/*
+	the radio's own calibration, in the form zbitxv2 keeps it: lines
+	of name=value, with a [tx_band] before each band's f_start,
+	f_stop and scale. the bands are taken in the order they come,
+	and no more of them than band_power has room for. bfo_freq and
+	center_bin, if they are there, are the radio's own too and are
+	taken in place of the board's, and so are tr_switch()'s three
+	waits, tr_rx_drain_ms, tr_filter_settle_ms and tr_tx_drain_ms.
+	a radio with no such file works with zbitxv2's figures.
+*/
+#define HW_LINE_MAX 200
+
+static void hw_settings_handler(const char *name, const char *value){
+	static int hw_init_index = 0;
+
+	if (hw_init_index < BANDS_WITH_POWER){
+		if (!strcmp(name, "f_start"))
+			band_power[hw_init_index].f_start = atoi(value);
+		if (!strcmp(name, "f_stop"))
+			band_power[hw_init_index].f_stop = atoi(value);
+		if (!strcmp(name, "scale"))
+			band_power[hw_init_index++].scale = atof(value);
+	}
+	if (!strcmp(name, "bfo_freq"))
+		bfo_freq = atoi(value);
+	if (!strcmp(name, "center_bin"))
+		center_bin = atoi(value);
+	if (!strcmp(name, "tr_rx_drain_ms") && tr_wait_ok(atoi(value)))
+		tr_rx_drain_ms = atoi(value);
+	if (!strcmp(name, "tr_filter_settle_ms") && tr_wait_ok(atoi(value)))
+		tr_filter_settle_ms = atoi(value);
+	if (!strcmp(name, "tr_tx_drain_ms") && tr_wait_ok(atoi(value)))
+		tr_tx_drain_ms = atoi(value);
+}
+
+static void read_hw_ini(){
+	char line[HW_LINE_MAX];
+	char name[HW_LINE_MAX];
+	char value[HW_LINE_MAX];
+	FILE *pf = fopen(hw_settings_file, "r");
+
+	if (!pf)
+		return;
+	while (fgets(line, sizeof(line), pf)){
+		if (sscanf(line, " %[^= ] = %s", name, value) == 2)
+			hw_settings_handler(name, value);
+	}
+	fclose(pf);
+}
+
+/*
+	the level sent to the transmitter is the drive times the scale of
+	the band the radio is on. outside every band it is nothing, so
+	nothing is transmitted there; zbitxv2 left it at the last band's.
+*/
+static void set_tx_power_levels(){
+	double tx_amp = 0;
+
+	//search for power in the approved bands
+	for (int i = 0; i < BANDS_WITH_POWER; i++){
+		if (band_power[i].f_start <= freq_hdr && freq_hdr <= band_power[i].f_stop){
+			//next we do a decimal coversion of the power reduction needed
+			tx_amp = (1.0 * tx_drive * band_power[i].scale);
+		}
+	}
+	atomic_store(&tx_amp_millionths, (int)(tx_amp * MILLIONTHS));
+}
+
+static void delay(int ms){
+	usleep(ms * MICROS_PER_MILLI);
+}
+
+//v4 t/r switch uses separate lines for RX and TX powering
+static void tr_switch(int tx_on){
+	if (tx_on){
+
+		//the audio thread is told at once, so that what is to be sent
+		//is already on its way to the sound card when the transmitter
+		//comes on; zbitxv2 told it after the 23 ms below. the lines
+		//are switched as zbitxv2 switched them
+		mute_count = TX_MUTE_BLOCKS;
+		tx_process_restart = 1;
+		set_tx_power_levels();
+		in_tx = 1;
+
+		board_receiver_power(0);
+
+		//first turn off the LPFs, so PA doesnt connect
+		board_release_filters();
+
+		//the receiver's circuits drain
+		delay(tr_rx_drain_ms);
+		board_select_filter(freq_hdr);
+		//the filter settles: a relay takes milliseconds, PIN diodes none
+		delay(tr_filter_settle_ms);
+		reset_wanted = 1;
+		board_transmitter_power(1);
+	}
+	else {
+
+		in_tx = 0;
+		board_transmitter_power(0);
+
+		delay(TR_TX_OFF_MS);
+		rx_process_restart = 1;
+		mute_count = MUTE_MAX;
+
+		board_release_filters();
+		//power down the PA chain to null any gain
+		delay(tr_tx_drain_ms);
+		reset_wanted = 1;
+		board_receiver_power(1);
+	}
+}
+
 static void setup_oscillators(){
 	//initialize the SI5351
 
@@ -770,6 +1123,7 @@ int setup(const struct board *board){
 
 	bfo_freq = board->bfo_hz;
 	center_bin = board->centre_bin;
+	read_hw_ini();
 
 	fft_init();
 	vfo_init_phase_table();
@@ -803,12 +1157,15 @@ int setup(const struct board *board){
 
 	if (audio_open(sound_block) < 0)
 		return -1;
+	audio_set_transmitter(TRANSMITTER_LEVEL);
 	return 0;
 }
 
 void teardown(void){
 	if (!is_set_up)
 		return;
+	if (in_tx)
+		tr_switch(0);
 	is_set_up = 0;
 	audio_close();
 	si5351_clock_off(OSCILLATOR_CLOCK);
@@ -929,8 +1286,47 @@ void sdr_request(char *request, char *response){
 
 		strcpy(response, "ok");
 	}
+	else if (!strcmp(cmd, "tx")){
+		if (!strcmp(value, "on")){
+			//a mode whose modem sends nothing does not transmit
+			if (modem_wanted == NULL || modem_wanted->tx == NULL || freq_hdr <= 0){
+				strcpy(response, "error");
+				return;
+			}
+			if (!in_tx)
+				tr_switch(1);
+		}
+		else if (in_tx)
+			tr_switch(0);
+		strcpy(response, "ok");
+	}
 	else if (!strcmp(cmd, "rx_pitch")){
 		rx_pitch = atoi(value);
+		strcpy(response, "ok");
+	}
+	else if (!strcmp(cmd, "tx_gain")){
+		tx_gain = atoi(value);
+		audio_set_microphone(tx_gain);
+		strcpy(response, "ok");
+	}
+	else if (!strcmp(cmd, "tr_waits")){
+		int rx_drain, filter_settle, tx_drain;
+
+		if (sscanf(value, "%d,%d,%d", &rx_drain, &filter_settle, &tx_drain) != TR_WAITS
+			|| !tr_wait_ok(rx_drain) || !tr_wait_ok(filter_settle)
+			|| !tr_wait_ok(tx_drain)){
+			strcpy(response, "error");
+			return;
+		}
+		tr_rx_drain_ms = rx_drain;
+		tr_filter_settle_ms = filter_settle;
+		tr_tx_drain_ms = tx_drain;
+		strcpy(response, "ok");
+	}
+	else if (!strcmp(cmd, "tx_power")){
+		tx_drive = atoi(value);
+		if(in_tx)
+			set_tx_power_levels();
 		strcpy(response, "ok");
 	}
 	else if(!strcmp(cmd, "r1:gain")){

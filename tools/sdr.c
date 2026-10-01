@@ -20,6 +20,27 @@
 // the core as it is. A frequency or volume set that way, r1:freq= or
 // r1:volume=, goes through the controls like any other change.
 //
+// TRANSMITTING
+//
+// The radio transmits while its control TX is ON, which a client or the
+// terminal sets, "TX ON", or the PTT: in USB, LSB and 2TONE, the modes
+// that take a microphone's switch, the radio transmits while the PTT is
+// held, as zbitxv2 did. In CW the same contact is a paddle and is the
+// keyer's. A change of the PTT is taken when it has held for 30 ms, so
+// that its contacts' bounce does not put the radio in and out of transmit.
+//
+// A modem may ask for the transmitter itself, as CW's does from the moment
+// a paddle closes until its hang time after the last element: the radio
+// transmits while the modem of the mode in use says it has something to
+// send. modem.h says how a modem says so.
+//
+// The program is often run from another computer, where a lost connection
+// or a forgotten "TX ON" would leave the transmitter on. So it does not
+// transmit for longer than two minutes at a stretch: after that it goes
+// back to receive and says so, and a PTT still held has to be let go
+// before it will transmit again. And however the program ends, by "quit",
+// by its input ending or by a signal, it goes to receive first.
+//
 // From the panel it takes the frequency and the volume, over the link that
 // hw/panel.c keeps. When the panel says HELLO, which it does when it starts,
 // it is told the frequency and the volume.
@@ -60,6 +81,14 @@
 // that are zero or repeated in runs were wrong before the radio touched
 // them, which is the card's doing and not the transform's.
 //
+// "audio=reset" and "si5351=reset" are for the same fault, to find which
+// part of a restart it is that cures it, without restarting. The first
+// closes the sound card and opens it again, the levels kept. The second
+// sets the Si5351 up from nothing, as the radio does when it starts, and
+// puts both oscillators back on their frequencies. Neither touches a number
+// of the receiver's own. They are for use in receive: take a snapshot, give
+// one of them, and take another.
+//
 // "measure=5" measures for five seconds how strong what reaches the sound
 // card is, within 3 kHz either side of the tuned frequency, and then prints
 // it in dB. It looks at the spectrum twenty times a second and averages the
@@ -80,6 +109,7 @@
 
 #include <math.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +120,7 @@
 #include "board.h"
 #include "panel.h"
 #include "control.h"
+#include "modem.h"
 #include "radio.h"
 #include "server.h"
 #include "si5351.h"
@@ -102,7 +133,7 @@
 #define RESPONSE_MAX    100
 
 #define TERMINAL        0
-#define WAIT_ON_TERMINAL_MS 5
+#define WAIT_ON_TERMINAL_MS 2
 #define MS_PER_SECOND   1000
 #define NS_PER_MS       1000000
 
@@ -111,6 +142,10 @@
 
 #define SNAPSHOT_FILE   "data/snapshot.raw"
 #define SNAPSHOT_CHANNELS 2
+
+#define TX_LIMIT_MS     120000
+#define PTT_SETTLED_MS  30
+#define NOT_TRANSMITTING 0
 
 #define SPECTRUM_EVERY_MS 250
 #define SPECTRUM_FIRST_BIN 1269
@@ -128,7 +163,13 @@
 #define MEASURE_EVERY_MS 50
 #define SMALLEST_POWER  1e-30
 
-static int is_done;
+static volatile sig_atomic_t is_done;
+static long tx_began_ms;
+static int is_ptt_transmitting;
+static int is_ptt_to_be_let_go;
+static int ptt_level;
+static int ptt_level_seen;
+static long ptt_level_since_ms;
 static int is_sending_spectrum = 1;
 static long next_spectrum_ms;
 static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
@@ -443,6 +484,21 @@ static void handle_command(char *line) {
 		printf("ok\n");
 		return;
 	}
+	if (strcmp(line, "audio=reset") == 0) {
+		if (audio_reopen() < 0)
+			printf("audio=reset: the sound card did not open again\n");
+		else
+			printf("ok\n");
+		return;
+	}
+	if (strcmp(line, "si5351=reset") == 0) {
+		si5351_init();
+		si5351_set_freq(BFO_CLOCK, bfo_freq);
+		si5351_set_freq(VFO_CLOCK, oscillator_frequency());
+		si5351_reset_plls();
+		printf("ok\n");
+		return;
+	}
 	if (begins_with(line, FREQ_IS)) {
 		set_setting("FREQ", line + strlen(FREQ_IS), ORIGIN_TERMINAL);
 		return;
@@ -484,6 +540,69 @@ static void read_terminal(void) {
 		is_done = 1;
 }
 
+// whether the PTT is held, once its level has stayed the same for
+// PTT_SETTLED_MS
+static int is_ptt_held(long now) {
+	int level = board_ptt_closed();
+
+	if (level != ptt_level_seen) {
+		ptt_level_seen = level;
+		ptt_level_since_ms = now;
+	}
+	if (now - ptt_level_since_ms >= PTT_SETTLED_MS)
+		ptt_level = ptt_level_seen;
+	return ptt_level;
+}
+
+// whether the modem of the mode in use has something to send
+static int is_modem_wanting_tx(void) {
+	const struct modem *m = modem_find(control_get("MODE"));
+
+	return m != NULL && m->wants_tx != NULL && m->wants_tx();
+}
+
+static int is_ptt_mode(void) {
+	const char *mode = control_get("MODE");
+
+	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "2TONE");
+}
+
+// the PTT, or a modem with something to send, puts the radio in transmit
+// and takes it out again, and no transmission is let run past TX_LIMIT_MS
+static void follow_ptt(long now) {
+	int is_held = is_ptt_held(now) && is_ptt_mode();
+	int is_keyed = is_held || is_modem_wanting_tx();
+
+	if (!is_keyed)
+		is_ptt_to_be_let_go = 0;
+	if (strcmp(control_get("TX"), "ON")) {
+		tx_began_ms = NOT_TRANSMITTING;
+		is_ptt_transmitting = 0;
+		if (is_keyed && !is_ptt_to_be_let_go) {
+			set_setting("TX", "ON", ORIGIN_NONE);
+			is_ptt_transmitting = 1;
+		}
+		return;
+	}
+	if (tx_began_ms == NOT_TRANSMITTING)
+		tx_began_ms = now;
+	if (is_ptt_transmitting && !is_keyed) {
+		set_setting("TX", "OFF", ORIGIN_NONE);
+		return;
+	}
+	if (now - tx_began_ms > TX_LIMIT_MS) {
+		printf("transmitting for more than %d seconds: back to receive\n",
+			TX_LIMIT_MS / MS_PER_SECOND);
+		set_setting("TX", "OFF", ORIGIN_NONE);
+		is_ptt_to_be_let_go = 1;
+	}
+}
+
+static void on_signal(int signal_number) {
+	(void)signal_number;
+	is_done = 1;
+}
+
 static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
@@ -493,6 +612,7 @@ static void main_loop(void) {
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
 		snapshot_save();
+		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record);
 
 		polls[0].fd = TERMINAL;
@@ -545,7 +665,11 @@ int main(int argc, char **argv) {
 		printf("clients connect on port %d\n", SERVER_PORT);
 	fflush(stdout);
 
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
+	signal(SIGHUP, on_signal);
 	main_loop();
+	set_setting("TX", "OFF", ORIGIN_NONE);
 	report();
 	server_close();
 	teardown();

@@ -28,8 +28,25 @@
 // offered. And the sideband: with a tone fed in on each side of the tuned
 // frequency and the AGC off, USB hears one side alone and LSB the other,
 // whichever mode it was changed from; a filter left on the last mode's side
-// hears neither. And the spectrum: sent only to a client that asked for it, and
-// no longer once it says "spectrum off". And a client that stalls while
+// hears neither. And the keyer, through the whole modem: a tap of the dot
+// paddle shorter than a tenth of a dot is a whole dot of sidetone in the
+// speaker, beginning the keyer's 12 ms after the tap; and with a straight
+// key the ring, which the key's plug holds closed, keys nothing. And
+// transmitting, with the pins and the sound card stood in for, so that
+// nothing is keyed: a mode that cannot transmit refuses; 2TONE puts the
+// receiver off, selects the band's filter and puts the transmitter on, in
+// that order, and sends two tones of like strength on the upper side and
+// nothing on the lower; the level follows the drive; going back to receive
+// puts the transmitter off before the receiver on; a change of mode ends a
+// transmission; and nothing is sent outside the bands. And CW through the
+// transmitter: a tap of the dot paddle in receive makes the modem ask for
+// the transmitter; the radio is put in transmit a block later, as late as
+// the radio program would be; and the transmitter is sent one whole dot,
+// the keyer's 12 ms and the modem's two blocks after the tap, while the sidetone began with the
+// keyer; and the modem stops asking once its hang time has passed. And the
+// spectrum:
+// sent only to a client that asked for it, and no longer once it says
+// "spectrum off". And a client that stalls while
 // the radio changes much: it is not dropped, it is sent the last value of
 // FREQ though not every one, and few lines of the spectrum, not the
 // backlog; and once it has caught up, the next line.
@@ -47,8 +64,11 @@
 
 #include "board.h"
 #include "hw_stand_ins.h"
+#include "gpio.h"
+#include "key.h"
 #include "sdr.h"
 #include "control.h"
+#include "modem.h"
 #include "radio.h"
 #include "server.h"
 
@@ -68,6 +88,40 @@
 #define ONE_SIDED 30.0
 // the receiver says nothing for its first blocks after it starts
 #define START_UP_MUTE_BLOCKS 50
+
+#define CW_BLOCKS 64
+#define BLOCKS_TO_TRANSMIT 1
+// tr_switch()'s 33 ms less the 14 ms the modem has in hand
+#define RF_DELAY (19 * 96)
+#define FILTER_DELAY 512
+#define BURST_FRACTION 10
+#define BURST_SLACK 300
+
+// a squeeze: the dash paddle 30 ms after the dot's, both held for 0.9 s,
+// which at 20 words a minute is dot, dash, three times over
+#define SQUEEZE_BLOCKS 160
+#define SQUEEZE_LATER_US 30000
+#define SQUEEZE_US 900000
+#define SQUEEZE_MARKS ".-.-.-"
+// the dash paddle held alone for 0.4 s, two dashes, then the dot's as well
+#define DOT_JOINS_US 400000
+#define DASH_FIRST_MARKS "--.-."
+#define MARKS_MAX 32
+#define MARK_FRACTION 10
+#define WHY_MAX 100
+
+#define TX_TEST_HZ 14100000
+#define TONE_A_HZ 700.0
+#define TONE_B_HZ 1900.0
+
+#define SAMPLES_PER_MS 96
+#define TAP_AT_US 20000
+#define TAP_US 5000
+#define KEYER_LAG_US 12000
+#define DOT_AT_20_WPM 5760
+#define ENVELOPE_FALL 478
+#define SETTLING_BLOCKS 8
+#define SIDETONE_BLOCKS 24
 
 #define STALLED_CHANGES 3000
 #define STALLED_CHANGES_A_LINE 10
@@ -200,6 +254,315 @@ static int side_heard(void) {
 	return 0;
 }
 
+// the receiver is run in silence for some blocks, and where the speaker
+// was not silent is found: the sample it began at and how many samples it
+// lasted, both 0 if it stayed silent
+static void find_the_sidetone(int blocks, int *first, int *length) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t to_speaker[BLOCK_FRAMES];
+	static int32_t to_transmitter[BLOCK_FRAMES];
+	struct audio_block block;
+	int last = 0;
+	int b;
+	int i;
+
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.to_speaker = to_speaker;
+	block.to_transmitter = to_transmitter;
+	block.frames = BLOCK_FRAMES;
+	*first = 0;
+	*length = 0;
+	for (b = 0; b < blocks; b++) {
+		hw_stand_in_block(&block);
+		for (i = 0; i < BLOCK_FRAMES; i++) {
+			if (to_speaker[i] == 0)
+				continue;
+			if (*length == 0)
+				*first = b * BLOCK_FRAMES + i;
+			last = b * BLOCK_FRAMES + i;
+			*length = last - *first + 1;
+		}
+	}
+}
+
+// the radio is run for some blocks with nothing coming in, and what it
+// sends to the transmitter is measured: how strong it is at a frequency
+// this far from the middle of the IF, and whether the speaker stayed silent
+static double transmitted_at(double offset_hz, int *is_speaker_silent) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t to_speaker[BLOCK_FRAMES];
+	static int32_t to_transmitter[BLOCK_FRAMES];
+	struct audio_block block;
+	double angle = 2 * M_PI * (TUNED_HZ + offset_hz) / SAMPLE_RATE;
+	double in_phase = 0;
+	double quadrature = 0;
+	long n = 0;
+	int b;
+	int i;
+
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.to_speaker = to_speaker;
+	block.to_transmitter = to_transmitter;
+	block.frames = BLOCK_FRAMES;
+	*is_speaker_silent = 1;
+	for (b = 0; b < TONE_BLOCKS; b++) {
+		hw_stand_in_block(&block);
+		if (b < TONE_SETTLING_BLOCKS)
+			continue;
+		for (i = 0; i < BLOCK_FRAMES; i++) {
+			in_phase += to_transmitter[i] * cos(angle * n);
+			quadrature += to_transmitter[i] * sin(angle * n);
+			n++;
+			if (to_speaker[i] != 0)
+				*is_speaker_silent = 0;
+		}
+	}
+	return sqrt(in_phase * in_phase + quadrature * quadrature) / n;
+}
+
+static void check_transmitting(int one, int other) {
+	const struct board *board = board_in_use();
+	char heard[HEARD_MAX];
+	char other_heard[HEARD_MAX];
+	int is_silent;
+	double tone_a;
+	double tone_b;
+	double other_sideband;
+	double at_twice_the_drive;
+	int filter_pin = board_filter_for(TX_TEST_HZ)->pin;
+
+	say(one, "BAND 20M\n");
+	say(one, "MODE AM\n");
+	hear(one, heard);
+	say(one, "TX ON\n");
+	hear(one, heard);
+	expect(has(heard, "ERROR TX") && gpio_read(board->transmitter_pin) == 0,
+		"TX ON in AM, which cannot transmit yet, is refused and keys nothing");
+
+	say(one, "MODE 2TONE\n");
+	say(one, "DRIVE 40\n");
+	hear(other, other_heard);
+	say(one, "TX ON\n");
+	hear(other, other_heard);
+	expect(has(other_heard, "TX ON\n") && gpio_read(board->transmitter_pin) == 1
+		&& gpio_read(board->receiver_pin) == 0 && gpio_read(filter_pin) == 1,
+		"TX ON in 2TONE: transmitter on, receiver off, the band's filter selected");
+	expect(hw_stand_in_pin_changed_at(board->receiver_pin)
+			< hw_stand_in_pin_changed_at(filter_pin)
+		&& hw_stand_in_pin_changed_at(filter_pin)
+			< hw_stand_in_pin_changed_at(board->transmitter_pin),
+		"in that order: receiver off, then the filter, then the transmitter on");
+	tone_a = transmitted_at(TONE_A_HZ, &is_silent);
+	tone_b = transmitted_at(TONE_B_HZ, &is_silent);
+	other_sideband = transmitted_at(-TONE_A_HZ, &is_silent);
+	expect(tone_a > 0 && tone_b > tone_a / 2 && tone_b < tone_a * 2
+		&& other_sideband < tone_a / ONE_SIDED && is_silent,
+		"two tones of like strength go to the transmitter, 700 and 1900 Hz above the "
+		"middle of the IF, and nothing on the other side or in the speaker");
+	say(one, "DRIVE 80\n");
+	at_twice_the_drive = transmitted_at(TONE_A_HZ, &is_silent);
+	expect(at_twice_the_drive > tone_a * 1.9 && at_twice_the_drive < tone_a * 2.1,
+		"twice the drive is twice the level");
+	say(one, "DRIVE 0\n");
+	expect(transmitted_at(TONE_A_HZ, &is_silent) == 0, "and no drive is nothing sent");
+	say(one, "DRIVE 40\n");
+
+	say(one, "TX OFF\n");
+	expect(gpio_read(board->transmitter_pin) == 0 && gpio_read(board->receiver_pin) == 1
+		&& gpio_read(filter_pin) == 0
+		&& hw_stand_in_pin_changed_at(board->transmitter_pin)
+			< hw_stand_in_pin_changed_at(board->receiver_pin),
+		"TX OFF: the transmitter off first, then the receiver on, the filters released");
+	transmitted_at(TONE_A_HZ, &is_silent);
+	expect(transmitted_at(TONE_A_HZ, &is_silent) == 0,
+		"and nothing more goes to the transmitter");
+
+	say(one, "TX ON\n");
+	hear(one, heard);
+	say(one, "MODE USB\n");
+	hear(one, heard);
+	expect(has(heard, "TX OFF\n") && gpio_read(board->transmitter_pin) == 0,
+		"a change of mode while transmitting goes back to receive first");
+	say(one, "TX ON\n");
+	expect(gpio_read(board->transmitter_pin) == 1
+		&& transmitted_at(TONE_A_HZ, &is_silent) == 0,
+		"USB transmits, and with a silent microphone sends nothing");
+	say(one, "TX OFF\n");
+	say(one, "FREQ 13000000\n");
+	say(one, "MODE 2TONE\n");
+	say(one, "TX ON\n");
+	expect(transmitted_at(TONE_A_HZ, &is_silent) == 0,
+		"outside every band, nothing is sent to the transmitter");
+	say(one, "TX OFF\n");
+	say(one, "BAND 20M\n");
+	say(one, "MODE USB\n");
+}
+
+// where a stream of samples is louder than a tenth of its loudest: the
+// first such sample and how many samples from it to the last
+static void find_the_burst(const int32_t *samples, int count, int *first, int *length) {
+	long loudest = 0;
+	int last = 0;
+	int i;
+
+	*first = 0;
+	*length = 0;
+	for (i = 0; i < count; i++) {
+		if (labs((long)samples[i]) > loudest)
+			loudest = labs((long)samples[i]);
+	}
+	if (loudest == 0)
+		return;
+	for (i = 0; i < count; i++) {
+		if (labs((long)samples[i]) * BURST_FRACTION < loudest)
+			continue;
+		if (*length == 0)
+			*first = i;
+		last = i;
+		*length = last - *first + 1;
+	}
+}
+
+// the marks in a run of samples, as dots and dashes: a mark is where the
+// samples are loud for a millisecond at a stretch, a dot if it is nearer
+// one dot long than three
+static void read_the_marks(const int32_t *samples, int count, char *marks, int room) {
+	long loudest = 0;
+	long peak;
+	int mark_ms = 0;
+	int n = 0;
+	int ms;
+	int i;
+
+	for (i = 0; i < count; i++) {
+		if (labs((long)samples[i]) > loudest)
+			loudest = labs((long)samples[i]);
+	}
+	for (ms = 0; ms < count / SAMPLES_PER_MS && n < room - 1; ms++) {
+		peak = 0;
+		for (i = 0; i < SAMPLES_PER_MS; i++) {
+			if (labs((long)samples[ms * SAMPLES_PER_MS + i]) > peak)
+				peak = labs((long)samples[ms * SAMPLES_PER_MS + i]);
+		}
+		if (loudest > 0 && peak * MARK_FRACTION >= loudest) {
+			mark_ms++;
+			continue;
+		}
+		if (mark_ms > 0) {
+			marks[n] = '.';
+			if (mark_ms > 2 * DOT_AT_20_WPM / SAMPLES_PER_MS)
+				marks[n] = '-';
+			n++;
+		}
+		mark_ms = 0;
+	}
+	marks[n] = 0;
+}
+
+// both paddles held, as an operator squeezes them, the radio going to
+// transmit when the modem asks as tools/sdr.c would have it go
+static void check_cw_squeeze(int one, int first_paddle, int second_paddle,
+		int64_t later_us, const char *marks, const char *what) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t speaker[SQUEEZE_BLOCKS * BLOCK_FRAMES];
+	static int32_t transmitter[SQUEEZE_BLOCKS * BLOCK_FRAMES];
+	const struct modem *cw = modem_find("CW");
+	struct audio_block block;
+	char heard[MARKS_MAX];
+	char sent[MARKS_MAX];
+	char why[WHY_MAX];
+	int is_transmitting = 0;
+	int first;
+	int length;
+	int b;
+
+	say(one, "MODE CW\n");
+	say(one, "CW_INPUT IAMBIC\n");
+	say(one, "WPM 20\n");
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.frames = BLOCK_FRAMES;
+	hw_stand_in_key(first_paddle, 1, TAP_AT_US);
+	hw_stand_in_key(second_paddle, 1, TAP_AT_US + later_us);
+	hw_stand_in_key(first_paddle, 0, TAP_AT_US + SQUEEZE_US);
+	hw_stand_in_key(second_paddle, 0, TAP_AT_US + SQUEEZE_US);
+	for (b = 0; b < SQUEEZE_BLOCKS; b++) {
+		block.to_speaker = speaker + b * BLOCK_FRAMES;
+		block.to_transmitter = transmitter + b * BLOCK_FRAMES;
+		hw_stand_in_block(&block);
+		if (cw->wants_tx() && !is_transmitting)
+			control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+		if (!cw->wants_tx() && is_transmitting)
+			control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+		is_transmitting = cw->wants_tx();
+	}
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	read_the_marks(speaker, SQUEEZE_BLOCKS * BLOCK_FRAMES, heard, sizeof(heard));
+	read_the_marks(transmitter, SQUEEZE_BLOCKS * BLOCK_FRAMES, sent, sizeof(sent));
+	printf("          a squeeze is heard as %s and sent as %s\n", heard, sent);
+	expect(strcmp(heard, marks) == 0 && strcmp(sent, marks) == 0, what);
+	say(one, "MODE USB\n");
+}
+
+static void check_cw_transmitting(int one) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t speaker[CW_BLOCKS * BLOCK_FRAMES];
+	static int32_t transmitter[CW_BLOCKS * BLOCK_FRAMES];
+	const struct modem *cw = modem_find("CW");
+	struct audio_block block;
+	char why[CONTROL_WHY_MAX];
+	int wanted_at_block = CW_BLOCKS;
+	int tap_sample = TAP_AT_US * SAMPLES_PER_MS / 1000;
+	int lag = KEYER_LAG_US * SAMPLES_PER_MS / 1000;
+	int first;
+	int length;
+	int b;
+
+	say(one, "BAND 20M\n");
+	say(one, "MODE CW\n");
+	say(one, "CW_INPUT IAMBIC\n");
+	say(one, "WPM 20\n");
+	say(one, "DRIVE 40\n");
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.frames = BLOCK_FRAMES;
+	hw_stand_in_key(KEY_TIP, 1, TAP_AT_US);
+	hw_stand_in_key(KEY_TIP, 0, TAP_AT_US + TAP_US);
+	for (b = 0; b < CW_BLOCKS; b++) {
+		block.to_speaker = speaker + b * BLOCK_FRAMES;
+		block.to_transmitter = transmitter + b * BLOCK_FRAMES;
+		hw_stand_in_block(&block);
+		if (wanted_at_block == CW_BLOCKS && cw->wants_tx())
+			wanted_at_block = b;
+		if (b == wanted_at_block + BLOCKS_TO_TRANSMIT)
+			control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+	}
+	expect(wanted_at_block == tap_sample / BLOCK_FRAMES + 1
+		|| wanted_at_block == (tap_sample + lag) / BLOCK_FRAMES,
+		"a tap of the dot paddle in receive makes the CW modem ask for the transmitter");
+	find_the_burst(speaker, CW_BLOCKS * BLOCK_FRAMES, &first, &length);
+	expect(abs(first - (tap_sample + lag)) < BURST_SLACK
+		&& abs(length - DOT_AT_20_WPM) < BURST_SLACK,
+		"the sidetone is a whole dot, begun the keyer's 12 ms after the tap");
+	find_the_burst(transmitter, CW_BLOCKS * BLOCK_FRAMES, &first, &length);
+	printf("          the dot is sent %d samples after the tap, %d samples long\n",
+		first - tap_sample, length);
+	expect(abs(first - (tap_sample + lag + RF_DELAY + FILTER_DELAY)) < BURST_SLACK
+		&& abs(length - DOT_AT_20_WPM) < BURST_SLACK,
+		"the transmitter is sent a whole dot, after the sidetone by what the changeover needs");
+	expect(!cw->wants_tx(), "and the modem stops asking after its hang time");
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	say(one, "MODE USB\n");
+}
+
 static const uint8_t spectrum_points[] = { 0x00, 0x1c, 0xff };
 
 static int test_apply_calls;
@@ -297,6 +660,8 @@ int main(void) {
 	char answer[ANSWER_MAX];
 	int usb_side;
 	int lsb_side;
+	int sidetone_first;
+	int sidetone_length;
 	int i;
 
 	if (setup(&board_zbitx_1) < 0) {
@@ -382,12 +747,13 @@ int main(void) {
 	say(one, "schema\n");
 	hear(one, heard);
 	expect(has(heard, "CONTROL RADIO FREQ number 500000 30000000 1\n")
-		&& has(heard, "CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM\n")
+		&& has(heard, "CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/2TONE\n")
 		&& has(heard, "CONTROL CW WPM number 5 50 1\n")
 		&& has(heard, "CONTROL RADIO IF number 0 100 1\n")
 		&& has(heard, "CONTROL RADIO DRIVE number 0 100 1\n")
 		&& has(heard, "CONTROL VOICE BW_VOICE number 300 3000 50\n")
 		&& has(heard, "CONTROL CW BW_CW number 50 3000 50\n")
+		&& has(heard, "CONTROL CW CW_INPUT choice STRAIGHT/IAMBIC/IAMBICB/BUG/ULTIMATIC\n")
 		&& has(heard, "CONTROL END\n"),
 		"the schema lists the controls in their groups, CW's WPM among them");
 
@@ -424,6 +790,33 @@ int main(void) {
 	say(one, "MODE LSB\n");
 	expect(side_heard() == lsb_side, "from CW to LSB, LSB's sideband");
 	sdr_request("r1:agc=SLOW", answer);
+
+	say(one, "MODE CW\n");
+	say(one, "WPM 20\n");
+	find_the_sidetone(SETTLING_BLOCKS, &sidetone_first, &sidetone_length);
+	hw_stand_in_key(KEY_TIP, 1, TAP_AT_US);
+	hw_stand_in_key(KEY_TIP, 0, TAP_AT_US + TAP_US);
+	find_the_sidetone(SIDETONE_BLOCKS, &sidetone_first, &sidetone_length);
+	expect(abs(sidetone_first - (TAP_AT_US + KEYER_LAG_US) * SAMPLES_PER_MS / 1000) <= 2
+		&& abs(sidetone_length - (DOT_AT_20_WPM + ENVELOPE_FALL)) <= 4,
+		"a 5 ms tap of the dot paddle is a whole dot of sidetone, 12 ms after the tap");
+	find_the_sidetone(SETTLING_BLOCKS, &sidetone_first, &sidetone_length);
+	expect(sidetone_length == 0, "and then the speaker is the receiver's again");
+	say(one, "CW_INPUT STRAIGHT\n");
+	hw_stand_in_key(KEY_RING, 1, 0);
+	find_the_sidetone(SETTLING_BLOCKS, &sidetone_first, &sidetone_length);
+	expect(sidetone_length == 0,
+		"with a straight key, the ring held closed by its plug keys nothing");
+	hw_stand_in_key(KEY_RING, 0, 0);
+	find_the_sidetone(SETTLING_BLOCKS, &sidetone_first, &sidetone_length);
+	say(one, "CW_INPUT IAMBIC\n");
+
+	check_transmitting(one, other);
+	check_cw_transmitting(one);
+	check_cw_squeeze(one, KEY_TIP, KEY_RING, SQUEEZE_LATER_US, SQUEEZE_MARKS,
+		"both paddles held take turns, heard and sent, through the modem");
+	check_cw_squeeze(one, KEY_RING, KEY_TIP, DOT_JOINS_US, DASH_FIRST_MARKS,
+		"the dot paddle closed while dashes are being sent makes them take turns");
 
 	say(one, "spectrum on\n");
 	server_send_spectrum(25031, spectrum_points, sizeof(spectrum_points));
