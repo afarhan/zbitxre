@@ -3,14 +3,18 @@
 #
 # zbitxre
 #
-#   make          build everything into build/
+#   make          build the radio program here, and the tests into build/
 #   make check    run the tests that need no radio
 #   make radio    run the tests that need the radio (stop the radio program first)
-#   make gui      build the desktop's window on the radio (needs GTK 3)
+#   make gui      build the desktop's window on the radio, here (needs GTK 3)
 #   make panel    build the front panel's firmware
 #   make panel-flash   put it on a Pico that is in its loader
 #
-#   build/sdr     the radio, run from a terminal; see tools/sdr.c
+#   ./sdr         the radio, run from a terminal; see tools/sdr.c
+#   ./zbitx_gui   the desktop's window on the radio; see clients/gtk/zbitx_gui.c
+#
+# The programs an operator runs are built in this folder, where they are
+# easy to find. The tests, and what is made on the way, go into build/.
 
 CC     = gcc
 CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -I. -Ihw -Idsp -Itests -Ifront_panel
@@ -37,7 +41,8 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_server
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
-TOOLS       = $(BUILD)/sdr
+TOOLS       = sdr
+GUI         = zbitx_gui
 
 # The front panel is an Arduino sketch for the Pico W. It is built with
 # arduino-cli, which needs the rp2040 core and the lvgl library, version 9.3.0.
@@ -76,7 +81,7 @@ $(MODEM_LIST): $(MODEMS) tools/make_modem_list.sh FORCE | $(BUILD)
 
 FORCE:
 
-$(BUILD)/sdr: tools/sdr.c radio.c server.c radio.h server.h control.h $(DSP) $(HW) \
+sdr: tools/sdr.c radio.c server.c radio.h server.h control.h $(DSP) $(HW) \
 		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tools/sdr.c radio.c server.c $(DSP) $(HW) $(RADIO_LIBS)
 
@@ -115,9 +120,9 @@ $(BUILD)/test_audio: tests/test_audio.c hw/audio.c $(HW_HEADERS) | $(BUILD)
 
 # the desktop's window on the radio; it needs GTK 3, and is built apart
 # from the rest because the radio has no need of it
-gui: $(BUILD)/zbitx_gui
+gui: $(GUI)
 
-$(BUILD)/zbitx_gui: clients/gtk/zbitx_gui.c | $(BUILD)
+$(GUI): clients/gtk/zbitx_gui.c
 	$(CC) $(CFLAGS) $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$$(pkg-config --libs gtk+-3.0)
 
@@ -134,4 +139,4 @@ panel-flash: panel
 	sync
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) $(TOOLS) $(GUI)

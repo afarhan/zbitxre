@@ -1,4 +1,6 @@
 build/
+/sdr
+/zbitx_gui
 *.o
 *.swp
 *.swo

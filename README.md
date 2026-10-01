@@ -71,7 +71,7 @@ find the radio on a network where its name does not resolve.
 
 ## Building and testing
 
-    make          build everything into build/
+    make          build the radio program here, and the tests into build/
     make check    run the tests that need no radio; works on a PC too
     make radio    run the tests that need the radio
 
@@ -96,7 +96,7 @@ It needs no radio. `tests/against_zbitxv2/script.c` says what is compared.
 
 ## Working the radio from the desktop
 
-The radio program, `build/sdr`, serves its controls on port 8081. `server.c`
+The radio program, `sdr`, serves its controls on port 8081. `server.c`
 says what is said there: lines of a label and a value, `FREQ 7074000`,
 `BAND 20M`, `MODE CW`, `AUDIO 70`, sent by a client to change a setting and
 sent by the radio to every client whenever a setting changes. It can be
@@ -113,7 +113,7 @@ made from the radio's schema. The mouse wheel over any of them moves it a
 step, as the radio's knob would:
 
     make gui
-    build/zbitx_gui 192.168.1.76
+    ./zbitx_gui 192.168.1.76
 
 ## The front panel
 
@@ -157,7 +157,7 @@ back, access points and touch calibration included.
 
 ## Running the radio
 
-    build/sdr 7088000 LSB 75
+    ./sdr 7088000 LSB 75
 
 opens the receiver on 7088 kHz, lower sideband, at a volume of 75, with a
 passband of 300 to 3000 Hz. Those are also what it opens with when given
