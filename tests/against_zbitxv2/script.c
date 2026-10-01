@@ -7,7 +7,8 @@
 // It is built twice. With OLD defined it is built with zbitxv2's sbitx.c,
 // and without it, with zbitxre's core_sdr.c. The two cannot be in one program
 // because they have the same names. Each program writes a file, and the two
-// files must be the same, byte for byte. run.sh does all of it.
+// files must be the same but for what single precision loses; run.sh says
+// how it is measured, and does all of it.
 //
 // The script goes through USB, LSB, CW and CWR, the four speeds of the AGC
 // and four passbands. AM is left out because there the two differ, and are
@@ -19,16 +20,16 @@
 //
 // What is written down: the oscillator's frequency after every request, and
 // after every block the samples for the speaker, the samples for the
-// transmitter, and the S meter. These must be the same, byte for byte.
+// transmitter, and the S meter. These are what run.sh compares.
 //
 // The spectrum is written to a file of its own, the name given second. It
 // is not the same, and is not meant to be: zbitxre puts the Hann window on
 // the bins where zbitxv2 put it on the samples. run.sh says by how many dB
 // the two spectra differ at most.
 //
-// Both receivers take what FFTW knows from the same two files, w.wis and
-// wf.wis in the directory the program is run from, so that both do their
-// transforms the same way. run.sh makes the files before it compares.
+// zbitxv2's receiver takes what FFTW knows from two files, w.wis and wf.wis
+// in the directory the program is run from. run.sh runs it once to make
+// them before the run it compares.
 //
 // zbitxv2's sound loop halves the samples before sound_process() sees them.
 // zbitxre's sound_block() does the halving itself. So the old receiver is
@@ -40,7 +41,6 @@
 #include <string.h>
 #include <math.h>
 #include <complex.h>
-#include <fftw3.h>
 
 #define BLOCK 1024
 #define SPECTRUM_FIRST 1269
@@ -81,12 +81,14 @@
 #define NOISE_HALF 32768.0
 
 extern int spectrum_plot[];
-extern char wisdom_file[];
-extern char wisdom_file_f[];
 void sdr_request(char *request, char *response);
 
 #ifdef OLD
 
+#include <fftw3.h>
+
+extern char wisdom_file[];
+extern char wisdom_file_f[];
 void setup(char *device);
 void sound_process(int32_t *input_rx, int32_t *input_mic,
 	int32_t *output_speaker, int32_t *output_tx, int n_samples);
@@ -261,8 +263,10 @@ int main(int argc, char **argv) {
 		printf("cannot write %s\n", argv[1]);
 		return EXIT_FAILURE;
 	}
+#ifdef OLD
 	strcpy(wisdom_file, "w.wis");
 	strcpy(wisdom_file_f, "wf.wis");
+#endif
 	open_the_receiver();
 
 	ask("r1:freq=7040000");

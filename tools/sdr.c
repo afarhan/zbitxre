@@ -77,10 +77,6 @@
 // The program waits on the terminal for a few milliseconds at a time and
 // looks to the panel in between. hw/panel.c decides whether it is time to
 // poll.
-//
-// The first run takes a while to start, because the transforms are timed to
-// find the fastest way of doing them. What it learns is kept in data/ and
-// later runs start at once.
 
 #include <math.h>
 #include <poll.h>

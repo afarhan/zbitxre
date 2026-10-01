@@ -302,9 +302,12 @@ no level changes when the radio goes between receive and transmit.
 
 The receiver was run beside zbitxv2's (commit 2726c57) on the same samples:
 5220 blocks, through USB, LSB, CW and CWR, the four speeds of the AGC and
-four passbands, quiet, usual and very loud. The samples for the speaker, the
-spectrum, the S meter and the oscillator's frequency were the same throughout,
-byte for byte.
+four passbands, quiet, usual and very loud. With the transforms done by
+FFTW in double precision, as zbitxv2 does them, the samples for the speaker,
+the S meter and the oscillator's frequency were the same throughout, byte for
+byte. With kiss_fft in single precision, as they are done now, three
+quarters of the numbers are still the same, and where they differ the
+difference is 127 dB below the sound.
 
 The link to the panel, on a zbitx: in 20 seconds idle, 280 polls, every one
 answered and none spoiled. With the receiver running and the knob turned

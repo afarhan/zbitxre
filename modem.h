@@ -46,7 +46,6 @@
 #pragma once
 
 #include <complex.h>
-#include <fftw3.h>
 
 struct modem {
 	const char *name;
@@ -54,7 +53,7 @@ struct modem {
 	void (*start)(void);
 	void (*select)(void);
 	void (*reset)(void);
-	void (*rx)(fftw_complex *bins);
+	void (*rx)(complex float *bins);
 };
 
 extern const struct modem *modem_list[];

@@ -8,6 +8,19 @@
 // receiver and its filter work. Thanks to Phil Karn, KA9Q, whose method of
 // filtering by fast convolution it follows.
 //
+// The transforms are done by kiss_fft, by Mark Borgerding, in single
+// precision, where zbitxv2 used FFTW in double. The author chose it for
+// being one dependency less: its source is in dsp/kiss_fft, there is no
+// library to install, and nothing is planned or timed when the radio
+// starts, so there are no wisdom files and the first start is as quick as
+// any. On the zbitx's Pi it is also a little lighter: the audio thread
+// took 21% of a processor with FFTW in double and takes 17% with kiss_fft.
+// What the receiver gives differs from zbitxv2's by a part in a million,
+// 127 dB below the sound; tests/against_zbitxv2 measures it. kiss_fft's
+// fixed point was tried too and is slower here, and turning samples to
+// floats and back costs 45 us of a block's 10.67 ms, so there is nothing
+// to gain from avoiding it.
+//
 // What has gone from sbitx.c has gone to the hardware layer: the pins are in
 // hw/board.c, the Si5351 in hw/si5351.c, the sound card in hw/audio.c. The
 // transmitter, the T/R switch and the settings file are still to come.
@@ -92,7 +105,6 @@
 #include <stdio.h>
 #include <math.h>
 #include <complex.h>
-#include <fftw3.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -104,27 +116,19 @@
 #include "si5351.h"
 #include "sdr.h"
 #include "modem.h"
+#include "kiss_fft.h"
 
 static int center_bin = 512;
 
 float fft_bins[MAX_BINS]; // spectrum ampltiudes
 int spectrum_plot[MAX_BINS];
-fftw_complex *fft_spectrum;
+complex float *fft_spectrum;
 static void set_rx1(int frequency);
 
-// Wisdom Defines for the FFTW and FFTWF libraries
-// Options for WISDOM_MODE from least to most rigorous are FFTW_ESTIMATE, FFTW_MEASURE, FFTW_PATIENT, and FFTW_EXHAUSTIVE
-// The FFTW_ESTIMATE mode seems to make completely incorrect Wisdom plan choices sometimes, and is not recommended.
-// Wisdom plans found in an existing Wisdom file will negate the need for time consuming Wisdom plan calculations
-// if the Wisdom plans in the file were generated at the same or more rigorous level.
-#define WISDOM_MODE FFTW_MEASURE
-#define PLANTIME -1		// spend no more than plantime seconds finding the best FFT algorithm. -1 turns the platime cap off.
-char wisdom_file[WISDOM_PATH_MAX] = "data/sbitx_wisdom.wis";
-
-fftw_complex *fft_out;		// holds the incoming samples in freq domain (for rx as well as tx)
-fftw_complex *fft_in;			// holds the incoming samples in time domain (for rx as well as tx)
-fftw_complex *fft_m;			// holds previous samples for overlap and discard convolution
-fftw_plan plan_fwd;
+complex float *fft_out;		// holds the incoming samples in freq domain (for rx as well as tx)
+complex float *fft_in;			// holds the incoming samples in time domain (for rx as well as tx)
+complex float *fft_m;			// holds previous samples for overlap and discard convolution
+kiss_fft_cfg plan_fwd;
 int bfo_freq = 40035000;
 int freq_hdr = -1;
 
@@ -227,25 +231,17 @@ uint32_t oscillator_frequency(void){
 }
 
 static void fft_init(){
-	fft_m = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS/2);
-	fft_in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-	fft_out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-	fft_spectrum = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
+	fft_m = malloc(sizeof(complex float) * MAX_BINS/2);
+	fft_in = malloc(sizeof(complex float) * MAX_BINS);
+	fft_out = malloc(sizeof(complex float) * MAX_BINS);
+	fft_spectrum = malloc(sizeof(complex float) * MAX_BINS);
 
-	memset(fft_spectrum, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(fft_in, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(fft_out, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(fft_m, 0, sizeof(fftw_complex) * MAX_BINS/2);
+	memset(fft_spectrum, 0, sizeof(complex float) * MAX_BINS);
+	memset(fft_in, 0, sizeof(complex float) * MAX_BINS);
+	memset(fft_out, 0, sizeof(complex float) * MAX_BINS);
+	memset(fft_m, 0, sizeof(complex float) * MAX_BINS/2);
 
-	fftw_set_timelimit(PLANTIME);
-	fftwf_set_timelimit(PLANTIME);
-	int e = fftw_import_wisdom_from_filename(wisdom_file);
-	if (e == 0)
-	{
-		printf("Generating Wisdom File...\n");
-	}
-	plan_fwd = fftw_plan_dft_1d(MAX_BINS, fft_in, fft_out, FFTW_FORWARD, WISDOM_MODE); // Was FFTW_ESTIMATE N3SB
-	fftw_export_wisdom_to_filename(wisdom_file);
+	plan_fwd = kiss_fft_alloc(MAX_BINS, 0, NULL, NULL);
 
 	//zero up the previous 'M' bins
 	for (int i= 0; i < MAX_BINS/2; i++){
@@ -259,12 +255,12 @@ static void fft_init(){
 //become static with it
 void fft_reset_m_bins(){
 	//zero up the previous 'M' bins
-	memset(fft_in, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(fft_out, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(fft_m, 0, sizeof(fftw_complex) * MAX_BINS/2);
-	memset(fft_spectrum, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(tx_list->fft_time, 0, sizeof(fftw_complex) * MAX_BINS);
-	memset(tx_list->fft_freq, 0, sizeof(fftw_complex) * MAX_BINS);
+	memset(fft_in, 0, sizeof(complex float) * MAX_BINS);
+	memset(fft_out, 0, sizeof(complex float) * MAX_BINS);
+	memset(fft_m, 0, sizeof(complex float) * MAX_BINS/2);
+	memset(fft_spectrum, 0, sizeof(complex float) * MAX_BINS);
+	memset(tx_list->fft_time, 0, sizeof(complex float) * MAX_BINS);
+	memset(tx_list->fft_freq, 0, sizeof(complex float) * MAX_BINS);
 }
 
 void set_spectrum_speed(int speed){
@@ -377,16 +373,9 @@ static struct rx *add_tx(int frequency, short mode, int bpf_low, int bpf_high){
 	r->tuned_bin = 512;
 
 	//create fft complex arrays to convert the frequency back to time
-	r->fft_time = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-	r->fft_freq = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-
-	int e = fftw_import_wisdom_from_filename(wisdom_file);
-	if (e == 0)
-	{
-		printf("Generating Wisdom File...\n");
-	}
-	r->plan_rev = fftw_plan_dft_1d(MAX_BINS, r->fft_freq, r->fft_time, FFTW_BACKWARD, WISDOM_MODE); // Was FFTW_ESTIMATE N3SB
-	fftw_export_wisdom_to_filename(wisdom_file);
+	r->fft_time = malloc(sizeof(complex float) * MAX_BINS);
+	r->fft_freq = malloc(sizeof(complex float) * MAX_BINS);
+	r->plan_rev = kiss_fft_alloc(MAX_BINS, 1, NULL, NULL);
 
 	r->output = 0;
 	r->next = NULL;
@@ -420,16 +409,9 @@ static struct rx *add_rx(int frequency, short mode, int bpf_low, int bpf_high){
 	r->agc_gain = 0.0;
 
 	//create fft complex arrays to convert the frequency back to time
-	r->fft_time = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-	r->fft_freq = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * MAX_BINS);
-
-	int e = fftw_import_wisdom_from_filename(wisdom_file);
-	if (e == 0)
-	{
-		printf("Generating Wisdom File...\n");
-	}
-	r->plan_rev = fftw_plan_dft_1d(MAX_BINS, r->fft_freq, r->fft_time, FFTW_BACKWARD, WISDOM_MODE);  // Was FFTW_ESTIMATE N3SB
-	fftw_export_wisdom_to_filename(wisdom_file);
+	r->fft_time = malloc(sizeof(complex float) * MAX_BINS);
+	r->fft_freq = malloc(sizeof(complex float) * MAX_BINS);
+	r->plan_rev = kiss_fft_alloc(MAX_BINS, 1, NULL, NULL);
 
 	r->output = 0;
 	r->next = NULL;
@@ -504,8 +486,14 @@ static double agc2(struct rx *r){
 	return 100000000000 / r->agc_gain;
 }
 
-static void my_fftw_execute(fftw_plan f){
-	fftw_execute(f);
+/*
+	the transforms are kiss_fft's, in single precision. it works on
+	its own type, a struct of two floats, which is laid out as a
+	complex float is, so the arrays here stay complex and are handed
+	to it as its own
+*/
+static void fft_execute(kiss_fft_cfg plan, complex float *in, complex float *out){
+	kiss_fft(plan, (const kiss_fft_cpx *)in, (kiss_fft_cpx *)out);
 }
 
 //TODO : optimize the memory copy and moves to use the memcpy
@@ -543,7 +531,7 @@ static void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 	}
 
 	// STEP 3: convert the time domain samples to  frequency domain
-	my_fftw_execute(plan_fwd);
+	fft_execute(plan_fwd, fft_in, fft_out);
 
 	//STEP 3B: this is a side line, we use these frequency domain
 	// values to paint the spectrum in the user interface
@@ -593,7 +581,7 @@ static void rx_linear(int32_t *input_rx,  int32_t *input_mic,
 	off, the filter is applied and they are turned back into time.
 	CW and CWR are single sideband signals too.
 */
-static void baseband(struct rx *r, fftw_complex *bins, int shift, int one_sideband){
+static void baseband(struct rx *r, complex float *bins, int shift, int one_sideband){
 	int i;
 
 	//STEP 4: we rotate the bins around by r-tuned_bin
@@ -625,7 +613,7 @@ static void baseband(struct rx *r, fftw_complex *bins, int shift, int one_sideba
 		r->fft_freq[i] *= r->filter->fir_coeff[i];
 
 	//STEP 7: convert back to time domain
-	my_fftw_execute(r->plan_rev);
+	fft_execute(r->plan_rev, r->fft_freq, r->fft_time);
 
 	//STEP 8 : AGC
 	agc2(r);
@@ -636,7 +624,7 @@ static void baseband(struct rx *r, fftw_complex *bins, int shift, int one_sideba
 	ride on USB. the sideband is the receiver's mode.
 	fills baseband_output with MAX_BINS/2 samples of audio
 */
-void demod_ssb(fftw_complex *bins, int32_t *baseband_output){
+void demod_ssb(complex float *bins, int32_t *baseband_output){
 	// we may add another sub receiver within the pass band later,
 	// hence, the linkced list of receivers here
 	// at present, we handle just the first receiver
@@ -654,7 +642,7 @@ void demod_ssb(fftw_complex *bins, int32_t *baseband_output){
 	AM is not rotated to baseband, it is filtered around its carrier
 	where it is, both sidebands kept, and rectified
 */
-void demod_am(fftw_complex *bins, int32_t *baseband_output){
+void demod_am(complex float *bins, int32_t *baseband_output){
 	struct rx *r = rx_list;
 	int i;
 

@@ -145,13 +145,12 @@ outright, and the thread then runs as an ordinary one.
 
 ## What it takes to build
 
-    sudo apt-get install gcc make libasound2-dev libfftw3-dev
+    sudo apt-get install gcc make libasound2-dev
 
-FFTW is needed in both its double and its single precision forms. On the test
-radio both the packaged FFTW 3.3.8 and one built from source in `/usr/local`
-are present, and either will do.
+The transforms are kiss_fft's, whose source is in `dsp/kiss_fft`, so there is
+no library to install for them.
 
-zbitxre does not need wiringPi, GTK, sqlite, or the `snd-aloop` loopback
+zbitxre does not need FFTW, wiringPi, GTK, sqlite, or the `snd-aloop` loopback
 cards that zbitxv2 sets up.
 
 ## Checking a radio
@@ -190,7 +189,6 @@ zbitxv2 still works with the overlay line in place.
 
 ## What zbitxre keeps on the radio
 
-`data/sbitx_wisdom.wis` and `data/sbitx_wisdom_f.wis`, made on the first run. They record the
-fastest way this processor does the radio's transforms, so that later runs
-start at once. They belong to the machine they were made on and are not kept
-in the repository.
+`data/snapshot.raw`, when "snapshot" has been asked for in the radio's
+terminal: the samples of sixteen blocks as the sound card gave them. It is
+not kept in the repository.

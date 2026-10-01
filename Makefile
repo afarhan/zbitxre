@@ -17,7 +17,7 @@
 # easy to find. The tests, and what is made on the way, go into build/.
 
 CC     = gcc
-CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -I. -Ihw -Idsp -Itests -Ifront_panel
+CFLAGS = -std=gnu11 -O2 -g -Wall -Wextra -I. -Ihw -Idsp -Idsp/kiss_fft -Itests -Ifront_panel
 BUILD  = build
 
 # what the radio and the panel say to each other is in the panel's folder,
@@ -34,8 +34,13 @@ HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c \
 # files at build time; modem.h says how
 MODEMS      = $(wildcard modems/*.c)
 MODEM_LIST  = $(BUILD)/modem_list.c
-DSP         = core_sdr.c control.c dsp/filter.c dsp/vfo.c $(MODEMS) $(MODEM_LIST)
-RADIO_LIBS  = -lfftw3 -lfftw3f -lasound -lpthread -lm
+# the transforms are kiss_fft's. Its source is in dsp/kiss_fft, as its
+# authors wrote it, and is built on its own with its warnings off, so that
+# the warnings shown are all the radio's own
+KISS_FFT    = $(BUILD)/kiss_fft.o
+DSP         = core_sdr.c control.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
+	$(MODEMS) $(MODEM_LIST)
+RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_server
@@ -81,6 +86,10 @@ $(MODEM_LIST): $(MODEMS) tools/make_modem_list.sh FORCE | $(BUILD)
 
 FORCE:
 
+$(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
+		dsp/kiss_fft/_kiss_fft_guts.h | $(BUILD)
+	$(CC) -std=gnu11 -O2 -g -w -Idsp/kiss_fft -c -o $@ dsp/kiss_fft/kiss_fft.c
+
 sdr: tools/sdr.c radio.c server.c radio.h server.h control.h $(DSP) $(HW) \
 		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tools/sdr.c radio.c server.c $(DSP) $(HW) $(RADIO_LIBS)
@@ -93,12 +102,12 @@ $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lfftw3 -lfftw3f -lm
+	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lm
 
 $(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h control.h \
 		$(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c $(DSP) $(STAND_INS) \
-		-lfftw3 -lfftw3f -lm
+		-lm
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

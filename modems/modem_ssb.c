@@ -32,7 +32,7 @@
 
 static int32_t baseband_output[MAX_BINS/2];
 
-static void rx_ssb(fftw_complex *bins) {
+static void rx_ssb(complex float *bins) {
 	demod_ssb(bins, baseband_output);
 	speaker_play(baseband_output, MAX_BINS/2);
 }

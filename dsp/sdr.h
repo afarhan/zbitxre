@@ -70,13 +70,13 @@ have continuos waveform.
 
 #include <stdint.h>
 #include <complex.h>
-#include <fftw3.h>
+
+#include "kiss_fft.h"
 
 #include "audio.h"
 #include "board.h"
 
 #define MAX_BINS 2048
-#define WISDOM_PATH_MAX 256
 
 /*
 All the incoming samples are converted to frequency domain in sound_process().
@@ -97,8 +97,6 @@ for the transmission. The data required is the same!
 
 extern float fft_bins[];
 extern int spectrum_plot[];
-extern char wisdom_file[];
-extern char wisdom_file_f[];
 
 //vfo definitions
 
@@ -156,9 +154,9 @@ struct rx {
 													//FFT plan to convert back to time domain
 	int low_hz;
 	int high_hz;
-	fftw_plan plan_rev;
-	fftw_complex *fft_freq;
-	fftw_complex *fft_time;
+	kiss_fft_cfg plan_rev;
+	complex float *fft_freq;
+	complex float *fft_time;
 
 	/*
 	* agc() is called once for every block of samples. The samples
@@ -193,7 +191,7 @@ uint32_t oscillator_frequency(void);
 void set_spectrum_speed(int speed);
 
 // what a modem has to work with; modem.h says what a modem is
-void demod_ssb(fftw_complex *bins, int32_t *baseband_output);
-void demod_am(fftw_complex *bins, int32_t *baseband_output);
+void demod_ssb(complex float *bins, int32_t *baseband_output);
+void demod_am(complex float *bins, int32_t *baseband_output);
 void speaker_play(const int32_t *samples, int count);
 void set_passband(int low_hz, int high_hz);

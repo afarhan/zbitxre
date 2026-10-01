@@ -38,11 +38,11 @@
 // The Kaiser window's beta sets how hard the taper is; the radio uses 5
 // throughout.
 //
-// What FFTW learns about the fastest way to do these transforms is read from
-// wisdom_file_f before the first filter is made and written back after it.
+// The two transforms that window the filter are kiss_fft's, as the
+// receiver's are. kiss_fft works on a struct of two floats, laid out as a
+// complex float is, so the response is handed to it as its own.
 //
-// filter_tune() is for one thread at a time. It plans transforms, and FFTW's
-// planner must not be entered twice at once.
+// filter_tune() is for one thread at a time.
 //
 // complex.h is included before fftw3.h so that FFTW's complex numbers are
 // C's own.
@@ -54,19 +54,8 @@
 #include <memory.h>
 #include <complex.h>
 #include <math.h>
-#include <fftw3.h>
 
 #include "sdr.h"
-
-// Options for WISDOM_MODE from least to most rigorous are FFTW_ESTIMATE,
-// FFTW_MEASURE, FFTW_PATIENT, and FFTW_EXHAUSTIVE. FFTW_ESTIMATE seems to
-// make completely incorrect plan choices sometimes, and is not recommended.
-#define WISDOM_MODE FFTW_MEASURE
-#define PLANTIME -1		// no cap on the time spent finding the best FFT algorithm
-
-char wisdom_file_f[WISDOM_PATH_MAX] = "data/sbitx_wisdom_f.wis";
-static int wisdom_is_read = 0;
-static int wisdom_is_written = 0;
 
 // Modified Bessel function of the 0th kind, used by the Kaiser window
 static float i0(float const z){
@@ -117,26 +106,17 @@ static int window_filter(int const L,int const M,complex float * const response,
 	//total length of the convolving samples
 	int const N = L + M - 1;
 
-	// fftw_plan can overwrite its buffers, so we're forced to make a temp. Ugh.
-	complex float * const buffer = fftwf_alloc_complex(N);
+	// the response is worked on in a copy, and each transform is given a
+	// second array to write to
+	complex float * const buffer = malloc(N * sizeof(complex float));
+	complex float * const transformed = malloc(N * sizeof(complex float));
 
-	fftw_set_timelimit(PLANTIME);
-	fftwf_set_timelimit(PLANTIME);
-	if (!wisdom_is_read){
-		fftwf_import_wisdom_from_filename(wisdom_file_f);
-		wisdom_is_read = 1;
-	}
-	fftwf_plan fwd_filter_plan = fftwf_plan_dft_1d(N,buffer,buffer,FFTW_FORWARD, WISDOM_MODE);
-	fftwf_plan rev_filter_plan = fftwf_plan_dft_1d(N,buffer,buffer,FFTW_BACKWARD, WISDOM_MODE);
-	if (!wisdom_is_written){
-		fftwf_export_wisdom_to_filename(wisdom_file_f);
-		wisdom_is_written = 1;
-	}
+	kiss_fft_cfg fwd_filter_plan = kiss_fft_alloc(N, 0, NULL, NULL);
+	kiss_fft_cfg rev_filter_plan = kiss_fft_alloc(N, 1, NULL, NULL);
 
 	// Convert to time domain
-	memcpy(buffer,response,N*sizeof(*buffer));
-	fftwf_execute(rev_filter_plan);
-	fftwf_destroy_plan(rev_filter_plan);
+	kiss_fft(rev_filter_plan, (const kiss_fft_cpx *)response, (kiss_fft_cpx *)buffer);
+	kiss_fft_free(rev_filter_plan);
 
 	float kaiser_window[M];
 	make_kaiser(kaiser_window,M,beta);
@@ -156,12 +136,13 @@ static int window_filter(int const L,int const M,complex float * const response,
 	memset(buffer+M,0,(N-M)*sizeof(*buffer));
 
 	// Now back to frequency domain
-	fftwf_execute(fwd_filter_plan);
-	fftwf_destroy_plan(fwd_filter_plan);
+	kiss_fft(fwd_filter_plan, (const kiss_fft_cpx *)buffer, (kiss_fft_cpx *)transformed);
+	kiss_fft_free(fwd_filter_plan);
 
-	memcpy(response,buffer,N*sizeof(*response));
+	memcpy(response,transformed,N*sizeof(*response));
 
-	fftwf_free(buffer);
+	free(buffer);
+	free(transformed);
 	return 0;
 }
 
@@ -171,7 +152,7 @@ struct filter *filter_new(int input_length, int impulse_length){
 	f->L = input_length;
 	f->M = impulse_length;
 	f->N = f->L + f->M - 1;
-	f->fir_coeff = fftwf_alloc_complex(f->N);
+	f->fir_coeff = malloc(f->N * sizeof(complex float));
 
 	return f;
 }
