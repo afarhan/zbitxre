@@ -42,6 +42,7 @@ struct audio_report {
 
 int audio_open(audio_block_fn radio_block);
 void audio_close(void);
+int audio_reopen(void);
 
 int audio_set_speaker(int percent);
 int audio_set_transmitter(int percent);

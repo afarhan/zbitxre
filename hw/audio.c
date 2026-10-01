@@ -78,6 +78,11 @@
 // them once they are all there. With them it can be told whether the
 // samples were already wrong as they came from the card.
 //
+// audio_reopen() is for the same fault. It closes the card and opens it
+// again while the radio runs, which is the part of a restart that the card
+// sees. If that alone puts the samples right, what was wrong was in how the
+// card had started and not in the radio's own numbers.
+//
 // The radio's block function runs on the audio thread. It must not wait for
 // anything. The level functions are for one other thread.
 //
@@ -644,6 +649,34 @@ void audio_close(void) {
 	pthread_join(thread, NULL);
 	close_everything();
 	opened = 0;
+}
+
+// closes the card and opens it again as it was opened, with the same block
+// function, and puts the speaker's and the transmitter's levels back to
+// what they were, since opening sets them afresh
+int audio_reopen(void) {
+	snd_mixer_elem_t *output;
+	long speaker_step_was = 0;
+	long transmitter_step_was = 0;
+
+	if (!opened)
+		return -1;
+	output = control("Master");
+	if (output == NULL)
+		return -1;
+	snd_mixer_handle_events(mixer);
+	snd_mixer_selem_get_playback_volume(output, LEFT, &speaker_step_was);
+	snd_mixer_selem_get_playback_volume(output, RIGHT, &transmitter_step_was);
+
+	audio_close();
+	if (audio_open(block_fn) < 0)
+		return -1;
+	output = control("Master");
+	if (output == NULL)
+		return -1;
+	snd_mixer_selem_set_playback_volume(output, LEFT, speaker_step_was);
+	snd_mixer_selem_set_playback_volume(output, RIGHT, transmitter_step_was);
+	return 0;
 }
 
 void audio_get_report(struct audio_report *report) {
