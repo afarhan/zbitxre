@@ -61,9 +61,8 @@
 // lowest frequency up, two hex digits each, in dB with 30 added so that the
 // noise sits a little above the bottom. It is the line the front panel is
 // sent, but at the full resolution of the receiver's bins, 534 points. A
-// line is sent to a client only when all it was sent before has gone, so a
-// client that cannot keep up misses lines rather than falling behind; the
-// next line is as good as the one missed.
+// client that cannot keep up misses lines rather than falling behind: how
+// is below.
 //
 // A line the radio will not take is answered, to that client alone, with
 // ERROR, the name, and what it would take:
@@ -85,10 +84,39 @@
 // server_get_pollfds() gives the sockets to wait on, and server_handle_events() deals
 // with whatever they have. A line is acted on when it is whole.
 //
-// Nothing here waits. Sockets are non-blocking. What is to be sent to a
-// client that cannot take it yet is kept; a client that falls a whole
-// buffer behind is taken to be gone and is disconnected, so that one slow
-// client never holds up the radio.
+// Nothing here waits. Sockets are non-blocking, and one slow client never
+// holds up the radio or the others.
+//
+// A CLIENT THAT IS SLOW
+//
+// A client may stall for seconds, a web page on a poor connection, while
+// the radio goes on changing: tuning sends a change many times a second,
+// and the spectrum ten lines a second. Were each change and each line
+// queued for it, the queue would grow without end, and when the client
+// woke it would be shown seconds of the past, late. So the radio sends a
+// client what is, not what happened:
+//
+//   A client is not sent a queue of changes. Each client has a flag for
+//   each control, set when the control changes. When the client's socket
+//   can take more, it is sent the value each flagged control has now, and
+//   the flags are cleared. A control that changed a hundred times while
+//   the client stalled is sent once, with its last value. However long a
+//   client stalls, it costs the radio the same, and when it wakes it is
+//   up to date at once. The changes come in the order of the table, not
+//   the order they were made in; a client is told what is, and that is the
+//   same either way.
+//
+//   A line of the spectrum goes to a client only when nothing sent to it
+//   before is still waiting, neither here nor in the kernel's queue for its
+//   socket. A slow client misses lines, and the line it is sent is always
+//   the newest.
+//
+//   The kernel's queue for each client's socket is made small, so that
+//   what is in it cannot be long out of date.
+//
+// A client is disconnected only when its connection fails, or when it asks
+// for the schema faster than it reads it: the replies to what a client
+// asks, the schema and ERROR, are queued, in OUT_MAX bytes.
 //
 // At most SERVER_CLIENTS_MAX clients at once; one more is turned away.
 //
@@ -100,9 +128,11 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <linux/sockios.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -111,6 +141,7 @@
 
 #define LINE_MAX_LENGTH 128
 #define OUT_MAX 4096
+#define SEND_BUFFER_BYTES 8192
 #define LISTEN_QUEUE 4
 #define NOBODY (-1)
 #define WHY_MAX CONTROL_WHY_MAX
@@ -125,6 +156,7 @@ struct client {
 	char out[OUT_MAX];
 	int out_count;
 	int wants_spectrum;
+	uint8_t changed[CONTROLS_MAX];
 };
 
 static int listener = NOBODY;
@@ -198,6 +230,61 @@ static void client_flush(struct client *c) {
 	c->out_count -= sent;
 }
 
+// what the kernel has been given for a client and not yet sent
+static int unsent_bytes(const struct client *c) {
+	int count = 0;
+
+	if (ioctl(c->fd, SIOCOUTQ, &count) < 0)
+		return 0;
+	return count;
+}
+
+static int has_changes(const struct client *c) {
+	int i;
+
+	for (i = 0; i < control_count(); i++) {
+		if (c->changed[i])
+			return 1;
+	}
+	return 0;
+}
+
+// the value each flagged control has now, as many as there is room for;
+// the rest stay flagged until the socket can take more
+static void client_send_changes(struct client *client) {
+	char line[LINE_MAX_LENGTH];
+	const struct control *c;
+	int length;
+	int i;
+
+	if (client->fd == NOBODY)
+		return;
+	for (i = 0; i < control_count(); i++) {
+		if (!client->changed[i])
+			continue;
+		c = control_at(i);
+		length = snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
+		if (client->out_count + length > OUT_MAX)
+			break;
+		memcpy(client->out + client->out_count, line, length);
+		client->out_count += length;
+		client->changed[i] = 0;
+	}
+	client_flush(client);
+}
+
+static int index_of_control(const struct control *c) {
+	int i;
+
+	for (i = 0; i < control_count(); i++) {
+		if (control_at(i) == c)
+			return i;
+	}
+	return NOBODY;
+}
+
+// a reply to what a client asked; a client that does not read its replies
+// fills OUT_MAX and is disconnected
 static void client_queue_line(struct client *c, const char *line) {
 	int length = strlen(line);
 
@@ -213,15 +300,19 @@ static void client_queue_line(struct client *c, const char *line) {
 }
 
 void server_broadcast(const struct control *c, int origin) {
-	char line[LINE_MAX_LENGTH];
+	int index;
 	int i;
 
 	if (listener == NOBODY)
 		return;
-	snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
+	index = index_of_control(c);
+	if (index == NOBODY)
+		return;
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
-		if (i != origin)
-			client_queue_line(&clients[i], line);
+		if (i == origin || clients[i].fd == NOBODY)
+			continue;
+		clients[i].changed[index] = 1;
+		client_send_changes(&clients[i]);
 	}
 }
 
@@ -256,22 +347,18 @@ void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
 	for (i = 0; i < SERVER_CLIENTS_MAX; i++) {
 		if (clients[i].fd == NOBODY || !clients[i].wants_spectrum)
 			continue;
-		if (clients[i].out_count > 0)
+		if (clients[i].out_count > 0 || unsent_bytes(&clients[i]) > 0)
 			continue;
 		client_queue_line(&clients[i], line);
 	}
 }
 
 static void send_all_settings(struct client *client) {
-	char line[LINE_MAX_LENGTH];
-	const struct control *c;
 	int i;
 
-	for (i = 0; i < control_count(); i++) {
-		c = control_at(i);
-		snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
-		client_queue_line(client, line);
-	}
+	for (i = 0; i < control_count(); i++)
+		client->changed[i] = 1;
+	client_send_changes(client);
 }
 
 static void send_schema(struct client *client) {
@@ -295,6 +382,7 @@ static void send_schema(struct client *client) {
 }
 
 static void accept_client(void) {
+	int send_buffer = SEND_BUFFER_BYTES;
 	int fd;
 	int i;
 
@@ -309,10 +397,12 @@ static void accept_client(void) {
 		close(fd);
 		return;
 	}
+	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
 	clients[i].fd = fd;
 	clients[i].in_count = 0;
 	clients[i].out_count = 0;
 	clients[i].wants_spectrum = 0;
+	memset(clients[i].changed, 0, sizeof(clients[i].changed));
 	send_all_settings(&clients[i]);
 }
 
@@ -390,7 +480,7 @@ int server_get_pollfds(struct pollfd *polls) {
 			continue;
 		polls[count].fd = clients[i].fd;
 		polls[count].events = POLLIN;
-		if (clients[i].out_count > 0)
+		if (clients[i].out_count > 0 || has_changes(&clients[i]))
 			polls[count].events |= POLLOUT;
 		count++;
 	}
@@ -422,7 +512,7 @@ void server_handle_events(const struct pollfd *polls, int count) {
 		if (c == NULL)
 			continue;
 		if (polls[i].revents & POLLOUT)
-			client_flush(c);
+			client_send_changes(c);
 		if (c->fd != NOBODY && (polls[i].revents & (POLLIN | POLLHUP | POLLERR)))
 			read_client(c);
 	}

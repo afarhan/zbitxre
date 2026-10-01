@@ -26,7 +26,10 @@
 // the bandwidth it was left with. The receiver is run for a block after
 // each change, as the audio thread would, so that it takes up what it was
 // offered. And the spectrum: sent only to a client that asked for it, and
-// no longer once it says "spectrum off".
+// no longer once it says "spectrum off". And a client that stalls while
+// the radio changes much: it is not dropped, it is sent the last value of
+// FREQ though not every one, and few lines of the spectrum, not the
+// backlog; and once it has caught up, the next line.
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -50,6 +53,17 @@
 #define SERVE_ROUNDS 20
 #define ROUND_MS 5
 #define BLOCK_FRAMES 1024
+
+
+#define STALLED_CHANGES 3000
+#define STALLED_CHANGES_A_LINE 10
+#define STALLED_FIRST_HZ 14000000
+#define STALLED_STEP_HZ 10
+#define STALLED_POINTS 534
+#define STALLED_RECEIVE_BUFFER 2048
+#define STALLED_HEARD_MAX 262144
+#define STALLED_QUIET_ROUNDS 5
+#define STALLED_LINES_AT_MOST 2
 
 static int checks_failed;
 
@@ -142,6 +156,76 @@ static struct control stepped = {
 	.group = "TEST", .name = "STEPPED", .kind = CONTROL_NUMBER,
 	.min = 0, .max = 100, .step = 5, .value = "0", .apply = count_applies,
 };
+
+// how many times a line beginning with this appears in what was heard
+static int count_lines(const char *heard, const char *beginning) {
+	const char *at = heard;
+	int count = 0;
+
+	while ((at = strstr(at, beginning)) != NULL) {
+		if (at == heard || at[-1] == '\n')
+			count++;
+		at++;
+	}
+	return count;
+}
+
+// a client with a small receive buffer that does not read while the radio
+// makes STALLED_CHANGES changes of FREQ and a line of the spectrum every
+// tenth one; then it reads all it was sent, and once it has caught up it
+// is sent the next line of the spectrum
+static int a_stalled_client_is_kept_up_to_date(void) {
+	static char heard[STALLED_HEARD_MAX];
+	static uint8_t points[STALLED_POINTS];
+	char why[CONTROL_WHY_MAX];
+	char hz[CONTROL_VALUE_MAX];
+	int small = STALLED_RECEIVE_BUFFER;
+	struct sockaddr_in where;
+	int stalled = socket(AF_INET, SOCK_STREAM, 0);
+	int length = 0;
+	ssize_t got;
+	int quiet = 0;
+	int is_line_sent_after;
+	int i;
+
+	setsockopt(stalled, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small));
+	memset(&where, 0, sizeof(where));
+	where.sin_family = AF_INET;
+	where.sin_port = htons(TEST_PORT);
+	where.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	if (connect(stalled, (struct sockaddr *)&where, sizeof(where)) < 0)
+		return 0;
+	say(stalled, "spectrum on\n");
+	for (i = 1; i <= STALLED_CHANGES; i++) {
+		snprintf(hz, sizeof(hz), "%d", STALLED_FIRST_HZ + i * STALLED_STEP_HZ);
+		control_set("FREQ", hz, ORIGIN_NONE, why, sizeof(why));
+		if (i % STALLED_CHANGES_A_LINE == 0)
+			server_send_spectrum(25031, points, sizeof(points));
+	}
+	while (quiet < STALLED_QUIET_ROUNDS && length < STALLED_HEARD_MAX - 1) {
+		serve_a_while();
+		got = recv(stalled, heard + length, STALLED_HEARD_MAX - 1 - length, MSG_DONTWAIT);
+		if (got <= 0) {
+			quiet++;
+			continue;
+		}
+		quiet = 0;
+		length += got;
+	}
+	heard[length] = 0;
+	server_send_spectrum(25031, points, sizeof(points));
+	serve_a_while();
+	got = recv(stalled, heard + length, STALLED_HEARD_MAX - 1 - length, MSG_DONTWAIT);
+	is_line_sent_after = got > 0 && has(heard + length, "SPECTRUM ");
+	close(stalled);
+	snprintf(hz, sizeof(hz), "FREQ %d\n", STALLED_FIRST_HZ + STALLED_CHANGES * STALLED_STEP_HZ);
+	printf("          the stalled client was sent %d of %d changes and %d of %d lines\n",
+		count_lines(heard, "FREQ "), STALLED_CHANGES,
+		count_lines(heard, "SPECTRUM "), STALLED_CHANGES / STALLED_CHANGES_A_LINE);
+	return has(heard, hz) && count_lines(heard, "FREQ ") < STALLED_CHANGES
+		&& count_lines(heard, "SPECTRUM ") <= STALLED_LINES_AT_MOST
+		&& is_line_sent_after;
+}
 
 int main(void) {
 	char heard[HEARD_MAX];
@@ -260,6 +344,7 @@ int main(void) {
 	say(one, "MODE CWR\n");
 	expect(is_passband(600, 800), "and CWR has CW's");
 
+
 	say(one, "spectrum on\n");
 	server_send_spectrum(25031, spectrum_points, sizeof(spectrum_points));
 	hear(one, heard);
@@ -280,6 +365,9 @@ int main(void) {
 	hear(other, other_heard);
 	expect(has(other_heard, "AUDIO 75\n"),
 		"a client that goes is forgotten, and a new one is told of changes");
+
+	expect(a_stalled_client_is_kept_up_to_date(),
+		"a client that stalls is not dropped, and is sent the last FREQ, not the backlog");
 
 	close(one);
 	close(other);
