@@ -51,6 +51,15 @@
 // oscillator is off, tuning switches it on again, since tuning sets it.
 // Switching one on resets the chip's PLLs, as the radio does when it starts.
 //
+// "snapshot" is for the times the sound and the spectrum go wrong and a
+// restart puts them right. It saves the samples of the next sixteen blocks
+// just as the sound card gave them, both channels, in data/snapshot.raw,
+// 32-bit numbers, the receiver's and then the microphone's for each frame,
+// and prints for each channel its largest sample, its mean, how many of its
+// samples are zero, and how many are the same as the one before. Samples
+// that are zero or repeated in runs were wrong before the radio touched
+// them, which is the card's doing and not the transform's.
+//
 // "measure=5" measures for five seconds how strong what reaches the sound
 // card is, within 3 kHz either side of the tuned frequency, and then prints
 // it in dB. It looks at the spectrum twenty times a second and averages the
@@ -103,6 +112,9 @@
 
 #define FREQ_IS         "r1:freq="
 #define VOLUME_IS       "r1:volume="
+
+#define SNAPSHOT_FILE   "data/snapshot.raw"
+#define SNAPSHOT_CHANNELS 2
 
 #define SPECTRUM_EVERY_MS 250
 #define SPECTRUM_FIRST_BIN 1269
@@ -227,6 +239,52 @@ static void client_spectrum_send(long now) {
 		client_spectrum_line, SPECTRUM_BINS);
 }
 
+// one channel of a snapshot, summed up: channel 0 is the receiver's
+static void print_snapshot_channel(const char *name, const int32_t *samples,
+		int channel) {
+	long long sum = 0;
+	long largest = 0;
+	int zeros = 0;
+	int repeats = 0;
+	int32_t sample;
+	int32_t before = 0;
+	int frame;
+
+	for (frame = 0; frame < AUDIO_SNAPSHOT_FRAMES; frame++) {
+		sample = samples[frame * SNAPSHOT_CHANNELS + channel];
+		sum += sample;
+		if (labs((long)sample) > largest)
+			largest = labs((long)sample);
+		if (sample == 0)
+			zeros++;
+		if (frame > 0 && sample == before)
+			repeats++;
+		before = sample;
+	}
+	printf("snapshot: %s largest %ld, mean %lld, zero %d, repeated %d, of %d\n",
+		name, largest, sum / AUDIO_SNAPSHOT_FRAMES, zeros, repeats,
+		AUDIO_SNAPSHOT_FRAMES);
+}
+
+static void snapshot_save(void) {
+	const int32_t *samples = audio_get_snapshot();
+	FILE *file;
+
+	if (samples == NULL)
+		return;
+	print_snapshot_channel("receiver", samples, 0);
+	print_snapshot_channel("microphone", samples, 1);
+	file = fopen(SNAPSHOT_FILE, "wb");
+	if (file == NULL) {
+		printf("snapshot: could not write %s\n", SNAPSHOT_FILE);
+		return;
+	}
+	fwrite(samples, sizeof(int32_t), AUDIO_SNAPSHOT_FRAMES * SNAPSHOT_CHANNELS, file);
+	fclose(file);
+	printf("snapshot: saved in %s\n", SNAPSHOT_FILE);
+	fflush(stdout);
+}
+
 static void measure_start(int seconds, long now) {
 	int i;
 
@@ -337,6 +395,11 @@ static void handle_command(char *line) {
 		report();
 		return;
 	}
+	if (strcmp(line, "snapshot") == 0) {
+		audio_take_snapshot();
+		printf("ok\n");
+		return;
+	}
 	if (strcmp(line, "panel=off") == 0) {
 		panel_set_polling(0);
 		printf("ok\n");
@@ -433,6 +496,7 @@ static void main_loop(void) {
 		spectrum_send(now_ms());
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
+		snapshot_save();
 		panel_poll(now_ms(), on_panel_record);
 
 		polls[0].fd = TERMINAL;

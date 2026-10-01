@@ -50,3 +50,11 @@ int audio_set_microphone(int percent);
 int audio_get_levels(struct audio_levels *levels);
 
 void audio_get_report(struct audio_report *report);
+
+// a snapshot is the samples of some blocks as the card gave them, both
+// channels, a frame being the receiver's sample and then the microphone's
+#define AUDIO_SNAPSHOT_BLOCKS 16
+#define AUDIO_SNAPSHOT_FRAMES (AUDIO_SNAPSHOT_BLOCKS * AUDIO_BLOCK_FRAMES)
+
+void audio_take_snapshot(void);
+const int32_t *audio_get_snapshot(void);

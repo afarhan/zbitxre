@@ -59,6 +59,13 @@
 // If the card fails in some other way it is prepared again. If it cannot be
 // prepared the thread stops, and the report says so.
 //
+// A snapshot is for the times the receiver's sound and spectrum go wrong
+// and a restart puts them right. When one is asked for, the thread copies
+// the next AUDIO_SNAPSHOT_BLOCKS blocks just as the card gave them, both
+// channels, before anything is done to them. audio_get_snapshot() gives
+// them once they are all there. With them it can be told whether the
+// samples were already wrong as they came from the card.
+//
 // The radio's block function runs on the audio thread. It must not wait for
 // anything. The level functions are for one other thread.
 //
@@ -118,6 +125,10 @@ static atomic_long longest_wait_us;
 static atomic_long queued_frames;
 
 static int fell_behind;
+
+static int32_t snapshot[AUDIO_SNAPSHOT_BLOCKS * SAMPLES_PER_BLOCK];
+static atomic_int snapshot_blocks_to_take;
+static atomic_int snapshot_is_ready;
 
 static int32_t captured[SAMPLES_PER_BLOCK];
 static int32_t to_play[SAMPLES_PER_BLOCK];
@@ -421,6 +432,18 @@ static int wait_for_a_fresh_block(void) {
 	return read_a_block();
 }
 
+static void copy_to_snapshot(void) {
+	int to_take = atomic_load(&snapshot_blocks_to_take);
+
+	if (to_take == 0)
+		return;
+	memcpy(snapshot + (AUDIO_SNAPSHOT_BLOCKS - to_take) * SAMPLES_PER_BLOCK,
+		captured, sizeof(captured));
+	atomic_store(&snapshot_blocks_to_take, to_take - 1);
+	if (to_take == 1)
+		atomic_store(&snapshot_is_ready, 1);
+}
+
 static int gather(void) {
 	int frame;
 
@@ -430,6 +453,7 @@ static int gather(void) {
 		if (wait_for_a_fresh_block() < 0)
 			return -1;
 	}
+	copy_to_snapshot();
 	for (frame = 0; frame < AUDIO_BLOCK_FRAMES; frame++) {
 		from_receiver[frame] = captured[frame * CHANNELS];
 		from_microphone[frame] = captured[frame * CHANNELS + 1];
@@ -586,4 +610,17 @@ void audio_get_report(struct audio_report *report) {
 	report->queued_frames = atomic_load(&queued_frames);
 	report->is_realtime = atomic_load(&is_realtime);
 	report->is_running = atomic_load(&running);
+}
+
+void audio_take_snapshot(void) {
+	atomic_store(&snapshot_is_ready, 0);
+	atomic_store(&snapshot_blocks_to_take, AUDIO_SNAPSHOT_BLOCKS);
+}
+
+// the snapshot asked for, once all of it is there, and NULL until then; it
+// is given once
+const int32_t *audio_get_snapshot(void) {
+	if (!atomic_exchange(&snapshot_is_ready, 0))
+		return NULL;
+	return snapshot;
 }
