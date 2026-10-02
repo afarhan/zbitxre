@@ -1343,7 +1343,6 @@ void screens_close(){
 	if (settings_screen != NULL)
 		lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
 	main_ui();
-	waterfall_set_painting(true);
 }
 
 //the radio has said something: the settings show it if they are up

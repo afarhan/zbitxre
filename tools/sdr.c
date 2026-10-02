@@ -53,6 +53,11 @@
 // terminal and to the panel, whose LOG screen asks for the same;
 // panel_log.c and logbook.c say how.
 //
+// What the radio copies off the air, FT8's messages, is printed on the
+// terminal as it is copied, a line to each: the mode, the time in UTC it
+// was sent at, its strength in dB, its pitch in Hz and its text. The same
+// goes to the panel; messages.c and panel_messages.c say how.
+//
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
@@ -180,6 +185,8 @@
 #include "panel.h"
 #include "panel_controls.h"
 #include "panel_log.h"
+#include "panel_messages.h"
+#include "messages.h"
 #include "panel_wifi.h"
 #include "control.h"
 #include "modem.h"
@@ -874,6 +881,23 @@ static void on_signal(int signal_number) {
 	is_done = 1;
 }
 
+// what has been copied off the air since this was last called
+static void messages_print(void) {
+	static unsigned long last_printed;
+	struct message m;
+	struct tm utc;
+	int printed = 0;
+
+	while (message_next(&last_printed, &m)) {
+		gmtime_r(&m.at, &utc);
+		printf("%s %02d%02d%02d %+03d %4d  %s\n", m.mode, utc.tm_hour, utc.tm_min,
+			utc.tm_sec, m.snr_db, m.pitch_hz, m.text);
+		printed = 1;
+	}
+	if (printed)
+		fflush(stdout);
+}
+
 static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
@@ -890,6 +914,8 @@ static void main_loop(void) {
 		settings_poll(now_ms());
 		panel_wifi_poll(now_ms());
 		panel_log_poll();
+		messages_print();
+		panel_messages_poll();
 		radio_poll(now_ms());
 
 		polls[0].fd = TERMINAL;

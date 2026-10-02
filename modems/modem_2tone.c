@@ -54,7 +54,7 @@ static void start_2tone(void) {
 
 const struct modem modem_2tone = {
 	.name = "2TONE",
-	.order = 6,
+	.order = 7,
 	.start = start_2tone,
 	.select = select_2tone,
 	.rx = rx_2tone,

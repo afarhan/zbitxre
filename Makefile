@@ -28,7 +28,8 @@ LINK_HEADERS = front_panel/link.h
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw/key.h \
 	hw/radio_clock.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h modems/cw_keyer.h modems/cw_text.h
+DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h modems/cw_keyer.h \
+	modems/cw_text.h modems/ft8_monitor.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c \
 	$(LINK)
@@ -40,15 +41,18 @@ MODEM_LIST  = $(BUILD)/modem_list.c
 # authors wrote it, and is built on its own with its warnings off, so that
 # the warnings shown are all the radio's own
 KISS_FFT    = $(BUILD)/kiss_fft.o
-DSP         = core_sdr.c control.c macros.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
-	$(MODEMS) $(MODEM_LIST)
+# FT8's coding is ft8_lib's, in modems/ft8_lib as zbitxv2 had it, and is
+# built in the same way; modems/ft8_lib/README says what it is
+FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard modems/ft8_lib/*.c))
+DSP         = core_sdr.c control.c macros.c messages.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
+	$(MODEMS) $(MODEM_LIST) $(FT8_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_cw_keyer $(BUILD)/test_server \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
-	$(BUILD)/test_logbook
+	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -80,6 +84,8 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_panel_wifi
 	$(BUILD)/test_radio_clock
 	$(BUILD)/test_logbook
+	$(BUILD)/test_ft8
+	$(BUILD)/test_messages
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -111,11 +117,12 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
+		panel_messages.c panel_messages.h \
 		server.h control.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c panel_wifi.c panel_log.c logbook.c settings.c $(DSP) $(HW) \
-		$(RADIO_LIBS) -lsqlite3
+		panel_controls.c panel_wifi.c panel_log.c panel_messages.c logbook.c settings.c \
+		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
@@ -125,12 +132,12 @@ $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c hw/radio_clock.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lm
+	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lpthread -lm
 
 $(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c radio.h server.h \
 		settings.h control.h $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c $(DSP) \
-		$(STAND_INS) -lm
+		$(STAND_INS) -lpthread -lm
 
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
 	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_keyer.c modems/cw_keyer.c -lm
@@ -162,6 +169,18 @@ $(BUILD)/test_radio_clock: tests/test_radio_clock.c hw/radio_clock.c \
 
 $(BUILD)/test_logbook: tests/test_logbook.c logbook.c logbook.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_logbook.c logbook.c -lsqlite3
+
+$(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUILD)
+	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
+
+$(BUILD)/test_ft8: tests/test_ft8.c modems/ft8_monitor.c modems/ft8_monitor.h \
+		$(FT8_LIB) $(KISS_FFT) | $(BUILD)
+	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_ft8.c modems/ft8_monitor.c \
+		$(FT8_LIB) $(KISS_FFT) -lm
+
+$(BUILD)/test_messages: tests/test_messages.c messages.c messages.h \
+		panel_messages.c panel_messages.h $(LINK_HEADERS) hw/panel.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_messages.c messages.c panel_messages.c -lpthread
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

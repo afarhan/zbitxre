@@ -240,7 +240,10 @@ void ui_screen_to_serial(){
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(NULL);
   copying_to_serial = false;
-  if (!screens_is_open())
+  //the graph and the waterfall are not LVGL's, and are copied after it, when
+  //they are on the display: not under another screen, nor in FT8, where the
+  //list of messages is in their place
+  if (!screens_is_open() && waterfall_is_painting())
     waterfall_to_serial();
   Serial.printf("END\n");
   Serial.flush();

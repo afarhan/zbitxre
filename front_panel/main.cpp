@@ -39,6 +39,12 @@
 // so a click of the knob cannot key the transmitter. 2TONE has the same
 // two buttons.
 //
+// In FT8 the graph and the waterfall are not shown. In their place is the
+// list of the messages the radio has copied, which is the author's plan
+// for FT8; messages.cpp says what is in it. A touch selects it, the knob
+// then moves it back and forth, and a click goes to the newest. The
+// waterfall's painting is stopped while the list is there.
+//
 // SET opens the settings and LOG the logbook, which are in screens.cpp.
 // TERM and MENU are for the keyboard and whatever else; neither is written
 // yet, so those buttons are shown dim and do nothing.
@@ -171,7 +177,7 @@
 #define NOWHERE (-1)
 
 //what is selected, and so what the knob does
-enum selection { ON_FREQUENCY, ON_A_CONTROL, ON_THE_LIST };
+enum selection { ON_FREQUENCY, ON_A_CONTROL, ON_THE_LIST, ON_THE_MESSAGES };
 
 //a place on the screen, and what LVGL has made there
 struct widget {
@@ -232,6 +238,7 @@ static const char *const band_names[BANDS] = {
 //the buttons down the left, and the macros' on the bottom row in CW
 static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM" };
 #define MACRO_GROUP "CW"
+#define MESSAGES_GROUP "FT8"
 #define MACRO_CONTROL "MACRO"
 
 static const struct footer footers[] = {
@@ -259,6 +266,8 @@ static struct widget footer_button[FOOTER_TILES];
 static const struct footer *footer_in_use;
 static struct widget list_widget[LIST_ROWS];
 static lv_obj_t *span_label;
+static lv_obj_t *spectrum_area;
+static bool is_showing_messages;
 
 //the controls in the list, the row at the top of what is in view, and the
 //row that is marked
@@ -418,6 +427,8 @@ static void take_radio_frequency(int hz){
 
 /* what is where */
 
+static void set_hidden(lv_obj_t *box, bool is_hidden);
+
 //the group of the modem that has the mode in use
 static void mode_group(char *group, int room){
 	struct panel_control *mode = controls_find("MODE");
@@ -484,6 +495,16 @@ static void lay_out(){
 				&& footer->tiles[i].choice == NULL)
 			footer_widget[i].control = controls_find(footer->tiles[i].control);
 	}
+
+	//the mode's messages take the place of the graph and the waterfall
+	is_showing_messages = !strcmp(group, MESSAGES_GROUP);
+	messages_set_shown(is_showing_messages);
+	if (spectrum_area != NULL)
+		set_hidden(spectrum_area, is_showing_messages);
+	if (!screens_is_open())
+		waterfall_set_painting(!is_showing_messages);
+	if (selected == ON_THE_MESSAGES && !is_showing_messages)
+		selected = ON_FREQUENCY;
 
 	listed_count = 0;
 	for (i = 0; i < controls_count(); i++){
@@ -737,6 +758,7 @@ static void show(){
 	show_footer_buttons();
 	show_macros();
 	show_list();
+	messages_set_selected(selected == ON_THE_MESSAGES);
 }
 
 /* changing a control */
@@ -993,7 +1015,6 @@ static void live_button_create(int x, int y, const char *label, lv_event_cb_t to
 }
 
 static void screen_create(){
-	lv_obj_t *spectrum;
 	int i;
 
 	lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(COLOUR_SCREEN), 0);
@@ -1059,13 +1080,16 @@ static void screen_create(){
 	//nothing of LVGL's is drawn over the graph and the waterfall but the
 	//span in their corner, which waterfall.cpp leaves unpainted; the rest
 	//is only there to be touched
-	spectrum = lv_obj_create(main_screen);
-	lv_obj_remove_style_all(spectrum);
-	lv_obj_set_size(spectrum, WATERFALL_WIDTH, WATERFALL_HEIGHT);
-	lv_obj_align(spectrum, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
-	lv_obj_add_event_cb(spectrum, on_spectrum_touched, LV_EVENT_CLICKED, NULL);
-	span_label = text_create(spectrum, &lv_font_montserrat_12, COLOUR_TITLE);
+	spectrum_area = lv_obj_create(main_screen);
+	lv_obj_remove_style_all(spectrum_area);
+	lv_obj_set_size(spectrum_area, WATERFALL_WIDTH, WATERFALL_HEIGHT);
+	lv_obj_align(spectrum_area, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
+	lv_obj_add_event_cb(spectrum_area, on_spectrum_touched, LV_EVENT_CLICKED, NULL);
+	span_label = text_create(spectrum_area, &lv_font_montserrat_12, COLOUR_TITLE);
 	lv_obj_align(span_label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, TITLE_TOP);
+
+	//FT8's messages, in the same place, shown only in FT8
+	messages_create();
 
 	//the status bar, between the waterfall and the bottom row
 	status_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_VALUE);
@@ -1175,6 +1199,8 @@ void main_knob_turned(int steps){
 		tune(steps);
 	if (selected == ON_A_CONTROL && selected_control != NULL)
 		change(selected_control, steps);
+	if (selected == ON_THE_MESSAGES)
+		messages_scroll(steps);
 	if (selected == ON_THE_LIST && listed_count > 0){
 		if (is_changing_the_marked_row)
 			change(listed[list_mark], steps);
@@ -1199,6 +1225,8 @@ void main_knob_clicked(){
 		change_to_the_next_choice(selected_control);
 	if (selected == ON_THE_LIST && listed_count > 0)
 		is_changing_the_marked_row = !is_changing_the_marked_row;
+	if (selected == ON_THE_MESSAGES)
+		messages_show_newest();
 	show();
 }
 
@@ -1209,8 +1237,8 @@ void main_knob_held(){
 }
 
 //what a touch would select, by name, for trying the screen from the serial
-//port: FREQ, LIST, a button of the bottom row by its label, TX or RX, or a
-//control's name
+//port: FREQ, LIST, a button of the bottom row by its label, TX or RX,
+//FT8's list, MESSAGES, or a control's name
 void main_select(const char *name){
 	struct panel_control *c = controls_find(name);
 	int button = footer_button_labelled(name);
@@ -1236,6 +1264,10 @@ void main_select(const char *name){
 		select_the_list(NOWHERE);
 	else if (!strcmp(name, "SPECTRUM"))
 		on_spectrum_touched(NULL);
+	else if (!strcmp(name, "MESSAGES") && is_showing_messages){
+		selected = ON_THE_MESSAGES;
+		is_changing_the_marked_row = false;
+	}
 	else if (button != NOWHERE)
 		footer_button_touched(button);
 	else if (c != NULL && has_a_place(c))
@@ -1258,4 +1290,5 @@ void main_ui(){
 		show();
 	}
 	lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+	waterfall_set_painting(!is_showing_messages);
 }

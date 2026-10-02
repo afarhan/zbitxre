@@ -117,7 +117,7 @@
 // name and offers it to the audio thread with the rest of the receiver; the
 // audio thread takes it at the start of a block and resets it, so a mode
 // never changes halfway through a block. A mode with no modem of its own,
-// FT8 or DIGI for now, is received by the USB modem.
+// DIGI for now, is received by the USB modem.
 //
 // THE SPECTRUM
 //

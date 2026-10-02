@@ -301,6 +301,10 @@ void waterfall_set_painting(bool on){
 		waterfall_redraw();
 }
 
+bool waterfall_is_painting(void){
+	return is_painting;
+}
+
 void waterfall_set_rows(int fall_rows){
 	int rows;
 

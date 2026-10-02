@@ -18,7 +18,7 @@
 //   BAND    the amateur band the frequency is in: 80M, 60M, 40M, 30M, 20M,
 //           17M, 15M, 12M or 10M, or OUT when it is in none. Setting BAND
 //           goes to that band, to the frequency and mode last used on it.
-//   MODE    USB, LSB, CW, CWR, AM or 2TONE.
+//   MODE    USB, LSB, CW, CWR, AM, FT8 or 2TONE.
 //   AUDIO   the volume, 0 to 100: 0 is silence, and 1 to 100 are spread
 //           over the 40 dB of the sound card's range that are of use;
 //           hw/audio.c says how.
@@ -441,7 +441,7 @@ static struct control stack = {
 
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
-	.choices = "USB/LSB/CW/CWR/AM/2TONE",
+	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE",
 	.value = STARTING_MODE, .apply = apply_mode,
 };
 

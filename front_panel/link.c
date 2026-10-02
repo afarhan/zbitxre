@@ -101,6 +101,16 @@
 // LINK_LOG_DELETE: the entry's number, a tab, and the same search, and
 // the radio sends the list of that search again when it has deleted it.
 //
+// THE MESSAGES
+//
+// What the radio copies off the air, FT8's messages so far, goes to the
+// panel as it is copied, as the kept, counted value of LINK_MESSAGES: one
+// line of text after another, each ended by a zero byte and no longer than
+// LINK_MESSAGE_LINE_MAX, as many to a value as fit. The next value is sent
+// when the panel has taken the one before. There is no first or last: the
+// panel adds each line to the end of its list. panel_messages.c on the
+// radio says what is in a line.
+//
 // THE RADIO DESCRIBES ITS CONTROLS
 //
 // The panel is not built knowing what controls the radio has. A modem

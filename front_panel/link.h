@@ -68,6 +68,11 @@ extern "C" {
 // that the list sent back after it is of the same search
 #define LINK_LOG_DELETE 9
 #define LINK_LOG_BETWEEN '\t'
+// the messages the radio has copied off the air, FT8's, for the panel's
+// list of them: a kept, counted value, as many lines as fit; link.c says
+// what is in it
+#define LINK_MESSAGES 10
+#define LINK_MESSAGE_LINE_MAX 47
 
 struct link_wifi_point {
 	int8_t signal_dbm;

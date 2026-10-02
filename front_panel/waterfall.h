@@ -24,6 +24,7 @@ void waterfall_update(const uint8_t *points);
 void waterfall_slice(void);
 void waterfall_redraw(void);
 void waterfall_set_painting(bool on);
+bool waterfall_is_painting(void);
 void waterfall_set_rows(int fall_rows);
 void waterfall_to_serial(void);
 void waterfall_report(void);

@@ -80,6 +80,15 @@ void main_status(const char *text);
 void main_hide();
 void main_radio_says_text(int number, const char *text);
 
+// the list of copied messages, in FT8
+void messages_create();
+void messages_part(const uint8_t *bytes, int count);
+void messages_slice();
+void messages_set_shown(bool shown);
+void messages_set_selected(bool selected);
+void messages_scroll(int steps);
+void messages_show_newest();
+
 // the link, for text
 void i2c_link_send_text(int number, const char *text);
 
