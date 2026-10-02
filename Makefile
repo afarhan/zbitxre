@@ -45,7 +45,7 @@ RADIO_LIBS  = -lasound -lpthread -lm
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_cw_keyer $(BUILD)/test_server \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
-	$(BUILD)/test_settings $(BUILD)/test_panel_wifi
+	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -75,6 +75,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_cw_text
 	$(BUILD)/test_settings
 	$(BUILD)/test_panel_wifi
+	$(BUILD)/test_radio_clock
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -105,10 +106,11 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
+		radio_clock.c radio_clock.h \
 		server.h control.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c panel_wifi.c settings.c $(DSP) $(HW) $(RADIO_LIBS)
+		panel_controls.c panel_wifi.c settings.c radio_clock.c $(DSP) $(HW) $(RADIO_LIBS)
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
@@ -148,6 +150,10 @@ $(BUILD)/test_settings: tests/test_settings.c settings.c settings.h control.c \
 $(BUILD)/test_panel_wifi: tests/test_panel_wifi.c panel_wifi.c panel_wifi.h \
 		control.c control.h $(LINK) $(LINK_HEADERS) hw/panel.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_panel_wifi.c panel_wifi.c control.c $(LINK)
+
+$(BUILD)/test_radio_clock: tests/test_radio_clock.c radio_clock.c radio_clock.h \
+		control.c control.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_radio_clock.c radio_clock.c control.c
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

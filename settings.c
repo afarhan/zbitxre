@@ -23,7 +23,8 @@
 // Where the radio is tuned is not kept here: the frequency, the band and
 // its stack, and the mode. The band's memories are a different matter and
 // are not kept yet. TX is not a setting. SPAN is the panel's and begins
-// wide. An action has no value.
+// wide. An action has no value. The clock's two controls are the time and
+// not a setting.
 //
 // For the thread that owns the controls.
 
@@ -39,7 +40,9 @@
 #define QUIET_FOR_MS 2000
 #define NOT_WAITING (-1L)
 
-static const char *const not_kept[] = { "FREQ", "BAND", "STACK", "MODE", "TX", "SPAN" };
+static const char *const not_kept[] = {
+	"FREQ", "BAND", "STACK", "MODE", "TX", "SPAN", "CLOCK", "TIME_SET",
+};
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
 
 static char file_path[PATH_MAX_LENGTH];

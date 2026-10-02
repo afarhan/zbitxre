@@ -17,7 +17,18 @@
 //   Callsign    the station's callsign, the radio's control MYCALLSIGN. It
 //               is typed on the text screen, with what it was to begin with.
 //   Grid        the station's grid, MYGRID, the same way.
-//   Date/Time   to set the radio's clock: not written yet, and shown dim.
+//   Date/Time   the radio's time, in UTC, and where it has it from, which
+//               the radio says in its control CLOCK. The radio takes the
+//               time from the network or from its clock chip when it can;
+//               when the chip has lost the time and there is no network,
+//               the operator gives it here: the year, the month, the day,
+//               the hour and the minute, each on a roller, and SYNC, which
+//               sends them at the moment it is touched. A roller is turned
+//               with a finger, or touched and then turned with the knob; a
+//               click of the knob goes on to the next roller. What is
+//               given is used only until the radio has the time from the
+//               network or the chip again; radio_clock.c on the radio says
+//               why and how.
 //   WiFi        the access points the radio can hear, the strongest first,
 //               no more than sixteen. Opening the screen asks the radio to
 //               scan, which takes some seconds; SCAN asks again. A touch
@@ -89,6 +100,17 @@
 #define WIFI_STATUS_LEFT (TITLE_LEFT + 64)
 #define WIFI_SHOWN_MAX 48
 
+#define FIRST_YEAR 2026
+#define YEARS 75
+#define ROLLER_TOP 84
+#define ROLLER_LABEL_TOP 60
+#define ROLLER_ROWS 3
+#define ROLLER_OPTIONS_MAX (YEARS * 5 + 1)
+#define DATE_STATUS_TOP 280
+#define MINUTES_AN_HOUR 60
+#define HOURS_A_DAY 24
+#define MONTHS 12
+
 #define CALLSIGN_MAX 12
 #define GRID_MAX 6
 
@@ -106,13 +128,14 @@ struct setting {
 
 static void callsign_open();
 static void grid_open();
+static void date_open();
 static void wifi_open();
 static void settings_show_values();
 
 static struct setting settings[] = {
 	{"Callsign", "MYCALLSIGN", callsign_open, NULL, NULL},
 	{"Grid", "MYGRID", grid_open, NULL, NULL},
-	{"Date/Time", NULL, NULL, NULL, NULL},
+	{"Date/Time", "CLOCK", date_open, NULL, NULL},
 	{"WiFi", NULL, wifi_open, NULL, NULL},
 };
 #define SETTINGS ((int)(sizeof(settings) / sizeof(settings[0])))
@@ -132,6 +155,30 @@ static int wifi_count;
 static bool wifi_is_listed;
 static bool wifi_is_to_show;
 static char wifi_said[LINK_SAY_MAX + 1];
+
+//the rollers of the date screen, left to right
+enum { YEAR, MONTH, DAY, HOUR, MINUTE, ROLLERS };
+
+struct roller_place {
+	const char *label;
+	int16_t x;
+	int16_t w;
+	int first;
+	int count;
+};
+
+static const struct roller_place roller_places[ROLLERS] = {
+	{"Year", 8, 104, FIRST_YEAR, YEARS},
+	{"Month", 120, 80, 1, 12},
+	{"Day", 208, 80, 1, 31},
+	{"Hour", 296, 80, 0, 24},
+	{"Minute", 384, 88, 0, 60},
+};
+
+static lv_obj_t *date_screen;
+static lv_obj_t *date_status;
+static lv_obj_t *rollers[ROLLERS];
+static int roller_marked;
 
 static lv_obj_t *settings_screen;
 static int settings_mark;
@@ -402,6 +449,164 @@ static void settings_create(){
 	}
 }
 
+/* the date and the time */
+
+static bool is_leap(int year){
+	return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+static int days_in(int year, int month){
+	static const int days[MONTHS] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+	if (month == 2 && is_leap(year))
+		return 29;
+	return days[month - 1];
+}
+
+//what a roller is at, as its number: the year, the day of the month
+static int roller_value(int which){
+	return roller_places[which].first + (int)lv_roller_get_selected(rollers[which]);
+}
+
+static void roller_set(int which, int value){
+	int index = value - roller_places[which].first;
+
+	if (index < 0)
+		index = 0;
+	if (index > roller_places[which].count - 1)
+		index = roller_places[which].count - 1;
+	lv_roller_set_selected(rollers[which], index, LV_ANIM_OFF);
+}
+
+static void date_show(){
+	char text[WIFI_SHOWN_MAX];
+	char clock[CONTROL_TEXT_ROOM];
+	int i;
+
+	text_of("CLOCK", clock, sizeof(clock));
+	if (controls_find("CLOCK") == NULL)
+		snprintf(text, sizeof(text), "this radio does not keep a clock of its own");
+	else
+		snprintf(text, sizeof(text), "The radio's clock (UTC): %s", clock);
+	lv_label_set_text(date_status, text);
+	for (i = 0; i < ROLLERS; i++)
+		show_mark(rollers[i], i == roller_marked);
+}
+
+//the rollers are put at the radio's time, if it has one
+static void rollers_to_the_radios_time(){
+	char clock[CONTROL_TEXT_ROOM];
+	int year, month, day, hour, minute;
+
+	text_of("CLOCK", clock, sizeof(clock));
+	if (sscanf(clock, "%d-%d-%d %d:%d", &year, &month, &day, &hour, &minute) != 5)
+		return;
+	roller_set(YEAR, year);
+	roller_set(MONTH, month);
+	roller_set(DAY, day);
+	roller_set(HOUR, hour);
+	roller_set(MINUTE, minute);
+}
+
+//the minutes from the start of FIRST_YEAR to what the rollers are at; a day
+//the month does not have is taken as its last
+static int32_t minutes_on_the_rollers(){
+	int year = roller_value(YEAR);
+	int month = roller_value(MONTH);
+	int day = roller_value(DAY);
+	int32_t days = 0;
+	int y;
+	int m;
+
+	if (day > days_in(year, month))
+		day = days_in(year, month);
+	for (y = FIRST_YEAR; y < year; y++)
+		days += is_leap(y) ? 366 : 365;
+	for (m = 1; m < month; m++)
+		days += days_in(year, m);
+	days += day - 1;
+	return (days * HOURS_A_DAY + roller_value(HOUR)) * MINUTES_AN_HOUR
+		+ roller_value(MINUTE);
+}
+
+//SYNC: the time on the rollers goes to the radio, as of this moment
+static void on_date_sync(lv_event_t *e){
+	struct panel_control *time_set = controls_find("TIME_SET");
+	int32_t minutes = minutes_on_the_rollers();
+
+	(void)e;
+	if (time_set == NULL)
+		return;
+	time_set->value = minutes;
+	Serial.printf("TIME_SET %d\n", (int)minutes);
+	i2c_link_changed(time_set->d.number, minutes);
+}
+
+static void on_roller_touched(lv_event_t *e){
+	roller_marked = (int)(intptr_t)lv_event_get_user_data(e);
+	date_show();
+}
+
+static void on_back_from_date(lv_event_t *e){
+	(void)e;
+	lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_remove_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+}
+
+//a roller's choices: its numbers, one to a line
+static void roller_fill(int which){
+	static char options[ROLLER_OPTIONS_MAX];
+	const struct roller_place *place = &roller_places[which];
+	int used = 0;
+	int i;
+
+	for (i = 0; i < place->count; i++){
+		if (i > 0)
+			options[used++] = '\n';
+		used += snprintf(options + used, sizeof(options) - used, "%02d", place->first + i);
+	}
+	lv_roller_set_options(rollers[which], options, LV_ROLLER_MODE_NORMAL);
+}
+
+static void date_create(){
+	lv_obj_t *label;
+	int i;
+
+	date_screen = screen_create();
+	label = text_create(date_screen, "DATE AND TIME, IN UTC", &lv_font_montserrat_16,
+		COLOUR_VALUE);
+	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
+	back_button_create(date_screen, on_back_from_date);
+	button_create(date_screen, SCREEN_WIDTH - BUTTON_WIDTH, 0, BUTTON_WIDTH, BAR_HEIGHT,
+		LV_SYMBOL_OK "  SYNC", on_date_sync);
+
+	for (i = 0; i < ROLLERS; i++){
+		label = text_create(date_screen, roller_places[i].label, &lv_font_montserrat_14,
+			COLOUR_TITLE);
+		lv_obj_align(label, LV_ALIGN_TOP_LEFT, roller_places[i].x, ROLLER_LABEL_TOP);
+		rollers[i] = lv_roller_create(date_screen);
+		roller_fill(i);
+		lv_roller_set_visible_row_count(rollers[i], ROLLER_ROWS);
+		lv_obj_set_width(rollers[i], roller_places[i].w);
+		lv_obj_align(rollers[i], LV_ALIGN_TOP_LEFT, roller_places[i].x, ROLLER_TOP);
+		lv_obj_set_style_text_font(rollers[i], &lv_font_montserrat_20, 0);
+		lv_obj_set_style_text_font(rollers[i], &lv_font_montserrat_20, LV_PART_SELECTED);
+		lv_obj_add_event_cb(rollers[i], on_roller_touched, LV_EVENT_PRESSED,
+			(void *)(intptr_t)i);
+	}
+	date_status = text_create(date_screen, "", &lv_font_montserrat_14, COLOUR_TITLE);
+	lv_obj_align(date_status, LV_ALIGN_TOP_LEFT, PAD, DATE_STATUS_TOP);
+}
+
+static void date_open(){
+	if (date_screen == NULL)
+		date_create();
+	rollers_to_the_radios_time();
+	date_show();
+	lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_remove_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
+}
+
 /* the access points */
 
 //the radio is asked to scan; its list comes some seconds later
@@ -568,6 +773,10 @@ void screens_knob_turned(int steps){
 		lv_obj_scroll_to_view(wifi_rows[wifi_mark].box, LV_ANIM_OFF);
 		wifi_show();
 	}
+	if (is_up(date_screen)){
+		roller_set(roller_marked, roller_value(roller_marked) + steps);
+		date_show();
+	}
 	if (is_up(settings_screen)){
 		settings_mark += steps;
 		if (settings_mark < 0)
@@ -579,7 +788,11 @@ void screens_knob_turned(int steps){
 }
 
 void screens_knob_clicked(){
-	if (is_up(wifi_screen))
+	if (is_up(date_screen)){
+		roller_marked = (roller_marked + 1) % ROLLERS;
+		date_show();
+	}
+	else if (is_up(wifi_screen))
 		wifi_choose(wifi_mark);
 	else if (is_up(settings_screen) && settings[settings_mark].open != NULL)
 		settings[settings_mark].open();
@@ -630,6 +843,8 @@ bool screens_is_open(){
 		return true;
 	if (wifi_screen != NULL && !lv_obj_has_flag(wifi_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
+	if (date_screen != NULL && !lv_obj_has_flag(date_screen, LV_OBJ_FLAG_HIDDEN))
+		return true;
 	return input_screen != NULL && !lv_obj_has_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -650,6 +865,8 @@ void screens_close(){
 		lv_obj_add_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 	if (wifi_screen != NULL)
 		lv_obj_add_flag(wifi_screen, LV_OBJ_FLAG_HIDDEN);
+	if (date_screen != NULL)
+		lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
 	input_done = NULL;
 	lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
 	main_ui();
@@ -658,6 +875,8 @@ void screens_close(){
 
 //the radio has said something: the settings show it if they are up
 void screens_radio_said(){
+	if (date_screen != NULL && !lv_obj_has_flag(date_screen, LV_OBJ_FLAG_HIDDEN))
+		date_show();
 	if (settings_screen != NULL && !lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))
 		settings_show();
 }

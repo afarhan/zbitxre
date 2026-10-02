@@ -50,6 +50,10 @@
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
 //
+// The radio's time is the kernel's when that can be trusted and what the
+// operator gave on the panel when it cannot; radio_clock.c says how it is
+// judged, and CLOCK says the time each minute.
+//
 // The panel has a status bar, a line of text. The radio puts there what it
 // found at the start check, and why it refused a change the panel asked
 // for. hw/panel.c's panel_say() sends it.
@@ -161,6 +165,7 @@
 #include "control.h"
 #include "modem.h"
 #include "radio.h"
+#include "radio_clock.h"
 #include "server.h"
 #include "si5351.h"
 #include "sdr.h"
@@ -797,6 +802,7 @@ static void main_loop(void) {
 		panel_controls_poll();
 		settings_poll(now_ms());
 		panel_wifi_poll(now_ms());
+		radio_clock_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -838,6 +844,7 @@ int main(int argc, char **argv) {
 	radio_open();
 	control_register(&span);
 	panel_wifi_open();
+	radio_clock_open();
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
 	if (hz != NULL)
