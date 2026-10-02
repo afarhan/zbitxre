@@ -14,3 +14,5 @@ void panel_controls_describe(void);
 void panel_controls_poll(void);
 void panel_controls_changed(const struct control *c);
 const char *panel_controls_took(int number, int32_t value, char *text, int room);
+const char *panel_controls_took_bytes(int control, const uint8_t *bytes, int count,
+	char *text, int room);

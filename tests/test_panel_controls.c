@@ -37,6 +37,10 @@ static int took_number[TOOK_MAX];
 static int32_t took_value[TOOK_MAX];
 static int took_count;
 
+static char text_taken[TEXT_MAX];
+static int text_number;
+static int texts_taken;
+
 static int lose_the_word;
 static int checks_failed;
 
@@ -79,6 +83,14 @@ static void on_panel_took_bytes(int control, const uint8_t *bytes, int count) {
 	int at = 0;
 	int taken;
 
+	if (control >= LINK_FIRST_DESCRIBED && count < TEXT_MAX) {
+		if (ends_seen == 0)
+			values_before_the_end++;
+		memcpy(text_taken, bytes, count);
+		text_taken[count] = 0;
+		text_number = control;
+		texts_taken++;
+	}
 	if (control != LINK_DESCRIBE)
 		return;
 	frames_of_descriptions++;
@@ -122,6 +134,7 @@ static void forget_what_was_taken(void) {
 	frames_of_descriptions = 0;
 	values_before_the_end = 0;
 	took_count = 0;
+	texts_taken = 0;
 }
 
 static int value_taken_for(int number, int32_t *value) {
@@ -177,10 +190,11 @@ static void check_describing(void) {
 	panel_controls_describe();
 	turns(TURNS_TO_SAY_ALL);
 
-	expect(described_count == 4 && ends_seen == 1,
-		"the panel is told of the four controls that are numbers or choices, and that there are no more");
-	expect(description_of("CALLSIGN") == NULL,
-		"a control that holds text is not described");
+	expect(described_count == 5 && ends_seen == 1,
+		"the panel is told of the five controls, and that there are no more");
+	d = description_of("CALLSIGN");
+	expect(d != NULL && d->kind == LINK_KIND_TEXT && d->number == LINK_FIRST_DESCRIBED + 1,
+		"a control that holds text is described as text");
 	d = description_of("FREQ");
 	expect(d != NULL && d->number == LINK_FREQ && d->kind == LINK_KIND_NUMBER
 		&& d->min == 500000 && d->max == 30000000 && d->step == 10
@@ -193,16 +207,18 @@ static void check_describing(void) {
 		&& strcmp(d->choices, "USB/LSB/CW/CWR/AM/2TONE") == 0,
 		"MODE is the first of the rest, a choice with its choices");
 	d = description_of("PITCH");
-	expect(d != NULL && d->number == LINK_FIRST_DESCRIBED + 1 && strcmp(d->group, "CW") == 0,
-		"PITCH is numbered after it, the text control between them taking no number");
+	expect(d != NULL && d->number == LINK_FIRST_DESCRIBED + 2 && strcmp(d->group, "CW") == 0,
+		"PITCH is numbered after the text control");
 
-	expect(values_before_the_end == 0 && took_count == 4,
+	expect(values_before_the_end == 0 && took_count == 4 && texts_taken == 1,
 		"the values are said after the descriptions, one for each control");
+	expect(text_number == LINK_FIRST_DESCRIBED + 1 && strcmp(text_taken, "VU2ESE") == 0,
+		"the text control's value is its text");
 	expect(value_taken_for(LINK_FREQ, &value) && value == 7035000,
 		"FREQ's value is its number");
 	expect(value_taken_for(LINK_FIRST_DESCRIBED, &value) && value == 2,
 		"MODE's is which choice it is: CW is the third");
-	expect(value_taken_for(LINK_FIRST_DESCRIBED + 1, &value) && value == 600,
+	expect(value_taken_for(LINK_FIRST_DESCRIBED + 2, &value) && value == 600,
 		"PITCH's is 600");
 }
 
@@ -222,7 +238,7 @@ static void check_changes(void) {
 	name = panel_controls_took(LINK_FIRST_DESCRIBED, 1, text, sizeof(text));
 	expect(name != NULL && strcmp(name, "MODE") == 0 && strcmp(text, "LSB") == 0,
 		"what the panel says of a choice comes back as the control's name and the choice");
-	name = panel_controls_took(LINK_FIRST_DESCRIBED + 1, 700, text, sizeof(text));
+	name = panel_controls_took(LINK_FIRST_DESCRIBED + 2, 700, text, sizeof(text));
 	expect(name != NULL && strcmp(name, "PITCH") == 0 && strcmp(text, "700") == 0,
 		"and of a number as its name and the number");
 	expect(panel_controls_took(LINK_FIRST_DESCRIBED, 9, text, sizeof(text)) == NULL,
@@ -232,6 +248,33 @@ static void check_changes(void) {
 		"and so is a number that is no control's");
 }
 
+// a text from the panel, as the panel would send it: in parts
+static void check_a_text_from_the_panel(void) {
+	const char *new_text = "A LONGER CALLSIGN/P";
+	uint8_t part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
+	char text[TEXT_MAX];
+	const char *name = NULL;
+	int parts = 0;
+	int offset = 0;
+	int count;
+
+	while (name == NULL && parts < TEXT_MAX) {
+		count = link_put_text_part(part, LINK_FIRST_DESCRIBED + 1, new_text, offset);
+		name = panel_controls_took_bytes(LINK_TEXT_PART, part, count, text, sizeof(text));
+		offset += count - LINK_TEXT_PART_HEADER;
+		parts++;
+	}
+	expect(parts == 3 && name != NULL && strcmp(name, "CALLSIGN") == 0
+		&& strcmp(text, new_text) == 0,
+		"a text of 19 characters comes from the panel in three parts, whole");
+	count = link_put_text_part(part, LINK_FIRST_DESCRIBED + 1, "", 0);
+	name = panel_controls_took_bytes(LINK_TEXT_PART, part, count, text, sizeof(text));
+	expect(name != NULL && text[0] == 0, "an empty text is one part");
+	count = link_put_text_part(part, LINK_FIRST_DESCRIBED + 2, "600", 0);
+	expect(panel_controls_took_bytes(LINK_TEXT_PART, part, count, text, sizeof(text)) == NULL,
+		"a text for a control that does not hold text is refused");
+}
+
 static void check_a_lost_frame(void) {
 	forget_what_was_taken();
 	panel_controls_describe();
@@ -239,7 +282,7 @@ static void check_a_lost_frame(void) {
 	turns(2);
 	lose_the_word = 0;
 	turns(TURNS_TO_SAY_ALL);
-	expect(described_count == 4 && ends_seen == 1 && took_count == 4,
+	expect(described_count == 5 && ends_seen == 1 && took_count == 4,
 		"descriptions whose frame is lost are said again, and the values follow");
 }
 
@@ -275,6 +318,7 @@ int main(void) {
 
 	check_describing();
 	check_changes();
+	check_a_text_from_the_panel();
 	check_a_lost_frame();
 	check_many_controls();
 

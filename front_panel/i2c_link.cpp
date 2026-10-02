@@ -60,6 +60,23 @@ static volatile int ready_count;
 static struct said said_list[SAID_MAX];
 static volatile int said_count;
 
+//the values of text controls that the radio has said, kept until loop()
+//takes them
+#define TEXTS_MAX 4
+struct said_text {
+	int number;
+	char text[CONTROL_TEXT_ROOM];
+};
+static struct said_text texts[TEXTS_MAX];
+static volatile int texts_count;
+
+//a text on its way to the radio, a part at a time
+static char sending[LINK_TEXT_MAX + 1];
+static uint8_t sending_part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
+static int sending_number;
+static int sending_offset;
+static bool is_sending;
+
 //a line for the status bar, kept until loop() shows it
 static char said_text[LINK_SAY_MAX + 1];
 static volatile bool is_text_said;
@@ -91,6 +108,13 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		waterfall_update(bytes);
 	if (control == LINK_DESCRIBE)
 		controls_stage(bytes, count);
+	if (control >= LINK_FIRST_DESCRIBED && texts_count < TEXTS_MAX
+			&& count < CONTROL_TEXT_ROOM){
+		texts[texts_count].number = control;
+		memcpy(texts[texts_count].text, bytes, count);
+		texts[texts_count].text[count] = 0;
+		texts_count = texts_count + 1;
+	}
 	if (control == LINK_SAY && count <= LINK_SAY_MAX){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;
@@ -137,8 +161,40 @@ void i2c_link_changed(int control, int32_t value){
 	interrupts();
 }
 
+//a text is sent to the radio as the new value of a control; link.c says
+//how it goes in parts
+void i2c_link_send_text(int number, const char *text){
+	snprintf(sending, sizeof(sending), "%s", text);
+	sending_number = number;
+	sending_offset = 0;
+	is_sending = true;
+}
+
+//the next part goes when the radio has taken the one before
+static void send_the_next_part(){
+	int count;
+
+	if (!is_sending)
+		return;
+	noInterrupts();
+	if (!link_is_waiting(&panel_end, LINK_TEXT_PART)){
+		count = link_put_text_part(sending_part, sending_number, sending, sending_offset);
+		if (count == 0)
+			is_sending = false;
+		else {
+			link_offer_kept_bytes(&panel_end, LINK_TEXT_PART, sending_part, count);
+			make_the_answer_ready();
+			sending_offset += count - LINK_TEXT_PART_HEADER;
+			if (sending_part[2])
+				sending_offset = LINK_TEXT_MAX + 1;
+		}
+	}
+	interrupts();
+}
+
 void i2c_link_slice(){
 	static struct said said[SAID_MAX];
+	struct said_text text_said;
 	char text[LINK_SAY_MAX + 1];
 	int count;
 	int i;
@@ -147,6 +203,15 @@ void i2c_link_slice(){
 	//said after them are shown
 	if (controls_slice())
 		main_controls_described();
+	send_the_next_part();
+	while (texts_count > 0){
+		noInterrupts();
+		text_said = texts[0];
+		texts_count = texts_count - 1;
+		memmove(texts, texts + 1, texts_count * sizeof(texts[0]));
+		interrupts();
+		main_radio_says_text(text_said.number, text_said.text);
+	}
 	if (is_text_said){
 		noInterrupts();
 		memcpy(text, said_text, sizeof(text));

@@ -36,6 +36,10 @@
 //           is refused. Changing the mode or the band goes back to
 //           receive first.
 //
+//   MYCALLSIGN, MYGRID   the station's callsign and its grid, as text, in a
+//           group of their own, STATION. The macros put them in. They are
+//           not yet remembered from one start to the next.
+//
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.
 //
@@ -394,6 +398,14 @@ static struct control agc = {
 	.value = STARTING_AGC, .apply = apply_agc,
 };
 
+static struct control my_callsign = {
+	.group = "STATION", .name = "MYCALLSIGN", .kind = CONTROL_TEXT,
+};
+
+static struct control my_grid = {
+	.group = "STATION", .name = "MYGRID", .kind = CONTROL_TEXT,
+};
+
 static struct control tx = {
 	.group = "RADIO", .name = "TX", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
@@ -406,7 +418,8 @@ int radio_open(void) {
 			|| control_register(&mode) < 0 || control_register(&audio) < 0
 			|| control_register(&if_gain) < 0 || control_register(&drive) < 0
 			|| control_register(&mic) < 0 || control_register(&agc) < 0
-			|| control_register(&tx) < 0)
+			|| control_register(&tx) < 0 || control_register(&my_callsign) < 0
+			|| control_register(&my_grid) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);

@@ -48,6 +48,8 @@
 //     CONTROL RADIO FREQ number 500000 30000000 1
 //     CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM
 //     CONTROL CW WPM number 5 50 1
+//     CONTROL CW MACRO action CQ/RST/End
+//     CONTROL STATION MYCALLSIGN text
 //     CONTROL END
 //
 // A client that sends "spectrum on" is sent, ten times a second, what the
@@ -263,6 +265,10 @@ static void client_send_changes(struct client *client) {
 		if (!client->changed[i])
 			continue;
 		c = control_at(i);
+		if (c->kind == CONTROL_ACTION) {
+			client->changed[i] = 0;
+			continue;
+		}
 		length = snprintf(line, sizeof(line), "%s %s\n", c->name, c->value);
 		if (client->out_count + length > OUT_MAX)
 			break;
@@ -373,6 +379,9 @@ static void send_schema(struct client *client) {
 				c->group, c->name, c->min, c->max, c->step);
 		else if (c->kind == CONTROL_CHOICE)
 			snprintf(line, sizeof(line), "CONTROL %s %s choice %s\n",
+				c->group, c->name, c->choices);
+		else if (c->kind == CONTROL_ACTION)
+			snprintf(line, sizeof(line), "CONTROL %s %s action %s\n",
 				c->group, c->name, c->choices);
 		else
 			snprintf(line, sizeof(line), "CONTROL %s %s text\n", c->group, c->name);

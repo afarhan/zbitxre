@@ -15,10 +15,12 @@
 //
 // A control is known on the link by a number. FREQ and AUDIO have the
 // numbers they always had; the rest are numbered in the order of the table.
-// Controls that hold text have no number yet and are not described.
 //
 // A number's value goes as it is. A choice's goes as which of its choices
-// it is, counted from 0, and comes back the same way.
+// it is, counted from 0, and comes back the same way. An action has no
+// value to go; what comes back is which of the things it can do is wanted.
+// A text goes as its characters, and comes back in parts, since the panel
+// can say little at a time; front_panel/link.c says how.
 //
 // WHEN
 //
@@ -62,8 +64,6 @@ static void number_the_controls(void) {
 	memset(number_of, NOT_ON_THE_LINK, sizeof(number_of));
 	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
 		c = control_at(i);
-		if (c->kind == CONTROL_TEXT)
-			continue;
 		if (!strcmp(c->name, "FREQ"))
 			number_of[i] = LINK_FREQ;
 		else if (!strcmp(c->name, "AUDIO"))
@@ -132,10 +132,14 @@ static void describe(const struct control *c, int number,
 	d->step = c->step;
 	snprintf(d->name, sizeof(d->name), "%s", c->name);
 	snprintf(d->group, sizeof(d->group), "%s", c->group);
-	if (c->kind == CONTROL_CHOICE) {
+	if (c->kind == CONTROL_CHOICE || c->kind == CONTROL_ACTION) {
 		d->kind = LINK_KIND_CHOICE;
+		if (c->kind == CONTROL_ACTION)
+			d->kind = LINK_KIND_ACTION;
 		snprintf(d->choices, sizeof(d->choices), "%s", c->choices);
 	}
+	if (c->kind == CONTROL_TEXT)
+		d->kind = LINK_KIND_TEXT;
 }
 
 // fills a frame's worth of descriptions from where the last left off, and
@@ -165,12 +169,22 @@ static int fill_descriptions(void) {
 	return used + put;
 }
 
+// a text is said from where the control keeps it, which stays where it is
+static void say_value(int number, const struct control *c) {
+	if (c->kind == CONTROL_ACTION)
+		return;
+	if (c->kind == CONTROL_TEXT)
+		panel_set_kept_bytes(number, (const uint8_t *)c->value, (int)strlen(c->value));
+	else
+		panel_set(number, link_value(c));
+}
+
 static void say_every_value(void) {
 	int i;
 
 	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
 		if (number_of[i] != NOT_ON_THE_LINK)
-			panel_set(number_of[i], link_value(control_at(i)));
+			say_value(number_of[i], control_at(i));
 	}
 }
 
@@ -202,7 +216,7 @@ void panel_controls_changed(const struct control *c) {
 		return;
 	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
 		if (control_at(i) == c && number_of[i] != NOT_ON_THE_LINK)
-			panel_set(number_of[i], link_value(c));
+			say_value(number_of[i], c);
 	}
 }
 
@@ -216,13 +230,37 @@ const char *panel_controls_took(int number, int32_t value, char *text, int room)
 		if (number == NOT_ON_THE_LINK || number_of[i] != number)
 			continue;
 		c = control_at(i);
-		if (c->kind != CONTROL_CHOICE) {
+		if (c->kind != CONTROL_CHOICE && c->kind != CONTROL_ACTION) {
 			snprintf(text, room, "%d", (int)value);
 			return c->name;
 		}
 		if (choice_at(c, (int)value, text, room) < 0)
 			return NULL;
 		return c->name;
+	}
+	return NULL;
+}
+
+// a part of a text from the panel. When the text is whole it is given as
+// the control's name and the text; until then, and for anything that is not
+// a text control's, NULL
+const char *panel_controls_took_bytes(int control, const uint8_t *bytes, int count,
+		char *text, int room) {
+	static char gathered[LINK_TEXT_MAX + 1];
+	int number = NOT_ON_THE_LINK;
+	int i;
+
+	if (control != LINK_TEXT_PART)
+		return NULL;
+	if (link_get_text_part(bytes, count, &number, gathered, sizeof(gathered)) != 1)
+		return NULL;
+	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
+		if (number == NOT_ON_THE_LINK || number_of[i] != number)
+			continue;
+		if (control_at(i)->kind != CONTROL_TEXT)
+			return NULL;
+		snprintf(text, room, "%s", gathered);
+		return control_at(i)->name;
 	}
 	return NULL;
 }

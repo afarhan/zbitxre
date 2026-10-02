@@ -36,6 +36,12 @@ extern "C" {
 // more than LINK_SAY_MAX characters, with no zero at its end
 #define LINK_SAY 5
 #define LINK_SAY_MAX 48
+// a part of the new text of a control, from the panel; link.c says how a
+// text is sent in parts
+#define LINK_TEXT_PART 6
+#define LINK_TEXT_PART_HEADER 3
+#define LINK_TEXT_PART_DATA 8
+#define LINK_TEXT_MAX 63
 // the radio numbers the rest of its controls from here, in the order of
 // its table, and tells the panel which is which by describing them
 #define LINK_FIRST_DESCRIBED 8
@@ -50,6 +56,8 @@ extern "C" {
 // a control as the radio describes it to the panel; link.c says how
 #define LINK_KIND_NUMBER 0
 #define LINK_KIND_CHOICE 1
+#define LINK_KIND_ACTION 2
+#define LINK_KIND_TEXT 3
 #define LINK_NAME_MAX 16
 #define LINK_GROUP_MAX 12
 #define LINK_CHOICES_MAX 64
@@ -108,6 +116,10 @@ int link_make_frame(struct link_end *end, uint8_t *frame);
 int link_make_answer(struct link_end *end, uint8_t *answer);
 int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
 	link_took_fn took, link_took_bytes_fn took_bytes);
+
+int link_put_text_part(uint8_t *at, int control, const char *text, int offset);
+int link_get_text_part(const uint8_t *bytes, int count, int *control,
+	char *text, int room);
 
 int link_put_description(uint8_t *at, int room,
 	const struct link_description *description);

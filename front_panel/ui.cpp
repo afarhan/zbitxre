@@ -227,7 +227,8 @@ void ui_screen_to_serial(){
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(NULL);
   copying_to_serial = false;
-  waterfall_to_serial();
+  if (!screens_is_open())
+    waterfall_to_serial();
   Serial.printf("END\n");
   Serial.flush();
 }

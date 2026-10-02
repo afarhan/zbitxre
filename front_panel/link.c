@@ -71,7 +71,9 @@
 // FREQ and VOLUME keep the numbers 1 and 2 that they always had. The rest
 // are numbered from LINK_FIRST_DESCRIBED in the order of the radio's table.
 // A choice's value on the link is which of its choices it is, counted from
-// 0.
+// 0. An action is described as a choice is, with the things it can do for
+// its choices; it has no value, and the panel sends which of them is to be
+// done.
 //
 // The descriptions go as the kept, counted value of LINK_DESCRIBE, as many
 // to a frame as fit, one after another:
@@ -84,6 +86,25 @@
 //
 // LINK_SAY is a line of text for the panel's status bar, sent the same
 // way, kept and counted.
+//
+// TEXT
+//
+// A control that holds text, the callsign, is described as the others are,
+// and is given a number. The radio says its value as the kept, counted
+// value of that number: the characters, with no zero after them.
+//
+// The panel's answer is never more than 16 bytes, so a text the panel
+// sends goes in parts, each the kept, counted value of LINK_TEXT_PART:
+//
+//     control    one byte, the number of the control whose text this is
+//     offset     one byte, where in the text this part begins
+//     last       one byte, 1 if the text ends with this part, or else 0
+//     the characters, no more than LINK_TEXT_PART_DATA of them
+//
+// The panel sends a part when the one before has been taken. The radio
+// puts each where its offset says, and has the whole text when the part
+// marked last has come. An empty text is one part, marked last, with no
+// characters.
 //
 // The radio describes its controls when the panel says HELLO, and says
 // their values only when the last description has been taken, since a value
@@ -519,4 +540,42 @@ int link_get_description(const uint8_t *at, int left,
 	if (taken < 0)
 		return -1;
 	return used + taken;
+}
+
+// makes the part of a text that begins at offset, and says how many bytes
+// it is; the part is marked last if the text ends with it
+int link_put_text_part(uint8_t *at, int control, const char *text, int offset) {
+	int left = (int)strlen(text) - offset;
+	int count = left;
+
+	if (left < 0)
+		return 0;
+	if (count > LINK_TEXT_PART_DATA)
+		count = LINK_TEXT_PART_DATA;
+	at[0] = (uint8_t)control;
+	at[1] = (uint8_t)offset;
+	at[2] = count == left;
+	memcpy(at + LINK_TEXT_PART_HEADER, text + offset, count);
+	return LINK_TEXT_PART_HEADER + count;
+}
+
+// puts a part where it belongs in text, which has "room" bytes. Says 1 if
+// the text is now whole, with its zero, 0 if more is to come, and -1 if the
+// part is not one or does not fit
+int link_get_text_part(const uint8_t *bytes, int count, int *control,
+		char *text, int room) {
+	int offset;
+	int length = count - LINK_TEXT_PART_HEADER;
+
+	if (count < LINK_TEXT_PART_HEADER)
+		return -1;
+	offset = bytes[1];
+	if (offset + length >= room)
+		return -1;
+	*control = bytes[0];
+	memcpy(text + offset, bytes + LINK_TEXT_PART_HEADER, length);
+	if (!bytes[2])
+		return 0;
+	text[offset + length] = 0;
+	return 1;
 }

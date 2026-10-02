@@ -18,7 +18,9 @@
 // describes its controls afresh.
 //
 // A value is kept as a number. A choice's value is which of its choices it
-// is, counted from 0, as it is on the link.
+// is, counted from 0, as it is on the link. An action, the macros', has
+// choices and no value: the things it can do. A text control's value is its
+// text.
 //
 // WHO CALLS
 //
@@ -168,7 +170,7 @@ int controls_choices(const struct panel_control *c){
 	const char *at = c->d.choices;
 	int choices = 0;
 
-	if (c->d.kind != LINK_KIND_CHOICE || at[0] == 0)
+	if (c->d.kind == LINK_KIND_NUMBER || c->d.kind == LINK_KIND_TEXT || at[0] == 0)
 		return 0;
 	choices = 1;
 	while ((at = strchr(at, CHOICES_BETWEEN)) != NULL){
@@ -185,7 +187,11 @@ void controls_value_text(const struct panel_control *c, char *text, int room){
 	int index = (int)c->value;
 	int length;
 
-	if (c->d.kind != LINK_KIND_CHOICE){
+	if (c->d.kind == LINK_KIND_TEXT){
+		snprintf(text, room, "%s", c->text);
+		return;
+	}
+	if (c->d.kind == LINK_KIND_NUMBER){
 		snprintf(text, room, "%d", (int)c->value);
 		return;
 	}

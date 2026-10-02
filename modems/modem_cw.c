@@ -131,6 +131,21 @@
 // what is still queued in the sound card; then the radio goes back to
 // receive.
 //
+// TEXT AND MACROS
+//
+// Text is sent as CW too: cw_text.c turns characters into the key going
+// down and up, at the keyer's speed, and the modem shapes and sends that
+// as it does the paddles'. The radio goes to transmit for it and comes
+// back when it is done, as for the paddles. A touch of a paddle or the key
+// while text is being sent stops it.
+//
+// The macros are the function keys' messages, read when the radio starts
+// from data/cw.mc, a file in zbitxv2's form; macros.c says what is in one.
+// MACRO is the control that sends them, an action: its choices are the
+// macros' labels in the order of the file, and setting it to a label sends
+// that macro. Two macros with the same label are one choice, the first.
+// With no file there is no MACRO control.
+//
 // THE CONTROLS
 //
 // The modem's own controls are registered in its start(), in the group CW:
@@ -170,6 +185,8 @@
 #include "control.h"
 #include "modem.h"
 #include "cw_keyer.h"
+#include "cw_text.h"
+#include "macros.h"
 
 #define WPM_LOWEST 5
 #define WPM_HIGHEST 50
@@ -185,6 +202,9 @@
 #define SAMPLES_PER_MS (CW_KEYER_RATE_HZ / 1000)
 #define REQUEST_MAX 32
 #define ANSWER_MAX 100
+
+#define MACRO_FILE "cw"
+#define MACRO_CHOICES_MAX 64
 
 #define KEYER_LAG_US 12000
 #define KEY_EVENTS_MAX 32
@@ -306,7 +326,7 @@ static int is_keying(void) {
 	follow_the_pins();
 	if (is_keyer_running)
 		return 1;
-	if (event_count == 0 && !is_dot_closed && !is_dash_closed)
+	if (event_count == 0 && !is_dot_closed && !is_dash_closed && !cw_text_is_busy())
 		return 0;
 	set_the_rf_delay();
 	keyer_us = key_now_us() - KEYER_LAG_US;
@@ -342,8 +362,29 @@ static float delay_the_shape(float shape) {
 
 // the modem wants to transmit while there is anything to send, and for
 // the hang time after
+// whether anything is being sent or is waiting to be, by the paddles'
+// keyer or as text
+static int is_sending(void) {
+	return cw_keyer_is_busy() || cw_text_is_busy();
+}
+
+// the key for a sample: the paddles' keyer's, or while text is being sent,
+// the text's. A paddle or the key touched while text is being sent stops
+// the text and drops what was waiting, as zbitxv2 did
+static int key_for_a_sample(void) {
+	int is_key_down = cw_keyer_is_key_down(is_dot_closed, is_dash_closed);
+
+	if (!cw_text_is_busy())
+		return is_key_down;
+	if (is_dot_closed || (atomic_load(&is_ring_a_paddle) && is_dash_closed)) {
+		cw_text_abort();
+		return is_key_down;
+	}
+	return cw_text_is_key_down();
+}
+
 static void note_what_is_to_send(float shape, int count) {
-	if (shape > 0 || cw_keyer_is_busy()) {
+	if (shape > 0 || is_sending()) {
 		samples_to_send = rf_delay_samples;
 		samples_to_hang = atomic_load(&hang_samples) + PLAYED_OUT_SAMPLES;
 	}
@@ -373,16 +414,16 @@ static void key_a_block(int32_t *speaker, double *tx) {
 	tune_the_sidetone();
 	for (i = 0; i < MAX_BINS/2; i++) {
 		follow_key_for_a_sample();
-		is_key_down = cw_keyer_is_key_down(is_dot_closed, is_dash_closed);
+		is_key_down = key_for_a_sample();
 		shape = cw_keyer_shape(is_key_down);
-		if (cw_keyer_is_busy())
+		if (is_sending())
 			speaker[i] = (int32_t)(vfo_read(&sidetone) / VFO_PEAK * shape * peak);
 		delayed = delay_the_shape(shape);
 		if (tx != NULL)
 			tx[i] = vfo_read(&tx_tone) / VFO_PEAK * delayed / TX_TONE_DIVISOR;
 		note_what_is_to_send(shape, 1);
 	}
-	if (!cw_keyer_is_busy() && event_count == 0)
+	if (!is_sending() && event_count == 0)
 		is_keyer_running = 0;
 	atomic_store(&is_wanting_tx, samples_to_send > 0 || samples_to_hang > 0);
 }
@@ -407,11 +448,14 @@ static int cw_wants_tx(void) {
 		return 1;
 	if (atomic_load(&is_ring_a_paddle) && board_ptt_closed())
 		return 1;
+	if (cw_text_is_busy())
+		return 1;
 	return atomic_load(&is_wanting_tx);
 }
 
 static void cw_reset(void) {
 	cw_keyer_reset();
+	cw_text_reset();
 	event_count = 0;
 	is_keyer_running = 0;
 	is_dot_closed = 0;
@@ -476,6 +520,27 @@ static int apply_wpm(struct control *c, const char *value, char *why, int room) 
 	(void)why;
 	(void)room;
 	cw_keyer_set_wpm(atoi(value));
+	cw_text_set_wpm(atoi(value));
+	return 0;
+}
+
+// a macro is sent: its text, with the station's callsign and the rest put
+// in, goes to be keyed. Only in CW, or it would wait and be sent when CW was
+// next chosen
+static int apply_macro(struct control *c, const char *value, char *why, int room) {
+	const char *mode = control_get("MODE");
+	char text[MACRO_MAX_TEXT];
+
+	(void)c;
+	if (mode == NULL || (strcmp(mode, "CW") && strcmp(mode, "CWR"))) {
+		snprintf(why, room, "macros are sent in CW");
+		return -1;
+	}
+	if (macro_exec(macro_key(value), text, sizeof(text)) < 0) {
+		snprintf(why, room, "no such macro");
+		return -1;
+	}
+	cw_text_put(text);
 	return 0;
 }
 
@@ -549,6 +614,24 @@ static struct control cw_delay = {
 	.value = "300", .apply = apply_cw_delay,
 };
 
+static char macro_choices[MACRO_CHOICES_MAX];
+
+static struct control macro = {
+	.group = "CW", .name = "MACRO", .kind = CONTROL_ACTION,
+	.choices = macro_choices, .apply = apply_macro,
+};
+
+// the macros are read from data/cw.mc; with no such file there are none
+static void load_the_macros(void) {
+	if (macro_load(MACRO_FILE) < 0) {
+		printf("no CW macros: data/%s.mc is not there\n", MACRO_FILE);
+		return;
+	}
+	macro_labels(macro_choices, sizeof(macro_choices));
+	if (macro_choices[0] != 0)
+		control_register(&macro);
+}
+
 static void cw_start(void) {
 	control_register(&wpm);
 	control_register(&pitch);
@@ -561,7 +644,9 @@ static void cw_start(void) {
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));
 	cw_keyer_reset();
 	cw_keyer_set_wpm(atoi(wpm.value));
+	cw_text_set_wpm(atoi(wpm.value));
 	apply_cw_input(&cw_input, cw_input.value, NULL, 0);
+	load_the_macros();
 	if (key_open(board_in_use()) < 0)
 		printf("the key cannot be read: the kernel will not report its edges\n");
 }

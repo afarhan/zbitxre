@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
 	panel_open();
 	ends_ms = now_ms() + seconds * MS_PER_SECOND;
 	while (now_ms() < ends_ms) {
-		panel_poll(now_ms(), on_took);
+		panel_poll(now_ms(), on_took, NULL);
 		usleep(BETWEEN_LOOKS_US);
 	}
 	panel_get_report(&report);

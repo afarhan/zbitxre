@@ -106,7 +106,10 @@
 // the dash paddle held alone for 0.4 s, two dashes, then the dot's as well
 #define DOT_JOINS_US 400000
 #define DASH_FIRST_MARKS "--.-."
-#define MARKS_MAX 32
+#define MARKS_MAX 64
+// vu2ese at 20 words a minute is 4.6 seconds, and the hang time after it
+#define MACRO_BLOCKS 520
+#define VU2ESE_IN_MORSE "...-..-..---....."
 #define MARK_FRACTION 10
 #define WHY_MAX 100
 
@@ -510,6 +513,61 @@ static void check_cw_squeeze(int one, int first_paddle, int second_paddle,
 	say(one, "MODE USB\n");
 }
 
+// a macro is sent as CW: the radio goes to transmit for it by itself and
+// what reaches the transmitter is the macro's text with the callsign put in
+static void check_cw_macro(int one) {
+	static int32_t from_receiver[BLOCK_FRAMES];
+	static int32_t from_microphone[BLOCK_FRAMES];
+	static int32_t speaker[MACRO_BLOCKS * BLOCK_FRAMES];
+	static int32_t transmitter[MACRO_BLOCKS * BLOCK_FRAMES];
+	const struct modem *cw = modem_find("CW");
+	struct audio_block block;
+	char heard[HEARD_MAX];
+	char sent[MARKS_MAX];
+	char why[WHY_MAX];
+	int is_transmitting = 0;
+	int first;
+	int length;
+	int b;
+
+	say(one, "MODE USB\n");
+	hear(one, heard);
+	say(one, "MACRO Call\n");
+	hear(one, heard);
+	expect(has(heard, "ERROR MACRO"), "a macro is refused outside CW");
+	say(one, "MODE CW\n");
+	say(one, "WPM 20\n");
+	say(one, "MYCALLSIGN vu2ese\n");
+	say(one, "MACRO nothing like it\n");
+	hear(one, heard);
+	expect(has(heard, "ERROR MACRO"), "and so is one that the file does not have");
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	say(one, "MACRO Call\n");
+	hear(one, heard);
+	expect(!has(heard, "ERROR"), "the macro labelled Call is taken");
+
+	block.from_receiver = from_receiver;
+	block.from_microphone = from_microphone;
+	block.frames = BLOCK_FRAMES;
+	for (b = 0; b < MACRO_BLOCKS; b++) {
+		block.to_speaker = speaker + b * BLOCK_FRAMES;
+		block.to_transmitter = transmitter + b * BLOCK_FRAMES;
+		hw_stand_in_block(&block);
+		if (cw->wants_tx() && !is_transmitting)
+			control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+		if (!cw->wants_tx() && is_transmitting)
+			control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+		is_transmitting = cw->wants_tx();
+	}
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	read_the_marks(transmitter, MACRO_BLOCKS * BLOCK_FRAMES, sent, sizeof(sent));
+	printf("          the macro is sent as %s\n", sent);
+	expect(strcmp(sent, VU2ESE_IN_MORSE) == 0,
+		"it is sent as the station's callsign, in Morse, whole from its first dot");
+	expect(!is_transmitting, "and the radio is back in receive when it is done");
+	say(one, "MODE USB\n");
+}
+
 static void check_cw_transmitting(int one) {
 	static int32_t from_receiver[BLOCK_FRAMES];
 	static int32_t from_microphone[BLOCK_FRAMES];
@@ -833,6 +891,7 @@ int main(void) {
 
 	check_transmitting(one, other);
 	check_cw_transmitting(one);
+	check_cw_macro(one);
 	check_cw_squeeze(one, KEY_TIP, KEY_RING, SQUEEZE_LATER_US, SQUEEZE_MARKS,
 		"both paddles held take turns, heard and sent, through the modem");
 	check_cw_squeeze(one, KEY_RING, KEY_TIP, DOT_JOINS_US, DASH_FIRST_MARKS,

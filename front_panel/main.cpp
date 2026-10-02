@@ -26,10 +26,13 @@
 // in use, is in the list: in CW that is WPM, PITCH and the rest. The
 // waterfall is not made deeper to fill the screen: waterfall.cpp says why.
 //
-// LOG, SET, TERM and MENU are for the other screens, the logbook, the
-// settings and the keyboard, and the macros are to send what the radio
-// keeps for them. None of those is written yet, so these buttons are
-// shown dim and do nothing.
+// In CW the bottom row's buttons are the first six of the radio's macros,
+// each with its macro's label, and a touch sends that macro; modem_cw.c
+// says where the macros come from.
+//
+// SET opens the settings, which are in screens.cpp. LOG, TERM and MENU are
+// for the logbook, the keyboard and whatever else; none of those is
+// written yet, so those buttons are shown dim and do nothing.
 //
 // The frequency is shown with the VFO in use before it, A: or B:, and a
 // click of the knob while the frequency is selected goes to the other VFO.
@@ -200,8 +203,8 @@ static const char *const band_names[BANDS] = {
 
 //the buttons down the left, and the macros' on the bottom row in CW
 static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM" };
-static const char *const macro_names[MACROS] = { "F1", "F2", "F3", "F4", "F5", "F6" };
 #define MACRO_GROUP "CW"
+#define MACRO_CONTROL "MACRO"
 
 static const struct footer footers[] = {
 	{"VOICE", {"MIC", "TX", NULL, NULL, NULL, NULL}},
@@ -211,7 +214,7 @@ static const struct footer footers[] = {
 
 lv_obj_t *main_screen = NULL;
 
-static lv_obj_t *macro_box[MACROS];
+static struct widget macro_widget[MACROS];
 static lv_obj_t *status_label;
 static struct widget freq_widget;
 static struct widget placed[PLACES];
@@ -380,8 +383,10 @@ static void mode_group(char *group, int room){
 static bool has_a_place(const struct panel_control *c){
 	int i;
 
-	//the band has its row of buttons
-	if (c == freq_widget.control || !strcmp(c->d.name, "BAND"))
+	//the band has its row of buttons, and an action or a text is not for
+	//the list
+	if (c == freq_widget.control || !strcmp(c->d.name, "BAND")
+			|| c->d.kind == LINK_KIND_ACTION || c->d.kind == LINK_KIND_TEXT)
 		return true;
 	for (i = 0; i < PLACES; i++){
 		if (placed[i].control == c)
@@ -571,17 +576,26 @@ static void show_bands(){
 		show_edge(&band_widget[i], controls_is("BAND", band_names[i]), false);
 }
 
-//the macros' buttons are there in CW only
+//the macros' buttons are there in CW only, as many as the radio has macros
+//for and the row has room for, each with its macro's label
 static void show_macros(){
+	struct panel_control *macro = controls_find(MACRO_CONTROL);
+	struct panel_control one;
 	char group[CONTROL_TEXT_MAX];
+	char label[SHOWN_MAX];
 	int i;
 
 	mode_group(group, sizeof(group));
 	for (i = 0; i < MACROS; i++){
-		if (!strcmp(group, MACRO_GROUP))
-			lv_obj_remove_flag(macro_box[i], LV_OBJ_FLAG_HIDDEN);
-		else
-			lv_obj_add_flag(macro_box[i], LV_OBJ_FLAG_HIDDEN);
+		if (macro == NULL || strcmp(group, MACRO_GROUP) || i >= controls_choices(macro)){
+			lv_obj_add_flag(macro_widget[i].box, LV_OBJ_FLAG_HIDDEN);
+			continue;
+		}
+		one = *macro;
+		one.value = i;
+		controls_value_text(&one, label, sizeof(label));
+		lv_label_set_text(macro_widget[i].value, label);
+		lv_obj_remove_flag(macro_widget[i].box, LV_OBJ_FLAG_HIDDEN);
 	}
 }
 
@@ -682,6 +696,21 @@ static void band_touched(const char *band){
 
 static void on_band_touched(lv_event_t *e){
 	band_touched((const char *)lv_event_get_user_data(e));
+}
+
+//a macro's button: the radio is told to send that macro. It is told each
+//time the button is touched, since a macro is something done, not set
+static void macro_touched(int which){
+	struct panel_control *macro = controls_find(MACRO_CONTROL);
+
+	if (macro == NULL || which >= controls_choices(macro))
+		return;
+	Serial.printf("%s %d\n", MACRO_CONTROL, which);
+	i2c_link_changed(macro->d.number, which);
+}
+
+static void on_macro_touched(lv_event_t *e){
+	macro_touched((int)(intptr_t)lv_event_get_user_data(e));
 }
 
 //a touch on the graph or the waterfall: the next span
@@ -791,6 +820,21 @@ static lv_obj_t *dim_button_create(int x, int y, const char *label){
 	return box;
 }
 
+static void on_set_touched(lv_event_t *e){
+	(void)e;
+	screens_open_settings();
+}
+
+//SET opens the settings
+static void set_button_create(int x, int y){
+	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
+	lv_obj_t *text = text_create(box, &lv_font_montserrat_14, COLOUR_VALUE);
+
+	lv_label_set_text(text, "SET");
+	lv_obj_align(text, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_add_event_cb(box, on_set_touched, LV_EVENT_CLICKED, NULL);
+}
+
 static void screen_create(){
 	lv_obj_t *spectrum;
 	int i;
@@ -806,11 +850,21 @@ static void screen_create(){
 	lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
 
 	//what these are for is not written yet, so they are dim and do nothing
-	for (i = 0; i < COLUMN_BUTTONS; i++)
-		dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, column_names[i]);
-	for (i = 0; i < MACROS; i++)
-		macro_box[i] = dim_button_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
-			macro_names[i]);
+	for (i = 0; i < COLUMN_BUTTONS; i++){
+		if (!strcmp(column_names[i], "SET"))
+			set_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT);
+		else
+			dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, column_names[i]);
+	}
+	for (i = 0; i < MACROS; i++){
+		macro_widget[i].box = box_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
+			TILE_WIDTH, ROW_HEIGHT);
+		lv_obj_add_event_cb(macro_widget[i].box, on_macro_touched, LV_EVENT_CLICKED,
+			(void *)(intptr_t)i);
+		macro_widget[i].value = text_create(macro_widget[i].box,
+			&lv_font_montserrat_14, COLOUR_VALUE);
+		lv_obj_align(macro_widget[i].value, LV_ALIGN_CENTER, 0, 0);
+	}
 	dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
 
 	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_20);
@@ -889,6 +943,25 @@ void main_radio_says(int number, int32_t value){
 	show();
 }
 
+//a text control's value from the radio; the panel has it to show in the
+//settings, and does not take it over what was typed here a moment ago
+void main_radio_says_text(int number, const char *text){
+	struct panel_control *c = controls_of_number(number);
+
+	if (c == NULL || c->d.kind != LINK_KIND_TEXT)
+		return;
+	if (c->last_user_change != 0
+			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS)
+		return;
+	snprintf(c->text, sizeof(c->text), "%s", text);
+	screens_radio_said();
+}
+
+void main_hide(){
+	if (main_screen)
+		lv_obj_add_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+}
+
 //a line of text in the status bar; of one that is too long, the end is
 //shown, since what is newest is at the end
 void main_status(const char *text){
@@ -917,6 +990,8 @@ void main_note_large(const char *text){
 
 //the knob goes to whatever is selected
 void main_knob_turned(int steps){
+	if (screens_is_open())
+		return;
 	if (selected == ON_FREQUENCY)
 		tune(steps);
 	if (selected == ON_A_CONTROL && selected_control != NULL)
@@ -935,6 +1010,8 @@ void main_knob_turned(int steps){
 void main_knob_clicked(){
 	struct panel_control *vfo = controls_find("VFO");
 
+	if (screens_is_open())
+		return;
 	if (selected == ON_FREQUENCY && vfo != NULL)
 		change_to_the_next_choice(vfo);
 	if (selected == ON_A_CONTROL && selected_control != NULL)
@@ -945,6 +1022,7 @@ void main_knob_clicked(){
 }
 
 void main_knob_held(){
+	screens_close();
 	select_the_frequency();
 	show();
 }
@@ -959,7 +1037,15 @@ void main_select(const char *name){
 		if (!strcmp(name, band_names[i]))
 			band_touched(band_names[i]);
 	}
-	if (!strcmp(name, "FREQ"))
+	if (screens_is_open()){
+		screens_select(name);
+		return;
+	}
+	if (!strcmp(name, "SET"))
+		screens_open_settings();
+	else if (name[0] == 'F' && name[1] >= '1' && name[1] <= '0' + MACROS && name[2] == 0)
+		macro_touched(name[1] - '1');
+	else if (!strcmp(name, "FREQ"))
 		select_the_frequency();
 	else if (!strcmp(name, "LIST"))
 		select_the_list(NOWHERE);

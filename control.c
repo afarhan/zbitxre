@@ -17,7 +17,10 @@
 //   name     what it is called, in the protocol and everywhere else: "WPM".
 //            Names are unique; a second control of the same name is refused.
 //   kind     a number, from min to max in steps of step; a choice, one of
-//            choices, separated by "/"; or text.
+//            choices, separated by "/"; text; or an action, which is
+//            something done and not something set: sending a macro. An
+//            action has choices, the things it can do, and no value. Setting
+//            it to one of them does that, every time, and nobody is told.
 //   value    what it is now, as text. Its owner gives it its first value.
 //   apply    makes a new value so: asks the core, the keyer, whatever the
 //            control works. It is given a value already checked. It returns
@@ -150,7 +153,7 @@ static int check(const struct control *c, const char *value, char *taken,
 	int number;
 
 	snprintf(taken, CONTROL_VALUE_MAX, "%s", value);
-	if (c->kind == CONTROL_CHOICE) {
+	if (c->kind == CONTROL_CHOICE || c->kind == CONTROL_ACTION) {
 		if (is_a_choice(c->choices, value))
 			return 0;
 		snprintf(why, room, "one of %s", c->choices);
@@ -179,6 +182,11 @@ int control_set(const char *name, const char *value, int origin, char *why, int 
 	}
 	if (check(c, value, taken, why, room) < 0)
 		return -1;
+	if (c->kind == CONTROL_ACTION) {
+		if (c->apply == NULL)
+			return 0;
+		return c->apply(c, taken, why, room);
+	}
 	if (!strcmp(c->value, taken))
 		return 0;
 	if (c->apply != NULL && c->apply(c, taken, why, room) < 0)

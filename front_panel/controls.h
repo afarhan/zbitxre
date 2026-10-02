@@ -11,12 +11,15 @@
 
 #define CONTROLS_MAX 48
 #define CONTROL_TEXT_MAX 16
+//a text control's value, as the panel keeps it: a callsign, a grid
+#define CONTROL_TEXT_ROOM 24
 #define OWN_GROUP "PANEL"
 #define NOT_ON_THE_LINK 0
 
 struct panel_control {
 	struct link_description d;
 	int32_t value;
+	char text[CONTROL_TEXT_ROOM];
 	unsigned long last_user_change;
 };
 

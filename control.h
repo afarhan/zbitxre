@@ -19,6 +19,7 @@ enum control_kind {
 	CONTROL_NUMBER,
 	CONTROL_CHOICE,
 	CONTROL_TEXT,
+	CONTROL_ACTION,
 };
 
 struct control {

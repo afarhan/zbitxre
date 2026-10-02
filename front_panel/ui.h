@@ -74,5 +74,18 @@ void main_knob_clicked();
 void main_knob_held();
 void main_select(const char *name);
 void main_status(const char *text);
+void main_hide();
+void main_radio_says_text(int number, const char *text);
+
+// the link, for text
+void i2c_link_send_text(int number, const char *text);
+
+// the other screens
+void screens_open_settings();
+void screens_close();
+bool screens_is_open();
+void screens_radio_said();
+void screens_set_text(char *control_and_text);
+void screens_select(const char *name);
 void main_note(const char *text);
 void main_note_large(const char *text);

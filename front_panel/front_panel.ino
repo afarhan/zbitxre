@@ -18,6 +18,7 @@
 //                     three states, and the tuning
 //   controls.cpp      the controls the radio has described, and the panel's
 //                     own
+//   screens.cpp       the settings, and the screen a line of text is typed on
 //   block.cpp         what the panel remembers: access points and the touch
 //                     screen's calibration, in the last 4K of the flash
 //   ili9488.cpp       the display's driver, from ltp1_text_ui, where it was
@@ -52,7 +53,11 @@
 // The knob can be worked from the serial port, for trying the screen with
 // no hand on the panel: '+' and '-' are a step of the knob each way, 'k' is
 // a click and 'h' a long press. '@' and a name and a new line select what a
-// touch would: @FREQ, @LIST, @SPECTRUM, a band, @40M, or a control, @WPM.
+// touch would: @FREQ, @LIST, @SPECTRUM, a band, @40M, a macro's button,
+// @F1, a control, @WPM, or the settings, @SET; and with the settings up, a
+// row of them, @CALLSIGN, or @BACK. '=' and a text control's
+// name, a space, the text and a new line do what typing the text on the
+// panel and saving it would: =MYCALLSIGN VU2ESE.
 //
 // Painting the display is what puts the hash in the receiver. To find what
 // quietens it, '2' and '4' drive the display's pins at 2 and 4 mA with slow
@@ -112,6 +117,7 @@
 #define KNOB_HELD 'h'
 #define A_NOTE_FOLLOWS '#'
 #define A_TOUCH_FOLLOWS '@'
+#define A_TEXT_FOLLOWS '='
 #define NOTE_MAX 24
 #define NOTE_WAITED_FOR_MS 200
 
@@ -149,9 +155,21 @@ void take_a_touch() {
   main_select(text);
 }
 
+void take_a_text() {
+  char text[2 * NOTE_MAX];
+  size_t count;
+
+  Serial.setTimeout(NOTE_WAITED_FOR_MS);
+  count = Serial.readBytesUntil('\n', text, sizeof(text) - 1);
+  text[count] = 0;
+  screens_set_text(text);
+}
+
 void on_serial(int c) {
   if (c == A_NOTE_FOLLOWS)
     take_a_note();
+  if (c == A_TEXT_FOLLOWS)
+    take_a_text();
   if (c == A_TOUCH_FOLLOWS)
     take_a_touch();
   if (c == ASK_ABOUT_LINK) {

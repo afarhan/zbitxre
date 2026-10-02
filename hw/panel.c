@@ -114,7 +114,7 @@ static long poll_interval(long now_ms) {
 	return IDLE_POLL_EVERY_MS;
 }
 
-static int read_reply(link_took_fn took) {
+static int read_reply(link_took_fn took, link_took_bytes_fn took_bytes) {
 	uint8_t answer[I2C_COUNTED_ROOM];
 	int count;
 
@@ -127,7 +127,7 @@ static int read_reply(link_took_fn took) {
 	}
 	counted.answers++;
 	misses = 0;
-	return link_take_frame(&radio_end, answer + 1, answer[0], took, NULL);
+	return link_take_frame(&radio_end, answer + 1, answer[0], took, took_bytes);
 }
 
 static void send_frame(void) {
@@ -140,14 +140,14 @@ static void send_frame(void) {
 		counted.words_not_taken++;
 }
 
-int panel_poll(long now_ms, link_took_fn took) {
+int panel_poll(long now_ms, link_took_fn took, link_took_bytes_fn took_bytes) {
 	int took_records = 0;
 
 	if (!is_polling || now_ms < next_poll_ms)
 		return 0;
 
 	counted.polls++;
-	if (read_reply(took) == LINK_TOOK_RECORDS)
+	if (read_reply(took, took_bytes) == LINK_TOOK_RECORDS)
 		took_records = 1;
 	if (misses == 0 && link_has_something_to_say(&radio_end))
 		send_frame();

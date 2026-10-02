@@ -41,6 +41,11 @@
 // before it will transmit again. And however the program ends, by "quit",
 // by its input ending or by a signal, it goes to receive first.
 //
+// What the operator sets is kept in data/user_settings.ini and is there at
+// the next start: the callsign, the keyer's speed and the rest. Where the
+// radio is tuned is not; settings.c says what is kept and when it is
+// written. It is written once more as the program ends.
+//
 // The panel has a status bar, a line of text. The radio puts there what it
 // found at the start check, and why it refused a change the panel asked
 // for. hw/panel.c's panel_say() sends it.
@@ -154,6 +159,7 @@
 #include "server.h"
 #include "si5351.h"
 #include "sdr.h"
+#include "settings.h"
 #include "start_check.h"
 
 #define BFO_CLOCK       1
@@ -172,6 +178,7 @@
 
 #define SNAPSHOT_FILE   "data/snapshot.raw"
 #define SNAPSHOT_CHANNELS 2
+#define SETTINGS_FILE "data/user_settings.ini"
 
 #define START_CHECK_AFTER_MS 3000
 #define START_CHECK_LOG "data/start_checks.log"
@@ -538,6 +545,7 @@ static void on_control_changed(const struct control *c, int origin) {
 	server_broadcast(c, origin);
 	if (origin != ORIGIN_PANEL)
 		panel_controls_changed(c);
+	settings_changed(c, now_ms());
 	printf("%s %s\n", c->name, c->value);
 	fflush(stdout);
 }
@@ -563,6 +571,18 @@ static void on_panel_record(int control, int32_t value) {
 		return;
 	}
 	name = panel_controls_took(control, value, text, sizeof(text));
+	if (name != NULL)
+		set_setting(name, text, ORIGIN_PANEL);
+	fflush(stdout);
+}
+
+// a text from the panel, which comes in parts; when it is whole the control
+// is set
+static void on_panel_bytes(int control, const uint8_t *bytes, int count) {
+	char text[LINK_TEXT_MAX + 1];
+	const char *name;
+
+	name = panel_controls_took_bytes(control, bytes, count, text, sizeof(text));
 	if (name != NULL)
 		set_setting(name, text, ORIGIN_PANEL);
 	fflush(stdout);
@@ -767,8 +787,9 @@ static void main_loop(void) {
 		start_check_poll(now_ms());
 		snapshot_save();
 		follow_ptt(now_ms());
-		panel_poll(now_ms(), on_panel_record);
+		panel_poll(now_ms(), on_panel_record, on_panel_bytes);
 		panel_controls_poll();
+		settings_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -809,6 +830,7 @@ int main(int argc, char **argv) {
 	panel_open();
 	radio_open();
 	control_register(&span);
+	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
 	if (hz != NULL)
 		set_setting("FREQ", hz, ORIGIN_TERMINAL);
@@ -829,6 +851,7 @@ int main(int argc, char **argv) {
 	signal(SIGHUP, on_signal);
 	main_loop();
 	set_setting("TX", "OFF", ORIGIN_NONE);
+	settings_save();
 	report();
 	server_close();
 	teardown();

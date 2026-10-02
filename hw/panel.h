@@ -29,5 +29,5 @@ void panel_set_kept_bytes(int control, const uint8_t *bytes, int count);
 int panel_is_waiting(int control);
 void panel_say(const char *text);
 void panel_set_polling(int on);
-int panel_poll(long now_ms, link_took_fn took);
+int panel_poll(long now_ms, link_took_fn took, link_took_bytes_fn took_bytes);
 void panel_get_report(struct panel_report *report);

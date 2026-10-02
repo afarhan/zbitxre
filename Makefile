@@ -27,7 +27,7 @@ LINK_HEADERS = front_panel/link.h
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw/key.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h modem.h control.h modems/cw_keyer.h
+DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h modems/cw_keyer.h modems/cw_text.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	$(LINK)
 # every file in modems/ is a modem, and the list of them is made from the
@@ -38,13 +38,14 @@ MODEM_LIST  = $(BUILD)/modem_list.c
 # authors wrote it, and is built on its own with its warnings off, so that
 # the warnings shown are all the radio's own
 KISS_FFT    = $(BUILD)/kiss_fft.o
-DSP         = core_sdr.c control.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
+DSP         = core_sdr.c control.c macros.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
 	$(MODEMS) $(MODEM_LIST)
 RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_cw_keyer $(BUILD)/test_server \
-	$(BUILD)/test_panel_controls $(BUILD)/test_start_check
+	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
+	$(BUILD)/test_settings
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -61,9 +62,9 @@ PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
 .PHONY: all check radio clean panel panel-flash gui FORCE
 
-all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS)
+all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) data/cw.mc
 
-check: $(HOST_TESTS)
+check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
@@ -71,6 +72,8 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_server
 	$(BUILD)/test_panel_controls
 	$(BUILD)/test_start_check
+	$(BUILD)/test_cw_text
+	$(BUILD)/test_settings
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -80,6 +83,11 @@ radio: $(RADIO_TESTS)
 
 $(BUILD):
 	mkdir -p $(BUILD) data
+
+# the CW macros are the operator's own, in data/, which is not kept in the
+# repository; a radio that has none is given the sample
+data/cw.mc: | $(BUILD)
+	cp setup/cw.mc data/cw.mc
 
 # the list is made afresh on every build, because a modem taken out of
 # modems/ leaves no newer file behind to say so; it replaces the old list
@@ -95,10 +103,10 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 	$(CC) -std=gnu11 -O2 -g -w -Idsp/kiss_fft -c -o $@ dsp/kiss_fft/kiss_fft.c
 
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
-		panel_controls.c radio.h server.h control.h panel_controls.h $(DSP) $(HW) \
-		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+		panel_controls.c settings.c settings.h radio.h server.h control.h \
+		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c $(DSP) $(HW) $(RADIO_LIBS)
+		panel_controls.c settings.c $(DSP) $(HW) $(RADIO_LIBS)
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
@@ -126,6 +134,14 @@ $(BUILD)/test_start_check: tests/test_start_check.c tools/start_check.c \
 		tools/start_check.h $(KISS_FFT) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tests/test_start_check.c tools/start_check.c \
 		$(KISS_FFT) -lm
+
+$(BUILD)/test_cw_text: tests/test_cw_text.c modems/cw_text.c modems/cw_text.h \
+		modems/cw_keyer.h | $(BUILD)
+	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_text.c modems/cw_text.c
+
+$(BUILD)/test_settings: tests/test_settings.c settings.c settings.h control.c \
+		control.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_settings.c settings.c control.c
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)
