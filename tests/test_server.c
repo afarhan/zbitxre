@@ -71,6 +71,7 @@
 #include "modem.h"
 #include "radio.h"
 #include "server.h"
+#include "settings.h"
 
 #define TEST_PORT 18081
 #define HEARD_MAX 4096
@@ -106,6 +107,7 @@
 // the dash paddle held alone for 0.4 s, two dashes, then the dot's as well
 #define DOT_JOINS_US 400000
 #define DASH_FIRST_MARKS "--.-."
+#define BANDS_KEPT_IN "build/test_server_settings.ini"
 #define MARKS_MAX 64
 // vu2ese at 20 words a minute is 4.6 seconds, and the hang time after it
 #define MACRO_BLOCKS 520
@@ -621,6 +623,46 @@ static void check_cw_transmitting(int one) {
 	say(one, "MODE USB\n");
 }
 
+// the bands' places are written with the settings and read back: where the
+// radio was on a band's first and second places, and which it was at
+static void check_bands_kept(int one) {
+	char heard[HEARD_MAX];
+
+	settings_set_extras(radio_save_bands, radio_load_band);
+	remove(BANDS_KEPT_IN);
+	settings_load(BANDS_KEPT_IN);
+	say(one, "BAND 40M\n");
+	say(one, "STACK 0\n");
+	say(one, "FREQ 7123000\n");
+	say(one, "STACK 1\n");
+	say(one, "FREQ 7011000\n");
+	hear(one, heard);
+	settings_save();
+
+	say(one, "FREQ 7033000\n");
+	say(one, "STACK 0\n");
+	say(one, "FREQ 7200000\n");
+	say(one, "BAND 20M\n");
+	hear(one, heard);
+	settings_load(BANDS_KEPT_IN);
+	hear(one, heard);
+	expect(has(heard, "FREQ 7011000\n") && has(heard, "MODE CW\n"),
+		"the settings read back, the radio is where it was when they were written");
+	expect(strcmp(control_get("STACK"), "1") == 0, "at the place of the band's stack it was at");
+	say(one, "STACK 0\n");
+	hear(one, heard);
+	expect(has(heard, "FREQ 7123000\n") && has(heard, "MODE LSB\n"),
+		"and the band's other place is what it was then, not what it was changed to since");
+	expect(!radio_load_band("BAND.40M", "1 7088000:LSB 99:CW 7040000:CW 7074000:USB")
+		&& !radio_load_band("BAND.40M", "7 7088000:LSB 7000000:CW 7040000:CW 7074000:USB")
+		&& !radio_load_band("BAND.40M", "1 7088000:LSB 7000000:FM 7040000:CW 7074000:USB"),
+		"a band's line with a frequency outside the band, a place it has not, or a mode the radio has not, is not taken");
+	settings_set_extras(NULL, NULL);
+	say(one, "BAND 20M\n");
+	say(one, "FREQ 14074000\n");
+	hear(one, heard);
+}
+
 static const uint8_t spectrum_points[] = { 0x00, 0x1c, 0xff };
 
 static int test_apply_calls;
@@ -815,6 +857,8 @@ int main(void) {
 	say(one, "TIME_SET 395387\n");
 	hear(one, heard);
 	expect(!has(heard, "ERROR"), "a time in 2026 is taken");
+
+	check_bands_kept(one);
 
 	say(one, "FREQ 1\n");
 	hear(one, heard);

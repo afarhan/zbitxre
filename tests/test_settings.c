@@ -30,6 +30,10 @@ static struct control freq = {
 	.group = "RADIO", .name = "FREQ", .kind = CONTROL_NUMBER,
 	.min = 500000, .max = 30000000, .step = 1, .value = "7088000",
 };
+static struct control band = {
+	.group = "RADIO", .name = "BAND", .kind = CONTROL_CHOICE,
+	.choices = "40M/20M", .value = "40M",
+};
 static struct control wpm = {
 	.group = "CW", .name = "WPM", .kind = CONTROL_NUMBER,
 	.min = 5, .max = 50, .step = 1, .value = "20",
@@ -60,6 +64,7 @@ int main(void) {
 	char why[WHY_MAX];
 
 	control_register(&freq);
+	control_register(&band);
 	control_register(&wpm);
 	control_register(&callsign);
 	control_register(&macro);
@@ -74,19 +79,22 @@ int main(void) {
 	settings_changed(&callsign, 1500);
 	control_set("FREQ", "14074000", ORIGIN_NONE, why, sizeof(why));
 	settings_changed(&freq, 1600);
-	settings_poll(3000);
-	expect(!file_has("WPM="), "a change is not written while changes are still coming");
 	settings_poll(3500);
+	expect(!file_has("WPM="), "a change is not written while changes are still coming");
+	settings_poll(3700);
 	expect(file_has("WPM=27") && file_has("MYCALLSIGN=VU2ESE"),
 		"two seconds after the last change the settings are written");
-	expect(!file_has("FREQ=") && !file_has("MACRO="),
-		"the frequency is not kept, and an action has nothing to keep");
+	expect(file_has("FREQ=14074000"), "the frequency is kept too");
+	expect(!file_has("BAND=") && !file_has("MACRO="),
+		"the band, which follows from the frequency, is not, and an action has nothing to keep");
 
 	control_set("WPM", "12", ORIGIN_NONE, why, sizeof(why));
 	control_set("MYCALLSIGN", "", ORIGIN_NONE, why, sizeof(why));
+	control_set("FREQ", "7000000", ORIGIN_NONE, why, sizeof(why));
 	settings_load(SETTINGS_PATH);
 	expect(strcmp(control_get("WPM"), "27") == 0
-		&& strcmp(control_get("MYCALLSIGN"), "VU2ESE") == 0,
+		&& strcmp(control_get("MYCALLSIGN"), "VU2ESE") == 0
+		&& strcmp(control_get("FREQ"), "14074000") == 0,
 		"loaded again, the controls have what was written");
 
 	if (checks_failed > 0) {

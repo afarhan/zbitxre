@@ -89,7 +89,9 @@
 // TUNING
 //
 // The tuning is the panel's own, as it is each client's: the zbitx's knob
-// is on the panel. It is the desktop window's, which was zbitxv2's. The
+// is on the panel. STEP alone is a control of the radio's, so that the
+// radio remembers it when the panel is switched off; RIT, SPLIT and the
+// VFO start afresh each time, as it would not do to come up with RIT on. It is the desktop window's, which was zbitxv2's. The
 // dial moves by STEP, onto a multiple of it. While RIT is on, tuning moves
 // the receiver's offset and leaves the dial. With SPLIT on, the
 // transmitter is on the other VFO's dial. The radio is sent where the
@@ -1105,7 +1107,6 @@ void main_select(const char *name){
 void main_ui(){
 	if (!main_screen){
 		Serial.println("Creating the main screen");
-		controls_add_own("STEP", "10H/100H/500H/1K/10K", 0, 0, 1);
 		controls_add_own("RIT", "OFF/ON", 0, 0, 0);
 		controls_add_own("RIT_DELTA", NULL, -RIT_MAX_HZ, RIT_MAX_HZ, 0);
 		controls_add_own("SPLIT", "OFF/ON", 0, 0, 0);

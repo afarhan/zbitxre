@@ -42,9 +42,11 @@
 // by its input ending or by a signal, it goes to receive first.
 //
 // What the operator sets is kept in data/user_settings.ini and is there at
-// the next start: the callsign, the keyer's speed and the rest. Where the
-// radio is tuned is not; settings.c says what is kept and when it is
-// written. It is written once more as the program ends.
+// the next start: the frequency and the mode, the callsign, the keyer's
+// speed and the rest; settings.c says what is kept and when it is written.
+// It is written once more as the program ends. A frequency, a mode or a
+// volume given when the program is started comes after it and is what the
+// radio starts with.
 //
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
@@ -75,7 +77,8 @@
 // SPAN is the program's own control, for the panel: 25K, 10K, 6K or 2.5K is
 // how much of the spectrum the line shows, the tuned frequency staying in
 // the middle. The author's panel steps it when the waterfall is touched.
-// It is in the group PANEL, so that no client's list shows it.
+// It is in the group PANEL, so that no client's list shows it. STEP, the
+// panel's tuning step, is there too, kept by the radio for the panel.
 //
 // Ten times a second, while a network client has asked for it, it sends the
 // same spectrum at the full resolution of the bins, 534 points, one to a
@@ -309,6 +312,17 @@ static int apply_span(struct control *c, const char *value, char *why, int room)
 	span_bins = bins;
 	return 0;
 }
+
+// STEP is the panel's tuning step. The panel does its own tuning, as every
+// client does, and the step is its own to use; it is a control of the
+// radio's only so that the radio remembers it for the panel, which would
+// otherwise start at 100H each time it is switched on. The author asked
+// for that. It applies nothing here.
+static struct control step = {
+	.group = "PANEL", .name = "STEP", .kind = CONTROL_CHOICE,
+	.choices = "10H/100H/500H/1K/10K",
+	.value = "100H",
+};
 
 static struct control span = {
 	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
@@ -842,7 +856,9 @@ int main(int argc, char **argv) {
 	panel_open();
 	radio_open();
 	control_register(&span);
+	control_register(&step);
 	panel_wifi_open();
+	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
 	if (hz != NULL)

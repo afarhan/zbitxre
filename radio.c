@@ -69,7 +69,8 @@
 // in USB. They are not all zbitxv2's own figures, some of which sat on a
 // band's upper edge or past it; the author is to set them as he wants them.
 // STACK is in a group of its own, BAND, so that a client's list of the
-// radio's controls does not show it.
+// radio's controls does not show it. The places are kept from one start to
+// the next: radio_save_bands() and radio_load_band().
 //
 // THE PASSBAND FOLLOWS THE MODE
 //
@@ -111,6 +112,7 @@
 #define ANSWER_MAX 100
 
 #define NO_BAND (-1)
+#define BAND_LINE "BAND."
 
 #define SECONDS_A_MINUTE 60
 // TIME_SET runs to the end of the year 2100
@@ -308,6 +310,61 @@ static int apply_stack(struct control *c, const char *value, char *why, int room
 	bands[band].place = atoi(value);
 	go_to_the_place(band);
 	return 0;
+}
+
+// The bands' places are kept from one start to the next, with the rest of
+// the settings; settings.c says when. Each band has a line:
+//
+//     BAND.40M=1 7088000:LSB 7000000:CW 7040000:CW 7074000:USB
+//
+// the place it is at, and the frequency and the mode of each of its places.
+// The place the radio is at now is brought up to date first, since it is
+// otherwise noted only when the band or the place is left.
+void radio_save_bands(FILE *file) {
+	int band;
+	int place;
+
+	save_band_state();
+	for (band = 0; band < BANDS; band++) {
+		fprintf(file, "%s%s=%d", BAND_LINE, bands[band].name, bands[band].place);
+		for (place = 0; place < STACK_DEPTH; place++)
+			fprintf(file, " %d:%s", bands[band].stack[place].hz,
+				bands[band].stack[place].mode);
+		fprintf(file, "\n");
+	}
+}
+
+// takes a band's line, if it is one and all of it is right: every frequency
+// within the band, and every mode one the radio has. Says whether it did
+int radio_load_band(const char *name, const char *value) {
+	struct band_place stack[STACK_DEPTH];
+	const char *at = value;
+	int used;
+	int place;
+	int band;
+	int i;
+
+	if (strncmp(name, BAND_LINE, strlen(BAND_LINE)))
+		return 0;
+	band = find_band(name + strlen(BAND_LINE));
+	if (band == NO_BAND)
+		return 0;
+	if (sscanf(at, "%d%n", &place, &used) != 1 || place < 0 || place >= STACK_DEPTH)
+		return 0;
+	at += used;
+	for (i = 0; i < STACK_DEPTH; i++) {
+		if (sscanf(at, " %d:%31s%n", &stack[i].hz, stack[i].mode, &used) != 2)
+			return 0;
+		at += used;
+		if (stack[i].hz < bands[band].low_hz || stack[i].hz > bands[band].high_hz
+				|| modem_find(stack[i].mode) == NULL)
+			return 0;
+	}
+	memcpy(bands[band].stack, stack, sizeof(stack));
+	bands[band].place = place;
+	if (band == find_band(control_get("BAND")))
+		tell_the_place(band);
+	return 1;
 }
 
 static int apply_audio(struct control *c, const char *value, char *why, int room) {

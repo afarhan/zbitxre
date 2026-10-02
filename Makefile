@@ -123,10 +123,10 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c hw/radio_clock.c
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lm
 
-$(BUILD)/test_server: tests/test_server.c radio.c server.c radio.h server.h control.h \
-		$(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c $(DSP) $(STAND_INS) \
-		-lm
+$(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c radio.h server.h \
+		settings.h control.h $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c $(DSP) \
+		$(STAND_INS) -lm
 
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
 	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_keyer.c modems/cw_keyer.c -lm
