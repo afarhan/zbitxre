@@ -30,6 +30,15 @@
 // each with its macro's label, and a touch sends that macro; modem_cw.c
 // says where the macros come from.
 //
+// In USB, LSB and AM the bottom row has MIC, and two buttons, TX and RX:
+// a touch on TX starts transmitting and a touch on RX stops it. The
+// author wants the two apart, a button to start a voice transmission and
+// another to end it, and not one button that does either by turns. TX is
+// red while the radio transmits, and RX has the bright edge while it
+// receives. They are worked by touch alone: the knob never selects them,
+// so a click of the knob cannot key the transmitter. 2TONE has the same
+// two buttons.
+//
 // SET opens the settings and LOG the logbook, which are in screens.cpp.
 // TERM and MENU are for the keyboard and whatever else; neither is written
 // yet, so those buttons are shown dim and do nothing.
@@ -186,10 +195,21 @@ struct place {
 	int16_t w;
 };
 
+//what is at a place on the bottom row: a control, shown with its value and
+//changed by the knob once it is touched; or, where a choice is named, a
+//button with a label of its own, that puts the control at that choice when
+//it is touched, and is filled with its colour while the control is there
+struct footer_tile {
+	const char *control;
+	const char *choice;
+	const char *label;
+	uint32_t fill_in_force;
+};
+
 //what a mode has on the bottom row
 struct footer {
 	const char *group;
-	const char *controls[FOOTER_TILES];
+	struct footer_tile tiles[FOOTER_TILES];
 };
 
 static const struct place places[] = {
@@ -215,8 +235,15 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM" }
 #define MACRO_CONTROL "MACRO"
 
 static const struct footer footers[] = {
-	{"VOICE", {"MIC", "TX", NULL, NULL, NULL, NULL}},
-	{"2TONE", {"TX", NULL, NULL, NULL, NULL, NULL}},
+	{"VOICE", {
+		{"MIC", NULL, NULL, COLOUR_BOX},
+		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
+		{"TX", "OFF", "RX", COLOUR_BOX},
+	}},
+	{"2TONE", {
+		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
+		{"TX", "OFF", "RX", COLOUR_BOX},
+	}},
 };
 #define FOOTERS ((int)(sizeof(footers) / sizeof(footers[0])))
 
@@ -228,6 +255,8 @@ static struct widget freq_widget;
 static struct widget placed[PLACES];
 static struct widget band_widget[BANDS];
 static struct widget footer_widget[FOOTER_TILES];
+static struct widget footer_button[FOOTER_TILES];
+static const struct footer *footer_in_use;
 static struct widget list_widget[LIST_ROWS];
 static lv_obj_t *span_label;
 
@@ -403,6 +432,13 @@ static void mode_group(char *group, int room){
 		snprintf(group, room, "VOICE");
 }
 
+//the button at a place on the bottom row, if the mode in use has one there
+static const struct footer_tile *footer_button_at(int which){
+	if (footer_in_use == NULL || footer_in_use->tiles[which].choice == NULL)
+		return NULL;
+	return &footer_in_use->tiles[which];
+}
+
 static bool has_a_place(const struct panel_control *c){
 	int i;
 
@@ -417,6 +453,8 @@ static bool has_a_place(const struct panel_control *c){
 	}
 	for (i = 0; i < FOOTER_TILES; i++){
 		if (footer_widget[i].control == c)
+			return true;
+		if (footer_button_at(i) != NULL && !strcmp(footer_button_at(i)->control, c->d.name))
 			return true;
 	}
 	return false;
@@ -439,10 +477,12 @@ static void lay_out(){
 		if (!strcmp(footers[i].group, group))
 			footer = &footers[i];
 	}
+	footer_in_use = footer;
 	for (i = 0; i < FOOTER_TILES; i++){
 		footer_widget[i].control = NULL;
-		if (footer != NULL && footer->controls[i] != NULL)
-			footer_widget[i].control = controls_find(footer->controls[i]);
+		if (footer != NULL && footer->tiles[i].control != NULL
+				&& footer->tiles[i].choice == NULL)
+			footer_widget[i].control = controls_find(footer->tiles[i].control);
 	}
 
 	listed_count = 0;
@@ -655,6 +695,31 @@ static void show_macros(){
 	}
 }
 
+//the bottom row's buttons of the mode in use: each has the bright edge and
+//its own colour while its control is at its choice, so that TX is red while
+//the radio transmits and RX is marked while it receives
+static void show_footer_buttons(){
+	const struct footer_tile *tile;
+	bool is_in_force;
+	uint32_t fill;
+	int i;
+
+	for (i = 0; i < FOOTER_TILES; i++){
+		tile = footer_button_at(i);
+		if (tile == NULL || controls_find(tile->control) == NULL){
+			set_hidden(footer_button[i].box, true);
+			continue;
+		}
+		is_in_force = controls_is(tile->control, tile->choice);
+		fill = COLOUR_BOX;
+		if (is_in_force)
+			fill = tile->fill_in_force;
+		label_show(footer_button[i].value, tile->label);
+		show_look(&footer_button[i], is_in_force, fill);
+		set_hidden(footer_button[i].box, false);
+	}
+}
+
 static void show(){
 	int i;
 
@@ -669,6 +734,7 @@ static void show(){
 		else
 			show_tile(&footer_widget[i], "");
 	}
+	show_footer_buttons();
 	show_macros();
 	show_list();
 }
@@ -748,6 +814,36 @@ static void band_touched(const char *band){
 	else if (c != NULL && stack != NULL)
 		change_to_the_next_number(stack);
 	show();
+}
+
+//a button of the bottom row: its control is put at its choice. Touched
+//again while the control is there already, it does nothing
+static void footer_button_touched(int which){
+	const struct footer_tile *tile = footer_button_at(which);
+	struct panel_control *c;
+
+	if (tile == NULL)
+		return;
+	c = controls_find(tile->control);
+	if (c != NULL)
+		change_to_the_choice(c, tile->choice);
+	show();
+}
+
+static void on_footer_button_touched(lv_event_t *e){
+	footer_button_touched((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+//the place of the bottom row's button that has this label, for the serial
+//port's stand-in for a touch
+static int footer_button_labelled(const char *label){
+	int i;
+
+	for (i = 0; i < FOOTER_TILES; i++){
+		if (footer_button_at(i) != NULL && !strcmp(footer_button_at(i)->label, label))
+			return i;
+	}
+	return NOWHERE;
 }
 
 static void on_band_touched(lv_event_t *e){
@@ -946,6 +1042,16 @@ static void screen_create(){
 	for (i = 0; i < FOOTER_TILES; i++)
 		tile_create(&footer_widget[i], WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP, TILE_WIDTH,
 			&lv_font_montserrat_16);
+	for (i = 0; i < FOOTER_TILES; i++){
+		footer_button[i].box = box_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
+			TILE_WIDTH, ROW_HEIGHT);
+		lv_obj_add_event_cb(footer_button[i].box, on_footer_button_touched,
+			LV_EVENT_CLICKED, (void *)(intptr_t)i);
+		footer_button[i].value = text_create(footer_button[i].box,
+			&lv_font_montserrat_16, COLOUR_VALUE);
+		lv_obj_align(footer_button[i].value, LV_ALIGN_CENTER, 0, 0);
+		lv_obj_add_flag(footer_button[i].box, LV_OBJ_FLAG_HIDDEN);
+	}
 
 	for (i = 0; i < LIST_ROWS; i++)
 		row_create(&list_widget[i], LIST_LEFT, LIST_TOP + i * ROW_HEIGHT, LIST_WIDTH);
@@ -1103,9 +1209,11 @@ void main_knob_held(){
 }
 
 //what a touch would select, by name, for trying the screen from the serial
-//port: FREQ, LIST, or a control's name
+//port: FREQ, LIST, a button of the bottom row by its label, TX or RX, or a
+//control's name
 void main_select(const char *name){
 	struct panel_control *c = controls_find(name);
+	int button = footer_button_labelled(name);
 	int i;
 
 	for (i = 0; i < BANDS; i++){
@@ -1128,6 +1236,8 @@ void main_select(const char *name){
 		select_the_list(NOWHERE);
 	else if (!strcmp(name, "SPECTRUM"))
 		on_spectrum_touched(NULL);
+	else if (button != NOWHERE)
+		footer_button_touched(button);
 	else if (c != NULL && has_a_place(c))
 		select_a_control(c);
 	for (i = 0; i < listed_count; i++){

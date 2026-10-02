@@ -54,7 +54,8 @@
 // no hand on the panel: '+' and '-' are a step of the knob each way, 'k' is
 // a click and 'h' a long press. '@' and a name and a new line select what a
 // touch would: @FREQ, @LIST, @SPECTRUM, a band, @40M, a macro's button,
-// @F1, a control, @WPM, or the settings, @SET; and with the settings up, a
+// @F1, the voice modes' buttons, @TX and @RX, a control, @WPM, or the
+// settings, @SET; and with the settings up, a
 // row of them, @CALLSIGN, or @BACK. '=' and a text control's
 // name, a space, the text and a new line do what typing the text on the
 // panel and saving it would: =MYCALLSIGN VU2ESE.

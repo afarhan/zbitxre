@@ -27,7 +27,9 @@
 //   DRIVE   the transmitter's drive, 0 to 100. The core scales it for the
 //           band the radio is on.
 //   MIC     the gain of the sound card's input from the microphone, 0 to
-//           100.
+//           100. It is in the group VOICE, so that the panel and the
+//           desktop's window show it in USB, LSB and AM and in no other
+//           mode: it is of no use in CW or 2TONE.
 //   AGC     how fast the receiver's gain follows the signal: OFF, SLOW, MED
 //           or FAST, as in zbitxv2, which starts with SLOW.
 //   TX      OFF or ON: whether the radio is transmitting. Setting it ON
@@ -462,7 +464,7 @@ static struct control drive = {
 };
 
 static struct control mic = {
-	.group = "RADIO", .name = "MIC", .kind = CONTROL_NUMBER,
+	.group = "VOICE", .name = "MIC", .kind = CONTROL_NUMBER,
 	.min = 0, .max = GAIN_MAX, .step = 1,
 	.value = STARTING_MIC, .apply = apply_mic,
 };
