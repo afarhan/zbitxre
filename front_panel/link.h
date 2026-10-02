@@ -32,6 +32,10 @@ extern "C" {
 #define LINK_VOLUME 2
 #define LINK_SPECTRUM 3
 #define LINK_DESCRIBE 4
+// a line of text for the panel's status bar, as a kept, counted value: no
+// more than LINK_SAY_MAX characters, with no zero at its end
+#define LINK_SAY 5
+#define LINK_SAY_MAX 48
 // the radio numbers the rest of its controls from here, in the order of
 // its table, and tells the panel which is which by describing them
 #define LINK_FIRST_DESCRIBED 8

@@ -82,6 +82,9 @@
 //     least, greatest, step     four bytes each, low byte first
 //     name, group, choices      each ended by a zero byte
 //
+// LINK_SAY is a line of text for the panel's status bar, sent the same
+// way, kept and counted.
+//
 // The radio describes its controls when the panel says HELLO, and says
 // their values only when the last description has been taken, since a value
 // means nothing to a panel that has not been told whose it is.

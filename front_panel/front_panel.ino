@@ -52,7 +52,7 @@
 // The knob can be worked from the serial port, for trying the screen with
 // no hand on the panel: '+' and '-' are a step of the knob each way, 'k' is
 // a click and 'h' a long press. '@' and a name and a new line select what a
-// touch would: @FREQ, @LIST, or a control, @WPM.
+// touch would: @FREQ, @LIST, @SPECTRUM, a band, @40M, or a control, @WPM.
 //
 // Painting the display is what puts the hash in the receiver. To find what
 // quietens it, '2' and '4' drive the display's pins at 2 and 4 mA with slow

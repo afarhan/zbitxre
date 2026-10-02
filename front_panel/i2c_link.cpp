@@ -60,6 +60,10 @@ static volatile int ready_count;
 static struct said said_list[SAID_MAX];
 static volatile int said_count;
 
+//a line for the status bar, kept until loop() shows it
+static char said_text[LINK_SAY_MAX + 1];
+static volatile bool is_text_said;
+
 static volatile unsigned long times_read;
 static volatile unsigned long times_written;
 static volatile unsigned long said_and_lost;
@@ -87,6 +91,11 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		waterfall_update(bytes);
 	if (control == LINK_DESCRIBE)
 		controls_stage(bytes, count);
+	if (control == LINK_SAY && count <= LINK_SAY_MAX){
+		memcpy(said_text, bytes, count);
+		said_text[count] = 0;
+		is_text_said = true;
+	}
 }
 
 static void on_request(){
@@ -130,6 +139,7 @@ void i2c_link_changed(int control, int32_t value){
 
 void i2c_link_slice(){
 	static struct said said[SAID_MAX];
+	char text[LINK_SAY_MAX + 1];
 	int count;
 	int i;
 
@@ -137,6 +147,13 @@ void i2c_link_slice(){
 	//said after them are shown
 	if (controls_slice())
 		main_controls_described();
+	if (is_text_said){
+		noInterrupts();
+		memcpy(text, said_text, sizeof(text));
+		is_text_said = false;
+		interrupts();
+		main_status(text);
+	}
 	if (said_count == 0)
 		return;
 	noInterrupts();

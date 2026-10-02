@@ -90,6 +90,18 @@ int panel_is_waiting(int control) {
 	return link_is_waiting(&radio_end, control);
 }
 
+// a line of text for the panel's status bar; a newer one replaces one that
+// has not gone yet
+void panel_say(const char *text) {
+	static uint8_t line[LINK_SAY_MAX];
+	size_t count = strlen(text);
+
+	if (count > LINK_SAY_MAX)
+		count = LINK_SAY_MAX;
+	memcpy(line, text, count);
+	link_offer_kept_bytes(&radio_end, LINK_SAY, line, (int)count);
+}
+
 void panel_set_polling(int on) {
 	is_polling = on;
 }

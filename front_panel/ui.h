@@ -73,5 +73,6 @@ void main_knob_turned(int steps);
 void main_knob_clicked();
 void main_knob_held();
 void main_select(const char *name);
+void main_status(const char *text);
 void main_note(const char *text);
 void main_note_large(const char *text);

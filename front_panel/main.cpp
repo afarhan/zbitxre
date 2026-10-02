@@ -7,22 +7,44 @@
 //
 // The author laid the screen out, and the places are exact to the pixel.
 // Every widget is 48 high, as on the zbitx's shipping panel, and all but
-// the frequency are 48 wide. The screen is 480 by 320:
+// the frequency and the list's rows are 48 wide. The screen is 480 by 320:
 //
-//   y 0     BAND | FREQ 144 | RIT, AGC, DRIVE, IF, VOL | MENU
+//   y 0     STEP | FREQ 144 | RIT, SPLIT, DRIVE, AGC, IF, VOL
 //   y 48    a button for each band, 10M to 80M, and MODE
-//   y 96    on the left, 288 wide: the graph, 64 rows, the waterfall, 96,
-//           and 16 rows kept for a meter; waterfall.cpp paints them
-//   y 272   on the left: six buttons, the mode's own
-//   y 96    on the right, 192 wide, to the bottom: the list, a title of 32
-//           and four rows of 48
+//   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
+//           beside it, 288 wide: the graph, 64 rows, and the waterfall,
+//           96; waterfall.cpp paints them. The span is shown in their top
+//           left corner. Under them a line of text, 16 high: the status
+//           bar, for what the radio has to say, and for what CW is read
+//           when there is a decoder
+//           on the right, 144 wide: the list, three rows of 48
+//   y 272   six buttons under the waterfall, the mode's own: its macros in
+//           CW; and MENU at the right end
 //
-// The top row is the frequency and the radio's core controls. A band's
-// button goes to that band at a touch. The bottom row is for what a mode
-// needs often: WPM in CW. Whatever else there is, of the panel's own
-// tuning controls and of the radio's that belong to the radio as a whole
-// or to the mode in use, is in the list. The waterfall is not made deeper
-// to fill the screen: waterfall.cpp says why.
+// The top row is the frequency and the radio's core controls. Whatever
+// else the radio has, that belongs to the radio as a whole or to the mode
+// in use, is in the list: in CW that is WPM, PITCH and the rest. The
+// waterfall is not made deeper to fill the screen: waterfall.cpp says why.
+//
+// LOG, SET, TERM and MENU are for the other screens, the logbook, the
+// settings and the keyboard, and the macros are to send what the radio
+// keeps for them. None of those is written yet, so these buttons are
+// shown dim and do nothing.
+//
+// The frequency is shown with the VFO in use before it, A: or B:, and a
+// click of the knob while the frequency is selected goes to the other VFO.
+//
+// RIT and SPLIT are red while they are on. The author's reason: they are
+// switched on and then forgotten.
+//
+// A band's button goes to that band at a touch. A touch on the button of
+// the band already in use goes to the next place in that band's stack,
+// and from the last to the first; the radio keeps the stack, radio.c says
+// how.
+//
+// A touch on the graph or the waterfall goes to the next span, and from
+// the narrowest back to the widest. The radio makes the line of the
+// spectrum for the span it is told, tools/sdr.c says how.
 //
 // WHAT IS SHOWN
 //
@@ -42,8 +64,9 @@
 // selected. The knob has three jobs, and which it does is plain from what
 // was touched.
 //
-//   The frequency   turning tunes. The panel starts here, and a long press
-//                   of the knob comes back here from anywhere.
+//   The frequency   turning tunes, and a click goes to the other VFO. The
+//                   panel starts here, and a long press of the knob comes
+//                   back here from anywhere.
 //   A control in    turning changes its value, and the radio follows as it
 //   the top rows    turns. A click moves a choice to its next choice, and
 //   or the bottom   round from the last to the first, so RIT is switched
@@ -54,12 +77,11 @@
 //                   click takes the marked row up, and turning then changes
 //                   its value; another click goes back to scrolling. A
 //                   touch on a row selects the list with the mark on that
-//                   row; a touch on the list's title selects it with the
-//                   mark where it was.
+//                   row.
 //
 // What is selected has a bright edge. A control whose value the knob is
-// changing is filled as well. While the list is being scrolled its title
-// is filled, and the marked row has the bright edge.
+// changing is filled as well. In the list the marked row has the bright
+// edge while the knob scrolls, and is filled while the knob changes it.
 //
 // TUNING
 //
@@ -82,6 +104,7 @@
 #include <lvgl.h>
 #include "link.h"
 #include "controls.h"
+#include "waterfall.h"
 #include "ui.h"
 
 #define ROW_HEIGHT 48
@@ -89,14 +112,17 @@
 #define FREQ_LEFT 48
 #define FREQ_WIDTH 144
 #define MENU_LEFT 432
+#define COLUMN_BUTTONS 3
+#define MACROS 6
+#define STATUS_HEIGHT 16
+#define STATUS_SHOWN_MAX 44
 #define BANDS 9
 #define FOOTER_TOP 272
 #define FOOTER_TILES 6
-#define LIST_LEFT 288
+#define LIST_LEFT 336
 #define LIST_TOP 96
-#define LIST_WIDTH 192
-#define LIST_TITLE_HEIGHT 32
-#define LIST_ROWS 4
+#define LIST_WIDTH 144
+#define LIST_ROWS 3
 
 #define TITLE_LEFT 3
 #define TITLE_TOP 1
@@ -108,6 +134,7 @@
 #define COLOUR_SCREEN 0x000000
 #define COLOUR_BOX 0x101820
 #define COLOUR_TAKEN_UP 0x604800
+#define COLOUR_SWITCHED_ON 0xB02020
 #define COLOUR_TITLE 0x90A0B0
 #define COLOUR_VALUE 0xFFFFFF
 #define COLOUR_DIM 0x506070
@@ -155,12 +182,13 @@ struct footer {
 };
 
 static const struct place places[] = {
-	{"BAND", "BAND", 0, 0, TILE_WIDTH},
+	{"STEP", "STEP", 0, 0, TILE_WIDTH},
 	{"RIT", "RIT", 192, 0, TILE_WIDTH},
-	{"AGC", "AGC", 240, 0, TILE_WIDTH},
+	{"SPLIT", "SPLIT", 240, 0, TILE_WIDTH},
 	{"DRIVE", "DRIVE", 288, 0, TILE_WIDTH},
-	{"IF", "IF", 336, 0, TILE_WIDTH},
-	{"AUDIO", "VOL", 384, 0, TILE_WIDTH},
+	{"AGC", "AGC", 336, 0, TILE_WIDTH},
+	{"IF", "IF", 384, 0, TILE_WIDTH},
+	{"AUDIO", "VOL", 432, 0, TILE_WIDTH},
 	{"MODE", "MODE", 432, ROW_HEIGHT, TILE_WIDTH},
 };
 #define PLACES ((int)(sizeof(places) / sizeof(places[0])))
@@ -170,12 +198,12 @@ static const char *const band_names[BANDS] = {
 	"10M", "12M", "15M", "17M", "20M", "30M", "40M", "60M", "80M",
 };
 
-//the panel's own controls that are in the list, ahead of the radio's
-static const char *const own_listed[] = { "STEP", "SPLIT", "VFO" };
-#define OWN_LISTED ((int)(sizeof(own_listed) / sizeof(own_listed[0])))
+//the buttons down the left, and the macros' on the bottom row in CW
+static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM" };
+static const char *const macro_names[MACROS] = { "F1", "F2", "F3", "F4", "F5", "F6" };
+#define MACRO_GROUP "CW"
 
 static const struct footer footers[] = {
-	{"CW", {"WPM", "PITCH", NULL, NULL, NULL, NULL}},
 	{"VOICE", {"MIC", "TX", NULL, NULL, NULL, NULL}},
 	{"2TONE", {"TX", NULL, NULL, NULL, NULL, NULL}},
 };
@@ -183,14 +211,14 @@ static const struct footer footers[] = {
 
 lv_obj_t *main_screen = NULL;
 
-static struct widget menu_widget;
+static lv_obj_t *macro_box[MACROS];
+static lv_obj_t *status_label;
 static struct widget freq_widget;
 static struct widget placed[PLACES];
 static struct widget band_widget[BANDS];
 static struct widget footer_widget[FOOTER_TILES];
 static struct widget list_widget[LIST_ROWS];
-static lv_obj_t *list_title_box;
-static lv_obj_t *list_title;
+static lv_obj_t *span_label;
 
 //the controls in the list, the row at the top of what is in view, and the
 //row that is marked
@@ -352,7 +380,8 @@ static void mode_group(char *group, int room){
 static bool has_a_place(const struct panel_control *c){
 	int i;
 
-	if (c == freq_widget.control)
+	//the band has its row of buttons
+	if (c == freq_widget.control || !strcmp(c->d.name, "BAND"))
 		return true;
 	for (i = 0; i < PLACES; i++){
 		if (placed[i].control == c)
@@ -389,11 +418,6 @@ static void lay_out(){
 	}
 
 	listed_count = 0;
-	for (i = 0; i < OWN_LISTED; i++){
-		c = controls_find(own_listed[i]);
-		if (c != NULL)
-			listed[listed_count++] = c;
-	}
 	for (i = 0; i < controls_count(); i++){
 		c = controls_at(i);
 		if (c->d.number == NOT_ON_THE_LINK || has_a_place(c))
@@ -475,14 +499,24 @@ static void show_widget(struct widget *w, const char *label, bool has_edge,
 }
 
 //a control in the top rows or the bottom row: selected, the knob changes it
+//RIT and SPLIT are red while they are on
+static bool is_switched_on(const struct panel_control *c){
+	if (c == NULL || (strcmp(c->d.name, "RIT") && strcmp(c->d.name, "SPLIT")))
+		return false;
+	return controls_is(c->d.name, "ON");
+}
+
 static void show_tile(struct widget *w, const char *label){
 	bool is_selected = selected == ON_A_CONTROL && w->control == selected_control;
 
 	show_widget(w, label, is_selected, is_selected);
+	if (is_switched_on(w->control))
+		lv_obj_set_style_bg_color(w->box, lv_color_hex(COLOUR_SWITCHED_ON), 0);
 }
 
 static void show_frequency(){
 	char text[SHOWN_MAX];
+	char dial[SHOWN_MAX];
 	char title[SHOWN_MAX];
 
 	snprintf(title, sizeof(title), "FREQ");
@@ -492,7 +526,8 @@ static void show_frequency(){
 	}
 	if (note_text[0] != 0 && !note_is_large)
 		snprintf(title, sizeof(title), "%s", note_text);
-	format_frequency(text, sizeof(text), receiver_hz());
+	format_frequency(dial, sizeof(dial), receiver_hz());
+	snprintf(text, sizeof(text), "%c:%s", vfo_in_use == VFO_B ? 'B' : 'A', dial);
 	if (note_is_large)
 		snprintf(text, sizeof(text), "%s", note_text);
 	lv_label_set_text(freq_widget.title, title);
@@ -501,9 +536,6 @@ static void show_frequency(){
 }
 
 static void show_list(){
-	char group[CONTROL_TEXT_MAX];
-	struct widget title;
-	bool is_scrolling = selected == ON_THE_LIST && !is_changing_the_marked_row;
 	bool is_marked;
 	int i;
 
@@ -519,10 +551,16 @@ static void show_list(){
 		show_widget(&list_widget[i], label_of(list_widget[i].control), is_marked,
 			is_marked && is_changing_the_marked_row);
 	}
-	mode_group(group, sizeof(group));
-	lv_label_set_text(list_title, group);
-	title.box = list_title_box;
-	show_edge(&title, is_scrolling, is_scrolling);
+}
+
+static void show_span(){
+	struct panel_control *span = controls_find("SPAN");
+	char text[CONTROL_TEXT_MAX];
+
+	text[0] = 0;
+	if (span != NULL)
+		controls_value_text(span, text, sizeof(text));
+	lv_label_set_text(span_label, text);
 }
 
 //a band's button has the bright edge while the radio is on that band
@@ -533,11 +571,26 @@ static void show_bands(){
 		show_edge(&band_widget[i], controls_is("BAND", band_names[i]), false);
 }
 
+//the macros' buttons are there in CW only
+static void show_macros(){
+	char group[CONTROL_TEXT_MAX];
+	int i;
+
+	mode_group(group, sizeof(group));
+	for (i = 0; i < MACROS; i++){
+		if (!strcmp(group, MACRO_GROUP))
+			lv_obj_remove_flag(macro_box[i], LV_OBJ_FLAG_HIDDEN);
+		else
+			lv_obj_add_flag(macro_box[i], LV_OBJ_FLAG_HIDDEN);
+	}
+}
+
 static void show(){
 	int i;
 
 	show_frequency();
 	show_bands();
+	show_span();
 	for (i = 0; i < PLACES; i++)
 		show_tile(&placed[i], places[i].label);
 	for (i = 0; i < FOOTER_TILES; i++){
@@ -546,6 +599,7 @@ static void show(){
 		else
 			show_tile(&footer_widget[i], "");
 	}
+	show_macros();
 	show_list();
 }
 
@@ -605,13 +659,38 @@ static void change_to_the_choice(struct panel_control *c, const char *choice){
 	}
 }
 
-//a band's button: the radio goes to that band, and what is selected stays
-static void on_band_touched(lv_event_t *e){
-	const char *band = (const char *)lv_event_get_user_data(e);
-	struct panel_control *c = controls_find("BAND");
+//a number moves on by one step, and round from its greatest to its least
+static void change_to_the_next_number(struct panel_control *c){
+	if (c->value >= c->d.max)
+		change(c, -(int)((c->d.max - c->d.min) / (c->d.step > 0 ? c->d.step : 1)));
+	else
+		change(c, 1);
+}
 
-	if (c != NULL)
+//a band's button: the radio goes to that band, or if it is on that band
+//already, to the next place in the band's stack. What is selected stays
+static void band_touched(const char *band){
+	struct panel_control *c = controls_find("BAND");
+	struct panel_control *stack = controls_find("STACK");
+
+	if (c != NULL && !controls_is("BAND", band))
 		change_to_the_choice(c, band);
+	else if (c != NULL && stack != NULL)
+		change_to_the_next_number(stack);
+	show();
+}
+
+static void on_band_touched(lv_event_t *e){
+	band_touched((const char *)lv_event_get_user_data(e));
+}
+
+//a touch on the graph or the waterfall: the next span
+static void on_spectrum_touched(lv_event_t *e){
+	struct panel_control *span = controls_find("SPAN");
+
+	(void)e;
+	if (span != NULL)
+		change_to_the_next_choice(span);
 	show();
 }
 
@@ -643,8 +722,6 @@ static void on_touched(lv_event_t *e){
 
 	if (w == &freq_widget)
 		select_the_frequency();
-	else if (w == NULL)
-		select_the_list(NOWHERE);
 	else if (w->control != NULL){
 		for (i = 0; i < LIST_ROWS; i++){
 			if (w == &list_widget[i])
@@ -704,7 +781,18 @@ static void row_create(struct widget *w, int x, int y, int width){
 	lv_obj_align(w->value, LV_ALIGN_RIGHT_MID, -ROW_PAD, 0);
 }
 
+//a button for something that is not written yet
+static lv_obj_t *dim_button_create(int x, int y, const char *label){
+	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
+	lv_obj_t *text = text_create(box, &lv_font_montserrat_12, COLOUR_DIM);
+
+	lv_label_set_text(text, label);
+	lv_obj_align(text, LV_ALIGN_CENTER, 0, 0);
+	return box;
+}
+
 static void screen_create(){
+	lv_obj_t *spectrum;
 	int i;
 
 	lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(COLOUR_SCREEN), 0);
@@ -717,13 +805,15 @@ static void screen_create(){
 	lv_obj_set_style_pad_all(main_screen, 0, 0);
 	lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-	//MENU will open the other screens; there are none yet, so it is dim
-	menu_widget.box = box_create(MENU_LEFT, 0, TILE_WIDTH, ROW_HEIGHT);
-	menu_widget.value = text_create(menu_widget.box, &lv_font_montserrat_12, COLOUR_DIM);
-	lv_label_set_text(menu_widget.value, "MENU");
-	lv_obj_align(menu_widget.value, LV_ALIGN_CENTER, 0, 0);
+	//what these are for is not written yet, so they are dim and do nothing
+	for (i = 0; i < COLUMN_BUTTONS; i++)
+		dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, column_names[i]);
+	for (i = 0; i < MACROS; i++)
+		macro_box[i] = dim_button_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
+			macro_names[i]);
+	dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
 
-	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_24);
+	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_20);
 	for (i = 0; i < PLACES; i++)
 		tile_create(&placed[i], places[i].x, places[i].y, places[i].w,
 			&lv_font_montserrat_16);
@@ -737,16 +827,29 @@ static void screen_create(){
 		lv_obj_align(band_widget[i].value, LV_ALIGN_CENTER, 0, 0);
 	}
 	for (i = 0; i < FOOTER_TILES; i++)
-		tile_create(&footer_widget[i], i * TILE_WIDTH, FOOTER_TOP, TILE_WIDTH,
+		tile_create(&footer_widget[i], WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP, TILE_WIDTH,
 			&lv_font_montserrat_16);
 
-	list_title_box = box_create(LIST_LEFT, LIST_TOP, LIST_WIDTH, LIST_TITLE_HEIGHT);
-	lv_obj_add_event_cb(list_title_box, on_touched, LV_EVENT_CLICKED, NULL);
-	list_title = text_create(list_title_box, &lv_font_montserrat_14, COLOUR_TITLE);
-	lv_obj_align(list_title, LV_ALIGN_CENTER, 0, 0);
 	for (i = 0; i < LIST_ROWS; i++)
-		row_create(&list_widget[i], LIST_LEFT,
-			LIST_TOP + LIST_TITLE_HEIGHT + i * ROW_HEIGHT, LIST_WIDTH);
+		row_create(&list_widget[i], LIST_LEFT, LIST_TOP + i * ROW_HEIGHT, LIST_WIDTH);
+
+	//nothing of LVGL's is drawn over the graph and the waterfall but the
+	//span in their corner, which waterfall.cpp leaves unpainted; the rest
+	//is only there to be touched
+	spectrum = lv_obj_create(main_screen);
+	lv_obj_remove_style_all(spectrum);
+	lv_obj_set_size(spectrum, WATERFALL_WIDTH, WATERFALL_HEIGHT);
+	lv_obj_align(spectrum, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
+	lv_obj_add_event_cb(spectrum, on_spectrum_touched, LV_EVENT_CLICKED, NULL);
+	span_label = text_create(spectrum, &lv_font_montserrat_12, COLOUR_TITLE);
+	lv_obj_align(span_label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, TITLE_TOP);
+
+	//the status bar, between the waterfall and the bottom row
+	status_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_VALUE);
+	lv_obj_set_size(status_label, WATERFALL_WIDTH - 2 * TITLE_LEFT, STATUS_HEIGHT);
+	lv_label_set_long_mode(status_label, LV_LABEL_LONG_CLIP);
+	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
+		WATERFALL_TOP + WATERFALL_HEIGHT);
 }
 
 /* what the rest of the panel calls */
@@ -786,6 +889,16 @@ void main_radio_says(int number, int32_t value){
 	show();
 }
 
+//a line of text in the status bar; of one that is too long, the end is
+//shown, since what is newest is at the end
+void main_status(const char *text){
+	size_t length = strlen(text);
+
+	if (length > STATUS_SHOWN_MAX)
+		text += length - STATUS_SHOWN_MAX;
+	lv_label_set_text(status_label, text);
+}
+
 //a few words in the corner of the frequency's box, for whatever is being tried
 void main_note(const char *text){
 	note_is_large = false;
@@ -820,6 +933,10 @@ void main_knob_turned(int steps){
 }
 
 void main_knob_clicked(){
+	struct panel_control *vfo = controls_find("VFO");
+
+	if (selected == ON_FREQUENCY && vfo != NULL)
+		change_to_the_next_choice(vfo);
 	if (selected == ON_A_CONTROL && selected_control != NULL)
 		change_to_the_next_choice(selected_control);
 	if (selected == ON_THE_LIST && listed_count > 0)
@@ -838,10 +955,16 @@ void main_select(const char *name){
 	struct panel_control *c = controls_find(name);
 	int i;
 
+	for (i = 0; i < BANDS; i++){
+		if (!strcmp(name, band_names[i]))
+			band_touched(band_names[i]);
+	}
 	if (!strcmp(name, "FREQ"))
 		select_the_frequency();
 	else if (!strcmp(name, "LIST"))
 		select_the_list(NOWHERE);
+	else if (!strcmp(name, "SPECTRUM"))
+		on_spectrum_touched(NULL);
 	else if (c != NULL && has_a_place(c))
 		select_a_control(c);
 	for (i = 0; i < listed_count; i++){

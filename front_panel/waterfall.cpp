@@ -14,13 +14,16 @@
 //
 // WHAT IS KEPT
 //
-// It is 288 pixels wide, six widgets' width, on the left of the screen, with the list of
+// It is 288 pixels wide, six widgets' width, with a column of buttons on its left and the list of
 // controls beside it; main.cpp has the whole layout.
 //
 // The waterfall is kept as the points themselves, a byte each, 96 lines
 // of 144. They are kept in a ring, so that a new line costs nothing to put
 // in; only where the newest line is, is moved. A point is two pixels wide
 // on the screen.
+//
+// The corner at the top left, 40 by 16, is not painted here: main.cpp
+// shows the span there.
 //
 // HOW IT IS PAINTED
 //
@@ -65,11 +68,11 @@
 #include "ili9488.h"
 #include "waterfall.h"
 
-#define LEFT 0
-#define WIDTH 288
+#define LEFT WATERFALL_LEFT
+#define WIDTH WATERFALL_WIDTH
 #define PIXELS_A_POINT (WIDTH / WATERFALL_POINTS)
 
-#define GRAPH_TOP 96
+#define GRAPH_TOP WATERFALL_TOP
 #define GRAPH_ROWS 64
 #define FALL_TOP (GRAPH_TOP + GRAPH_ROWS)
 #define FALL_ROWS WATERFALL_ALL_ROWS
@@ -227,19 +230,37 @@ static void make_a_row(int row){
 	}
 }
 
-static void paint_rows(int first, int count){
+//rows of one kind are painted: all of them from "from" across to the
+//right edge
+static void paint_rows_from(int first, int count, int from){
 	int row;
 
-
-	ili_set_window(LEFT, GRAPH_TOP + first, WIDTH, count);
+	if (count <= 0)
+		return;
+	ili_set_window(LEFT + from, GRAPH_TOP + first, WIDTH - from, count);
 	for (row = first; row < first + count; row++){
 		make_a_row(row);
-		ili_push_pixels(row_pixels, WIDTH);
+		ili_push_pixels(row_pixels + from, WIDTH - from);
 		if (copy_to_serial){
-			Serial.printf("AREA %d %d %d %d\n", LEFT, GRAPH_TOP + row, WIDTH, 1);
-			Serial.write((const uint8_t *)row_pixels, sizeof(row_pixels));
+			Serial.printf("AREA %d %d %d %d\n", LEFT + from, GRAPH_TOP + row,
+				WIDTH - from, 1);
+			Serial.write((const uint8_t *)(row_pixels + from),
+				(WIDTH - from) * sizeof(row_pixels[0]));
 		}
 	}
+}
+
+//the top rows are painted from the right of the corner that is kept for
+//the span, and the rest from the left edge
+static void paint_rows(int first, int count){
+	int in_the_corner = WATERFALL_CORNER_ROWS - first;
+
+	if (in_the_corner < 0)
+		in_the_corner = 0;
+	if (in_the_corner > count)
+		in_the_corner = count;
+	paint_rows_from(first, in_the_corner, WATERFALL_CORNER_WIDTH);
+	paint_rows_from(first + in_the_corner, count - in_the_corner, 0);
 }
 
 void waterfall_slice(void){

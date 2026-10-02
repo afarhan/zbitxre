@@ -41,6 +41,10 @@
 // before it will transmit again. And however the program ends, by "quit",
 // by its input ending or by a signal, it goes to receive first.
 //
+// The panel has a status bar, a line of text. The radio puts there what it
+// found at the start check, and why it refused a change the panel asked
+// for. hw/panel.c's panel_say() sends it.
+//
 // From the panel it takes a new value for any control, over the link that
 // hw/panel.c keeps. When the radio starts, and when the panel says HELLO,
 // which it does when it starts, the panel is told what controls there are
@@ -54,6 +58,11 @@
 // that the noise sits a little above the bottom. spectrum_plot runs from
 // the highest frequency down, so the line is turned round to have the
 // lowest frequency first.
+//
+// SPAN is the program's own control, for the panel: 25K, 10K, 6K or 2.5K is
+// how much of the spectrum the line shows, the tuned frequency staying in
+// the middle. The author's panel steps it when the waterfall is touched.
+// It is in the group PANEL, so that no client's list shows it.
 //
 // Ten times a second, while a network client has asked for it, it sends the
 // same spectrum at the full resolution of the bins, 534 points, one to a
@@ -184,6 +193,7 @@
 #define SPECTRUM_ADDED_DB 30
 #define SPECTRUM_HIGHEST 255
 #define SPECTRUM_HZ_PER_BIN 46.875
+#define HZ_PER_K 1000.0
 #define CLIENT_SPECTRUM_EVERY_MS 100
 
 // what is measured: 3 kHz either side of the tuned frequency, which is bin
@@ -266,17 +276,45 @@ static uint8_t spectrum_level(int bin) {
 	return (uint8_t)level;
 }
 
+// SPAN is how much of the spectrum the panel's line shows, the tuned
+// frequency staying in the middle: "25K" is all of it, "2.5K" a tenth
+static int span_bins = SPECTRUM_BINS;
+
+static int apply_span(struct control *c, const char *value, char *why, int room) {
+	int bins = (int)(atof(value) * HZ_PER_K / SPECTRUM_HZ_PER_BIN + 0.5);
+
+	(void)c;
+	(void)why;
+	(void)room;
+	if (bins > SPECTRUM_BINS)
+		bins = SPECTRUM_BINS;
+	if (bins < 1)
+		bins = 1;
+	span_bins = bins;
+	return 0;
+}
+
+static struct control span = {
+	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
+	.choices = "25K/10K/6K/2.5K",
+	.value = "25K", .apply = apply_span,
+};
+
+// with a narrow span there are fewer bins than points, and a bin is then
+// shown at more than one point
 static void spectrum_line_fill(void) {
+	int span_first_bin = SPECTRUM_FIRST_BIN + (SPECTRUM_BINS - span_bins) / 2;
 	int first_bin;
 	int after_last_bin;
 	int level;
 	int point;
 
 	for (point = 0; point < LINK_SPECTRUM_POINTS; point++) {
-		first_bin = SPECTRUM_FIRST_BIN
-			+ (point * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
-		after_last_bin = SPECTRUM_FIRST_BIN
-			+ ((point + 1) * SPECTRUM_BINS) / LINK_SPECTRUM_POINTS;
+		first_bin = span_first_bin + (point * span_bins) / LINK_SPECTRUM_POINTS;
+		after_last_bin = span_first_bin
+			+ ((point + 1) * span_bins) / LINK_SPECTRUM_POINTS;
+		if (after_last_bin <= first_bin)
+			after_last_bin = first_bin + 1;
 		level = max_bin_level(first_bin, after_last_bin) + SPECTRUM_ADDED_DB;
 		if (level < 0)
 			level = 0;
@@ -372,6 +410,7 @@ static void start_check_report(const int32_t *samples) {
 	char when[START_CHECK_NAME_MAX];
 	char name[START_CHECK_NAME_MAX * 2];
 	char said[KERNEL_LOG_LINE_MAX];
+	char for_panel[LINK_SAY_MAX + 1];
 	const char *guess = "looks normal";
 	const char *sync = "no";
 	time_t now = time(NULL);
@@ -391,6 +430,8 @@ static void start_check_report(const int32_t *samples) {
 		ripple_db, period_hz / HZ_PER_KHZ, sync, guess);
 	printf("%s\n", said);
 	fflush(stdout);
+	snprintf(for_panel, sizeof(for_panel), "start: ripple %.1f dB, %s", ripple_db, guess);
+	panel_say(for_panel);
 
 	file = fopen(START_CHECK_LOG, "a");
 	if (file != NULL) {
@@ -504,8 +545,11 @@ static void on_control_changed(const struct control *c, int origin) {
 static void set_setting(const char *name, const char *value, int origin) {
 	char why[CONTROL_WHY_MAX];
 
-	if (control_set(name, value, origin, why, sizeof(why)) < 0)
+	if (control_set(name, value, origin, why, sizeof(why)) < 0) {
 		printf("ERROR %s %s\n", name, why);
+		if (origin == ORIGIN_PANEL)
+			panel_say(why);
+	}
 }
 
 static void on_panel_record(int control, int32_t value) {
@@ -764,6 +808,7 @@ int main(int argc, char **argv) {
 
 	panel_open();
 	radio_open();
+	control_register(&span);
 	control_on_change(on_control_changed);
 	if (hz != NULL)
 		set_setting("FREQ", hz, ORIGIN_TERMINAL);

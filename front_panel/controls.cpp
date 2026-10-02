@@ -49,6 +49,19 @@ void controls_forget_staged(){
 	staged_is_new = false;
 }
 
+static bool is_staged(int number){
+	int i;
+
+	for (i = 0; i < staged_count; i++){
+		if (staged[i].number == number)
+			return true;
+	}
+	return false;
+}
+
+//a control that is described a second time means that the radio has begun
+//describing afresh, as it does when the panel says HELLO just after the
+//radio has started: what was staged of the first telling is dropped
 void controls_stage(const uint8_t *bytes, int bytes_count){
 	struct link_description d;
 	int at = 0;
@@ -66,6 +79,8 @@ void controls_stage(const uint8_t *bytes, int bytes_count){
 			staged_is_new = true;
 			return;
 		}
+		if (is_staged(d.number))
+			staged_count = 0;
 		if (staged_count < CONTROLS_MAX){
 			staged[staged_count] = d;
 			staged_count = staged_count + 1;
