@@ -1,24 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// panel_log.c — the logbook's newest contacts, listed for the front panel.
+// panel_log.c — the logbook's newest entries, listed for the front panel.
 //
 // The panel's LOG screen shows the logbook. The panel has no room for a
-// logbook, so it asks the radio, which keeps it, for the newest contacts:
+// logbook, so it asks the radio, which keeps it, for the newest entries:
 // LINK_LOG_LINES_MAX of them, a hundred, which is what the panel has
 // memory to hold. zbitxv2 sent its panel fifty.
 //
-// LOG is a control, an action, with one thing it does: LIST. The panel
-// sets it when its LOG screen is opened; "LOG LIST" from the terminal does
-// the same, and prints the list.
+// The author's rule: a request for the logbook always carries what is
+// searched for, the beginning of a callsign, which is empty when the screen
+// is first opened and then means every station. So the request is a text,
+// sent as the panel sends any text, in parts, with LINK_LOG_LIST where a
+// control's number would be. "log=VU2" on the terminal asks the same, and
+// "log=" for all; the list is printed there too.
 //
-// A contact goes to the panel as a line of text, the fields with a | between
+// An entry is never changed, but a bad one can be deleted: the panel asks,
+// after the operator has said yes, with the entry's number and the same
+// search, and is sent the list of that search afresh.
+//
+// An entry goes to the panel as a line of text, the fields with a | between
 // them, in the order the panel shows them, which is the order zbitxv2's
 // panel showed them in:
 //
 //     972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59
 //
-// the contact's number in the logbook, the date and the time in UTC, the
+// the entry's number in the logbook, the date and the time in UTC, the
 // frequency in kHz, the mode, the other station's callsign, what was sent
 // and what was received. The last two are the report, and the exchange
 // after it if there was one: "-14 MK97".
@@ -29,9 +36,9 @@
 // For the thread that owns the controls.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "control.h"
 #include "link.h"
 #include "logbook.h"
 #include "panel.h"
@@ -49,6 +56,7 @@ static int row_count;
 static uint8_t part[LINK_COUNTED_MAX];
 static int next_to_send = NOTHING_TO_SEND;
 static int is_list_wanted;
+static char searched_for[LOGBOOK_FIELD_MAX];
 
 // a report and its exchange, as they are shown together
 static void join(char *joined, int room, const char *report, const char *exchange) {
@@ -84,12 +92,12 @@ static void read_the_logbook(void) {
 	char line[LINK_LOG_LINE_MAX + 1];
 	int i;
 
-	row_count = logbook_latest(rows, LINK_LOG_LINES_MAX);
+	row_count = logbook_find(searched_for, rows, LINK_LOG_LINES_MAX);
 	if (row_count < 0) {
 		printf("log: the logbook cannot be read\n");
 		row_count = 0;
 	}
-	printf("log: %d contacts\n", row_count);
+	printf("log: %d entries with \"%s\"\n", row_count, searched_for);
 	for (i = 0; i < row_count; i++) {
 		make_a_line(line, &rows[i]);
 		printf("log: %s\n", line);
@@ -130,24 +138,50 @@ void panel_log_poll(void) {
 	send_a_part();
 }
 
-static int apply_log(struct control *c, const char *value, char *why, int room) {
-	(void)c;
-	(void)value;
-	(void)why;
-	(void)room;
+// the newest entries with stations whose callsign begins as given are to
+// be listed, on the terminal and to the panel
+void panel_log_list(const char *callsign) {
+	snprintf(searched_for, sizeof(searched_for), "%.*s", LOGBOOK_FIELD_MAX - 1, callsign);
 	is_list_wanted = 1;
-	return 0;
 }
 
-static struct control log_control = {
-	.group = "SYSTEM", .name = "LOG", .kind = CONTROL_ACTION,
-	.choices = "LIST", .apply = apply_log,
-};
+// the panel asks for an entry to be deleted: its number, a tab, and what
+// the list is being searched for. The entry is deleted and the list of
+// that same search is made again, so that the panel shows the logbook as it
+// now is without the search being lost
+static void delete_and_list(char *asked) {
+	char *callsign = strchr(asked, LINK_LOG_BETWEEN);
+	int id = atoi(asked);
 
-// opens the logbook and registers LOG; a radio with no logbook file still
-// has the control, and lists nothing
-int panel_log_open(const char *path) {
+	if (callsign == NULL)
+		return;
+	callsign++;
+	if (logbook_delete(id) < 0) {
+		printf("log: entry %d could not be deleted\n", id);
+		panel_say("log: the entry could not be deleted");
+	}
+	else
+		printf("log: entry %d deleted\n", id);
+	panel_log_list(callsign);
+}
+
+// the panel's requests, each a text in parts: when one is whole it is done
+void panel_log_took_bytes(int control, const uint8_t *bytes, int count) {
+	static char gathered[LINK_TEXT_MAX + 1];
+	int number = 0;
+
+	if (control != LINK_TEXT_PART)
+		return;
+	if (link_get_text_part(bytes, count, &number, gathered, sizeof(gathered)) != 1)
+		return;
+	if (number == LINK_LOG_LIST)
+		panel_log_list(gathered);
+	if (number == LINK_LOG_DELETE)
+		delete_and_list(gathered);
+}
+
+// opens the logbook; a radio with no logbook file lists nothing
+void panel_log_open(const char *path) {
 	if (logbook_open(path) < 0)
 		printf("log: there is no logbook at %s\n", path);
-	return control_register(&log_control);
 }

@@ -22,4 +22,5 @@ struct logbook_row {
 
 int logbook_open(const char *path);
 void logbook_close(void);
-int logbook_latest(struct logbook_row *rows, int room);
+int logbook_find(const char *callsign, struct logbook_row *rows, int room);
+int logbook_delete(int id);

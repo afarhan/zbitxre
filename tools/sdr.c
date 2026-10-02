@@ -48,9 +48,10 @@
 // volume given when the program is started comes after it and is what the
 // radio starts with.
 //
-// "LOG LIST" lists the newest contacts in the logbook, data/sbitx.db, on
-// the terminal and to the panel, whose LOG screen asks for it; panel_log.c
-// and logbook.c say how.
+// "log=VU2" lists the newest entries in the logbook, data/sbitx.db, with
+// stations whose callsign begins VU2, and "log=" with any station, on the
+// terminal and to the panel, whose LOG screen asks for the same;
+// panel_log.c and logbook.c say how.
 //
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
@@ -207,6 +208,7 @@
 #define SNAPSHOT_CHANNELS 2
 #define SETTINGS_FILE "data/user_settings.ini"
 #define LOGBOOK_FILE "data/sbitx.db"
+#define LOG_FOR "log="
 
 #define START_CHECK_AFTER_MS 3000
 #define START_CHECK_REOPENINGS 3
@@ -675,6 +677,7 @@ static void on_panel_bytes(int control, const uint8_t *bytes, int count) {
 	if (name != NULL)
 		set_setting(name, text, ORIGIN_PANEL);
 	panel_wifi_took_bytes(control, bytes, count, now_ms());
+	panel_log_took_bytes(control, bytes, count);
 	fflush(stdout);
 }
 
@@ -744,6 +747,11 @@ static void handle_command(char *line) {
 	if (strcmp(line, "bfo=on") == 0) {
 		si5351_set_freq(BFO_CLOCK, bfo_freq);
 		si5351_reset_plls();
+		printf("ok\n");
+		return;
+	}
+	if (begins_with(line, LOG_FOR)) {
+		panel_log_list(line + strlen(LOG_FOR));
 		printf("ok\n");
 		return;
 	}

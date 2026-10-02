@@ -56,12 +56,18 @@ extern "C" {
 #define LINK_WIFI_KEY_MIN 8
 #define LINK_WIFI_KEY_MAX 63
 
-// the newest contacts in the logbook, for the panel's LOG screen: a part of
+// the newest entries in the logbook, for the panel's LOG screen: a part of
 // the list, as a kept, counted value; link.c says what is in a part
 #define LINK_LOG_LIST 8
 #define LINK_LOG_PART_HEADER 2
 #define LINK_LOG_LINE_MAX 63
 #define LINK_LOG_LINES_MAX 100
+// an entry to be deleted from the logbook: a text from the panel, in parts
+// as any text is, with this for its control: the entry's number in the
+// logbook, LINK_LOG_BETWEEN, and what the list is being searched for, so
+// that the list sent back after it is of the same search
+#define LINK_LOG_DELETE 9
+#define LINK_LOG_BETWEEN '\t'
 
 struct link_wifi_point {
 	int8_t signal_dbm;

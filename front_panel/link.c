@@ -83,17 +83,23 @@
 //
 // THE LOGBOOK
 //
-// The radio lists the newest contacts in the logbook when the panel asks,
+// The radio lists the newest entries in the logbook when the panel asks,
 // the newest first, no more than LINK_LOG_LINES_MAX of them. The list goes
 // as the kept, counted value of LINK_LOG_LIST, in parts as the access
 // points do:
 //
 //     first      one byte, which place in the list this part's first
-//                contact has, counted from 0
+//                entry has, counted from 0
 //     last       one byte, 1 if the list ends with this part, or else 0
-//     and for each contact in the part a line of text, ended by a zero
+//     and for each entry in the part a line of text, ended by a zero
 //     byte, no longer than LINK_LOG_LINE_MAX; panel_log.c on the radio says
 //     what is in a line
+//
+// The panel asks for the list with a text whose control is LINK_LOG_LIST,
+// the beginning of a callsign to search for, or nothing for every station.
+// It asks for an entry to be deleted with a text whose control is
+// LINK_LOG_DELETE: the entry's number, a tab, and the same search, and
+// the radio sends the list of that search again when it has deleted it.
 //
 // THE RADIO DESCRIBES ITS CONTROLS
 //
