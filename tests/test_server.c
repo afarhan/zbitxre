@@ -729,6 +729,26 @@ int main(void) {
 	expect(has(heard, "FREQ 14074000\n"),
 		"back on 20 m, the radio is where it was left on 20 m");
 
+	say(one, "BAND 40M\n");
+	hear(one, heard);
+	say(one, "FREQ 7090000\n");
+	say(one, "STACK 1\n");
+	hear(one, heard);
+	expect(has(heard, "FREQ 7000000\n") && has(heard, "MODE CW\n"),
+		"STACK 1 goes to the second place of the band's stack, in its mode");
+	say(one, "STACK 0\n");
+	hear(one, heard);
+	expect(has(heard, "FREQ 7090000\n") && has(heard, "MODE LSB\n"),
+		"and STACK 0 comes back to where the first place was left");
+	say(one, "STACK 1\n");
+	say(one, "BAND 20M\n");
+	hear(one, heard);
+	expect(has(heard, "STACK 0\n") && has(heard, "FREQ 14074000\n"),
+		"another band is at its own place, and STACK says which");
+	say(one, "STACK 4\n");
+	hear(one, heard);
+	expect(has(heard, "ERROR STACK"), "a place the stack does not have is an ERROR");
+
 	say(one, "FREQ 1\n");
 	hear(one, heard);
 	hear(other, other_heard);

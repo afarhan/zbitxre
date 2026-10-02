@@ -47,6 +47,17 @@
 // at a frequency of its own, below 10 MHz in LSB and above it in USB, as is
 // usual.
 //
+// A band has four such memories, its stack, as in zbitxv2, and is at one
+// of them. STACK, 0 to 3, says which, and setting it goes to another:
+// where the operator is now is kept in the one being left. The author's
+// panel steps it when the button of the band already in use is pressed.
+// The three places after the first begin much as zbitxv2's do: the bottom
+// of the band and a second frequency for CW, and one for the digital modes
+// in USB. They are not all zbitxv2's own figures, some of which sat on a
+// band's upper edge or past it; the author is to set them as he wants them.
+// STACK is in a group of its own, BAND, so that a client's list of the
+// radio's controls does not show it.
+//
 // THE PASSBAND FOLLOWS THE MODE
 //
 // The core keeps one passband and does not change it with the mode. Each
@@ -86,24 +97,42 @@
 
 #define NO_BAND (-1)
 
-struct band {
-	const char *name;
-	int low_hz;
-	int high_hz;
+#define STACK_DEPTH 4
+
+struct band_place {
 	int hz;
 	char mode[CONTROL_VALUE_MAX];
 };
 
+struct band {
+	const char *name;
+	int low_hz;
+	int high_hz;
+	int place;
+	struct band_place stack[STACK_DEPTH];
+};
+
+// each band's first place is where it has always opened; the header says
+// where the three after it come from
 static struct band bands[] = {
-	{ "80M",  3500000,  4000000,  3700000, "LSB" },
-	{ "60M",  5250000,  5450000,  5357000, "USB" },
-	{ "40M",  7000000,  7300000,  7088000, "LSB" },
-	{ "30M", 10100000, 10150000, 10136000, "USB" },
-	{ "20M", 14000000, 14350000, 14200000, "USB" },
-	{ "17M", 18068000, 18168000, 18130000, "USB" },
-	{ "15M", 21000000, 21450000, 21300000, "USB" },
-	{ "12M", 24890000, 24990000, 24950000, "USB" },
-	{ "10M", 28000000, 29700000, 28500000, "USB" },
+	{ "80M",  3500000,  4000000, 0,
+		{ {  3700000, "LSB" }, {  3500000, "CW" }, {  3574000, "LSB" }, {  3600000, "CW" } } },
+	{ "60M",  5250000,  5450000, 0,
+		{ {  5357000, "USB" }, {  5251500, "CW" }, {  5354000, "USB" }, {  5360000, "USB" } } },
+	{ "40M",  7000000,  7300000, 0,
+		{ {  7088000, "LSB" }, {  7000000, "CW" }, {  7040000, "CW" }, {  7074000, "USB" } } },
+	{ "30M", 10100000, 10150000, 0,
+		{ { 10136000, "USB" }, { 10100000, "CW" }, { 10110000, "CW" }, { 10150000, "USB" } } },
+	{ "20M", 14000000, 14350000, 0,
+		{ { 14200000, "USB" }, { 14000000, "CW" }, { 14040000, "CW" }, { 14074000, "USB" } } },
+	{ "17M", 18068000, 18168000, 0,
+		{ { 18130000, "USB" }, { 18068000, "CW" }, { 18100000, "CW" }, { 18110000, "USB" } } },
+	{ "15M", 21000000, 21450000, 0,
+		{ { 21300000, "USB" }, { 21100000, "CW" }, { 21040000, "CW" }, { 21074000, "USB" } } },
+	{ "12M", 24890000, 24990000, 0,
+		{ { 24950000, "USB" }, { 24890000, "CW" }, { 24910000, "CW" }, { 24915000, "USB" } } },
+	{ "10M", 28000000, 29700000, 0,
+		{ { 28500000, "USB" }, { 28000000, "CW" }, { 28040000, "CW" }, { 28074000, "USB" } } },
 };
 
 #define BANDS ((int)(sizeof(bands) / sizeof(bands[0])))
@@ -153,11 +182,23 @@ static const char *band_name(int band) {
 
 static void save_band_state(void) {
 	int band = find_band(control_get("BAND"));
+	struct band_place *place;
 
 	if (band == NO_BAND)
 		return;
-	bands[band].hz = control_get_int("FREQ");
-	snprintf(bands[band].mode, sizeof(bands[band].mode), "%s", control_get("MODE"));
+	place = &bands[band].stack[bands[band].place];
+	place->hz = control_get_int("FREQ");
+	snprintf(place->mode, sizeof(place->mode), "%s", control_get("MODE"));
+}
+
+// which place of its stack the band in use is at, for the STACK control
+static void tell_the_place(int band) {
+	char place[CONTROL_VALUE_MAX];
+
+	if (band == NO_BAND)
+		return;
+	snprintf(place, sizeof(place), "%d", bands[band].place);
+	control_update("STACK", place);
 }
 
 static void select_modem(const char *mode) {
@@ -196,27 +237,54 @@ static int apply_freq(struct control *c, const char *value, char *why, int room)
 	if (band != find_band(control_get("BAND"))) {
 		save_band_state();
 		control_update("BAND", band_name(band));
+		tell_the_place(band);
 	}
 	core_request("r1:freq", value);
 	return 0;
 }
 
+// the radio goes to the place the band's stack is at: its frequency, and
+// its mode if that is another
+static void go_to_the_place(int band) {
+	const struct band_place *place = &bands[band].stack[bands[band].place];
+	char hz[CONTROL_VALUE_MAX];
+
+	snprintf(hz, sizeof(hz), "%d", place->hz);
+	core_request("r1:freq", hz);
+	control_update("FREQ", hz);
+	if (strcmp(control_get("MODE"), place->mode)) {
+		apply_mode(NULL, place->mode, NULL, 0);
+		control_update("MODE", place->mode);
+	}
+}
+
 static int apply_band(struct control *c, const char *value, char *why, int room) {
 	int band = find_band(value);
-	char hz[CONTROL_VALUE_MAX];
 
 	(void)c;
 	(void)why;
 	(void)room;
 	stop_transmitting();
 	save_band_state();
-	snprintf(hz, sizeof(hz), "%d", bands[band].hz);
-	core_request("r1:freq", hz);
-	control_update("FREQ", hz);
-	if (strcmp(control_get("MODE"), bands[band].mode)) {
-		apply_mode(NULL, bands[band].mode, NULL, 0);
-		control_update("MODE", bands[band].mode);
+	go_to_the_place(band);
+	tell_the_place(band);
+	return 0;
+}
+
+// another place in the stack of the band in use: where the operator is now
+// is kept in the place being left
+static int apply_stack(struct control *c, const char *value, char *why, int room) {
+	int band = find_band(control_get("BAND"));
+
+	(void)c;
+	if (band == NO_BAND) {
+		snprintf(why, room, "the radio is not on a band");
+		return -1;
 	}
+	stop_transmitting();
+	save_band_state();
+	bands[band].place = atoi(value);
+	go_to_the_place(band);
 	return 0;
 }
 
@@ -284,6 +352,12 @@ static struct control band = {
 	.value = STARTING_BAND, .apply = apply_band,
 };
 
+static struct control stack = {
+	.group = "BAND", .name = "STACK", .kind = CONTROL_NUMBER,
+	.min = 0, .max = STACK_DEPTH - 1, .step = 1,
+	.value = "0", .apply = apply_stack,
+};
+
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
 	.choices = "USB/LSB/CW/CWR/AM/2TONE",
@@ -328,6 +402,7 @@ static struct control tx = {
 
 int radio_open(void) {
 	if (control_register(&freq) < 0 || control_register(&band) < 0
+			|| control_register(&stack) < 0
 			|| control_register(&mode) < 0 || control_register(&audio) < 0
 			|| control_register(&if_gain) < 0 || control_register(&drive) < 0
 			|| control_register(&mic) < 0 || control_register(&agc) < 0
