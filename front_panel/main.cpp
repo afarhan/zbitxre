@@ -167,6 +167,11 @@ struct widget {
 	lv_obj_t *title;
 	lv_obj_t *value;
 	struct panel_control *control;
+	//how its edge and its fill were last drawn, so that they are drawn
+	//again only when they change
+	bool is_look_known;
+	bool has_bright_edge;
+	uint32_t fill;
 };
 
 //a control that has a place of its own in the top two rows
@@ -472,38 +477,54 @@ static const char *label_of(const struct panel_control *c){
 	return c->d.name;
 }
 
-static void show_edge(struct widget *w, bool has_focus, bool is_taken_up){
+//a label is given its text only if the text is new, and a widget is shown or
+//hidden only if it was not already. LVGL takes every setting of a text, a
+//colour or a flag as a change and paints that part of the screen again,
+//and when more than 32 parts are to be painted it paints the whole screen.
+//Painting the whole screen at every step of the knob blanked the waterfall
+//and held the knob up, which the author saw as the tuning stalling
+static void label_show(lv_obj_t *label, const char *text){
+	if (strcmp(lv_label_get_text(label), text) != 0)
+		lv_label_set_text(label, text);
+}
+
+static void set_hidden(lv_obj_t *box, bool is_hidden){
+	if (lv_obj_has_flag(box, LV_OBJ_FLAG_HIDDEN) == is_hidden)
+		return;
+	if (is_hidden)
+		lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
+	else
+		lv_obj_remove_flag(box, LV_OBJ_FLAG_HIDDEN);
+}
+
+//a widget's edge is bright while it is selected, and it is filled with the
+//colour given
+static void show_look(struct widget *w, bool has_bright_edge, uint32_t fill){
 	uint32_t edge = COLOUR_WITHOUT;
-	uint32_t fill = COLOUR_BOX;
 	int width = BORDER_WITHOUT;
 
-	if (has_focus){
+	if (w->is_look_known && w->has_bright_edge == has_bright_edge && w->fill == fill)
+		return;
+	w->is_look_known = true;
+	w->has_bright_edge = has_bright_edge;
+	w->fill = fill;
+	if (has_bright_edge){
 		edge = COLOUR_WITH_FOCUS;
 		width = BORDER_WITH_FOCUS;
 	}
-	if (is_taken_up)
-		fill = COLOUR_TAKEN_UP;
 	lv_obj_set_style_border_color(w->box, lv_color_hex(edge), 0);
 	lv_obj_set_style_border_width(w->box, width, 0);
 	lv_obj_set_style_bg_color(w->box, lv_color_hex(fill), 0);
 }
 
-static void show_widget(struct widget *w, const char *label, bool has_edge,
-		bool is_filled){
-	char text[SHOWN_MAX];
+static void show_edge(struct widget *w, bool has_focus, bool is_taken_up){
+	uint32_t fill = COLOUR_BOX;
 
-	if (w->control == NULL){
-		lv_obj_add_flag(w->box, LV_OBJ_FLAG_HIDDEN);
-		return;
-	}
-	lv_obj_remove_flag(w->box, LV_OBJ_FLAG_HIDDEN);
-	controls_value_text(w->control, text, sizeof(text));
-	lv_label_set_text(w->title, label);
-	lv_label_set_text(w->value, text);
-	show_edge(w, has_edge, is_filled);
+	if (is_taken_up)
+		fill = COLOUR_TAKEN_UP;
+	show_look(w, has_focus, fill);
 }
 
-//a control in the top rows or the bottom row: selected, the knob changes it
 //RIT and SPLIT are red while they are on
 static bool is_switched_on(const struct panel_control *c){
 	if (c == NULL || (strcmp(c->d.name, "RIT") && strcmp(c->d.name, "SPLIT")))
@@ -511,12 +532,29 @@ static bool is_switched_on(const struct panel_control *c){
 	return controls_is(c->d.name, "ON");
 }
 
+static void show_widget(struct widget *w, const char *label, bool has_edge,
+		bool is_filled){
+	char text[SHOWN_MAX];
+
+	if (w->control == NULL){
+		set_hidden(w->box, true);
+		return;
+	}
+	set_hidden(w->box, false);
+	controls_value_text(w->control, text, sizeof(text));
+	label_show(w->title, label);
+	label_show(w->value, text);
+	if (is_switched_on(w->control))
+		show_look(w, has_edge, COLOUR_SWITCHED_ON);
+	else
+		show_edge(w, has_edge, is_filled);
+}
+
+//a control in the top rows or the bottom row: selected, the knob changes it
 static void show_tile(struct widget *w, const char *label){
 	bool is_selected = selected == ON_A_CONTROL && w->control == selected_control;
 
 	show_widget(w, label, is_selected, is_selected);
-	if (is_switched_on(w->control))
-		lv_obj_set_style_bg_color(w->box, lv_color_hex(COLOUR_SWITCHED_ON), 0);
 }
 
 static void show_frequency(){
@@ -535,8 +573,8 @@ static void show_frequency(){
 	snprintf(text, sizeof(text), "%c:%s", vfo_in_use == VFO_B ? 'B' : 'A', dial);
 	if (note_is_large)
 		snprintf(text, sizeof(text), "%s", note_text);
-	lv_label_set_text(freq_widget.title, title);
-	lv_label_set_text(freq_widget.value, text);
+	label_show(freq_widget.title, title);
+	label_show(freq_widget.value, text);
 	show_edge(&freq_widget, selected == ON_FREQUENCY, false);
 }
 
@@ -565,7 +603,7 @@ static void show_span(){
 	text[0] = 0;
 	if (span != NULL)
 		controls_value_text(span, text, sizeof(text));
-	lv_label_set_text(span_label, text);
+	label_show(span_label, text);
 }
 
 //a band's button has the bright edge while the radio is on that band
@@ -588,14 +626,14 @@ static void show_macros(){
 	mode_group(group, sizeof(group));
 	for (i = 0; i < MACROS; i++){
 		if (macro == NULL || strcmp(group, MACRO_GROUP) || i >= controls_choices(macro)){
-			lv_obj_add_flag(macro_widget[i].box, LV_OBJ_FLAG_HIDDEN);
+			set_hidden(macro_widget[i].box, true);
 			continue;
 		}
 		one = *macro;
 		one.value = i;
 		controls_value_text(&one, label, sizeof(label));
-		lv_label_set_text(macro_widget[i].value, label);
-		lv_obj_remove_flag(macro_widget[i].box, LV_OBJ_FLAG_HIDDEN);
+		label_show(macro_widget[i].value, label);
+		set_hidden(macro_widget[i].box, false);
 	}
 }
 

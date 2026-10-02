@@ -9,6 +9,9 @@
 
 #include <time.h>
 
+// 2026-01-01 00:00:00 UTC: no zbitx with this program existed before it
+#define RADIO_CLOCK_EARLIEST 1767225600LL
+
 enum radio_clock_source {
 	RADIO_CLOCK_NOT_SET,
 	RADIO_CLOCK_SET_BY_HAND,
@@ -25,8 +28,6 @@ struct radio_clock_readings {
 };
 typedef void (*radio_clock_read_fn)(struct radio_clock_readings *readings);
 
-int radio_clock_open(void);
 enum radio_clock_source radio_clock_now(time_t *now);
 void radio_clock_set_by_hand(time_t utc);
-void radio_clock_poll(long now_ms);
 void radio_clock_set_reading(radio_clock_read_fn read);

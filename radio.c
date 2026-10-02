@@ -40,6 +40,15 @@
 //           group of their own, STATION. The macros put them in. They are
 //           not yet remembered from one start to the next.
 //
+//   CLOCK, TIME_SET   the radio's time, in a group of their own, SYSTEM.
+//           CLOCK is the time in UTC, to the minute, and where it comes
+//           from: "2026-10-02 13:47 NTP", RTC or SET, or "NOT SET". The
+//           radio says it afresh each minute, and it cannot be set.
+//           TIME_SET is the time the operator gives when the radio has
+//           none: minutes since the start of 2026, in UTC, taken as the
+//           start of that minute at the moment it is set. hw/radio_clock.c
+//           says where the time comes from and why it is kept as it is.
+//
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.
 //
@@ -76,9 +85,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "sdr.h"
 #include "control.h"
+#include "radio_clock.h"
 #include "modem.h"
 #include "radio.h"
 
@@ -100,6 +111,13 @@
 #define ANSWER_MAX 100
 
 #define NO_BAND (-1)
+
+#define SECONDS_A_MINUTE 60
+// TIME_SET runs to the end of the year 2100
+#define TIME_SET_MAX_MINUTES 39445919
+#define TIME_SAID_EVERY_MS 1000
+
+static long next_time_said_ms;
 
 #define STACK_DEPTH 4
 
@@ -406,6 +424,55 @@ static struct control my_grid = {
 	.group = "STATION", .name = "MYGRID", .kind = CONTROL_TEXT,
 };
 
+// the radio's time is said afresh when it is asked for and each second
+// after; control_update() tells the clients only when it has changed, which
+// is each minute, or when where the time comes from changes
+static void say_the_time(void) {
+	static const char *const from[] = { "", "SET", "RTC", "NTP" };
+	char text[CONTROL_VALUE_MAX];
+	char when[CONTROL_VALUE_MAX];
+	struct tm utc;
+	time_t now;
+	enum radio_clock_source source = radio_clock_now(&now);
+
+	if (source == RADIO_CLOCK_NOT_SET)
+		snprintf(text, sizeof(text), "NOT SET");
+	else {
+		gmtime_r(&now, &utc);
+		strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &utc);
+		snprintf(text, sizeof(text), "%.20s %s", when, from[source]);
+	}
+	control_update("CLOCK", text);
+}
+
+static int apply_time_set(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	radio_clock_set_by_hand((time_t)(RADIO_CLOCK_EARLIEST
+		+ atoll(value) * SECONDS_A_MINUTE));
+	next_time_said_ms = 0;
+	return 0;
+}
+
+static int apply_clock(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)value;
+	snprintf(why, room, "the clock is set with TIME_SET");
+	return -1;
+}
+
+static struct control clock_control = {
+	.group = "SYSTEM", .name = "CLOCK", .kind = CONTROL_TEXT,
+	.value = "NOT SET", .apply = apply_clock,
+};
+
+static struct control time_set = {
+	.group = "SYSTEM", .name = "TIME_SET", .kind = CONTROL_NUMBER,
+	.min = 0, .max = TIME_SET_MAX_MINUTES, .step = 1,
+	.value = "0", .apply = apply_time_set,
+};
+
 static struct control tx = {
 	.group = "RADIO", .name = "TX", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
@@ -419,7 +486,8 @@ int radio_open(void) {
 			|| control_register(&if_gain) < 0 || control_register(&drive) < 0
 			|| control_register(&mic) < 0 || control_register(&agc) < 0
 			|| control_register(&tx) < 0 || control_register(&my_callsign) < 0
-			|| control_register(&my_grid) < 0)
+			|| control_register(&my_grid) < 0 || control_register(&clock_control) < 0
+			|| control_register(&time_set) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);
@@ -428,5 +496,14 @@ int radio_open(void) {
 	core_request("tx_power", drive.value);
 	core_request("tx_gain", mic.value);
 	core_request("r1:agc", agc.value);
+	say_the_time();
 	return 0;
+}
+
+// what the radio does by itself as time passes: it says the time
+void radio_poll(long now_ms) {
+	if (now_ms < next_time_said_ms)
+		return;
+	next_time_said_ms = now_ms + TIME_SAID_EVERY_MS;
+	say_the_time();
 }

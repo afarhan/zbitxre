@@ -23,10 +23,15 @@ uint32_t draw_buf[DRAW_BUF_SIZE / 4];
 /* user interface */
 /* LVGL calls it when a rendered image needs to copied to the display*/
 static bool copying_to_serial = false;
+//how much LVGL has painted, to tell how much of the screen a change costs
+static unsigned long flushes;
+static unsigned long pixels_flushed;
 
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map){
     int32_t w = area->x2 - area->x1 + 1;
     int32_t h = area->y2 - area->y1 + 1;
+    flushes++;
+    pixels_flushed += (unsigned long)w * h;
     if (copying_to_serial){
       Serial.printf("AREA %d %d %d %d\n", (int)area->x1, (int)area->y1, (int)w, (int)h);
       Serial.write(px_map, (size_t)w * h * sizeof(uint16_t));
@@ -217,6 +222,14 @@ void ui_init(){
   else
 	  coverflow();
 */
+}
+
+/* how much LVGL has painted since this was last asked */
+void ui_report(){
+  Serial.printf("screen: painted %lu times, %lu pixels, since the last report\n",
+    flushes, pixels_flushed);
+  flushes = 0;
+  pixels_flushed = 0;
 }
 
 /* sends the whole screen, as LVGL draws it, to whoever is on the serial port.

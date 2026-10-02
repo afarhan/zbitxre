@@ -807,6 +807,15 @@ int main(void) {
 	hear(one, heard);
 	expect(has(heard, "ERROR STACK"), "a place the stack does not have is an ERROR");
 
+	say(one, "CLOCK 2030-01-01 00:00 SET\n");
+	say(one, "TIME_SET 39445920\n");
+	hear(one, heard);
+	expect(has(heard, "ERROR CLOCK") && has(heard, "ERROR TIME_SET"),
+		"CLOCK cannot be set, nor a time given that is after the year 2100");
+	say(one, "TIME_SET 395387\n");
+	hear(one, heard);
+	expect(!has(heard, "ERROR"), "a time in 2026 is taken");
+
 	say(one, "FREQ 1\n");
 	hear(one, heard);
 	hear(other, other_heard);

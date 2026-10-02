@@ -175,6 +175,7 @@ void on_serial(int c) {
   if (c == ASK_ABOUT_LINK) {
     i2c_link_report();
     waterfall_report();
+    ui_report();
   }
   if (c == ASK_TO_PAINT) {
     waterfall_set_painting(true);

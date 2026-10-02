@@ -6,3 +6,4 @@
 #pragma once
 
 int radio_open(void);
+void radio_poll(long now_ms);

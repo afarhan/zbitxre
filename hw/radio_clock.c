@@ -39,23 +39,17 @@
 // daemon clears the kernel's "unsynchronised" flag when it has the time.
 //
 // It was read from a chip that had the time if the chip now reads later
-// than EARLIEST_REAL_TIME, the start of 2026, before which no zbitx with
+// than RADIO_CLOCK_EARLIEST, the start of 2026, before which no zbitx with
 // this program existed, and agrees with the kernel's clock to within
 // RTC_AGREES_WITHIN_S. A chip that lost its power counts on from 2000.
 // The kernel's clock alone cannot be judged by its date: Raspberry Pi OS
 // puts back, at the start, the time it had when it was last shut down,
 // which looks likely and is wrong by however long the radio was off.
 //
-// THE CONTROLS
-//
-// In the group SYSTEM, so that no client lists them among the radio's own:
-//
-//   CLOCK      the radio's time, in UTC, to the minute, and where it comes
-//              from: "2026-10-02 13:47 NTP", RTC or SET, or "NOT SET". The
-//              radio says it afresh each minute. It cannot be set.
-//   TIME_SET   the time the operator gives: minutes since the start of
-//              2026, in UTC. It is taken as the start of that minute, at
-//              the moment it is set.
+// This file has no controls: it is among the hardware's files because it
+// is the clock chip and the kernel's clock that it reads. radio.c has the
+// two controls that show the time and take it from the operator, CLOCK and
+// TIME_SET.
 //
 // For the thread that owns the controls.
 
@@ -65,18 +59,10 @@
 #include <sys/timex.h>
 #include <time.h>
 
-#include "control.h"
 #include "radio_clock.h"
 
 #define RTC_SINCE_EPOCH "/sys/class/rtc/rtc0/since_epoch"
-// 2026-01-01 00:00:00 UTC
-#define EARLIEST_REAL_TIME 1767225600LL
 #define RTC_AGREES_WITHIN_S 5
-#define SECONDS_A_MINUTE 60
-// to the end of 2100
-#define TIME_SET_MAX_MINUTES 39445919
-#define POLL_EVERY_MS 1000
-#define CLOCK_TEXT_MAX CONTROL_VALUE_MAX
 #define NO_RTC (-1LL)
 
 static void read_the_kernel(struct radio_clock_readings *r) {
@@ -101,7 +87,6 @@ static void read_the_kernel(struct radio_clock_readings *r) {
 static radio_clock_read_fn read_readings = read_the_kernel;
 static int is_set_by_hand;
 static long long by_hand_less_since_start_s;
-static long next_poll_ms;
 
 void radio_clock_set_reading(radio_clock_read_fn read) {
 	read_readings = read;
@@ -118,7 +103,7 @@ enum radio_clock_source radio_clock_now(time_t *now) {
 	apart = r.rtc_s - r.system_s;
 	if (apart < 0)
 		apart = -apart;
-	if (r.rtc_s >= EARLIEST_REAL_TIME && apart <= RTC_AGREES_WITHIN_S)
+	if (r.rtc_s >= RADIO_CLOCK_EARLIEST && apart <= RTC_AGREES_WITHIN_S)
 		return RADIO_CLOCK_RTC;
 	if (is_set_by_hand) {
 		*now = (time_t)(by_hand_less_since_start_s + r.since_start_s);
@@ -134,64 +119,4 @@ void radio_clock_set_by_hand(time_t utc) {
 	read_readings(&r);
 	by_hand_less_since_start_s = (long long)utc - r.since_start_s;
 	is_set_by_hand = 1;
-}
-
-static void say_the_time(void) {
-	static const char *const from[] = { "", "SET", "RTC", "NTP" };
-	char text[CLOCK_TEXT_MAX];
-	char when[CLOCK_TEXT_MAX];
-	struct tm utc;
-	time_t now;
-	enum radio_clock_source source = radio_clock_now(&now);
-
-	if (source == RADIO_CLOCK_NOT_SET)
-		snprintf(text, sizeof(text), "NOT SET");
-	else {
-		gmtime_r(&now, &utc);
-		strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &utc);
-		snprintf(text, sizeof(text), "%.20s %s", when, from[source]);
-	}
-	control_update("CLOCK", text);
-}
-
-void radio_clock_poll(long now_ms) {
-	if (now_ms < next_poll_ms)
-		return;
-	next_poll_ms = now_ms + POLL_EVERY_MS;
-	say_the_time();
-}
-
-static int apply_time_set(struct control *c, const char *value, char *why, int room) {
-	(void)c;
-	(void)why;
-	(void)room;
-	radio_clock_set_by_hand((time_t)(EARLIEST_REAL_TIME
-		+ atoll(value) * SECONDS_A_MINUTE));
-	next_poll_ms = 0;
-	return 0;
-}
-
-static int apply_clock(struct control *c, const char *value, char *why, int room) {
-	(void)c;
-	(void)value;
-	snprintf(why, room, "the clock is set with TIME_SET");
-	return -1;
-}
-
-static struct control clock_control = {
-	.group = "SYSTEM", .name = "CLOCK", .kind = CONTROL_TEXT,
-	.value = "NOT SET", .apply = apply_clock,
-};
-
-static struct control time_set = {
-	.group = "SYSTEM", .name = "TIME_SET", .kind = CONTROL_NUMBER,
-	.min = 0, .max = TIME_SET_MAX_MINUTES, .step = 1,
-	.value = "0", .apply = apply_time_set,
-};
-
-int radio_clock_open(void) {
-	if (control_register(&clock_control) < 0 || control_register(&time_set) < 0)
-		return -1;
-	say_the_time();
-	return 0;
 }

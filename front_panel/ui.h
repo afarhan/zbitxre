@@ -38,6 +38,7 @@
 void ui_init();
 void ui_slice();
 void ui_screen_to_serial();
+void ui_report();
 
 // the link to the radio
 void i2c_link_init();
