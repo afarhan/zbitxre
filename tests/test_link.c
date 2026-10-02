@@ -362,6 +362,88 @@ static void check_a_spectrum(void) {
 		"a line that is lost is not sent again");
 }
 
+static const struct link_description wpm = {
+	.number = LINK_FIRST_DESCRIBED, .kind = LINK_KIND_NUMBER,
+	.min = 5, .max = 50, .step = 1, .name = "WPM", .group = "CW",
+};
+static const struct link_description mode = {
+	.number = LINK_FIRST_DESCRIBED + 1, .kind = LINK_KIND_CHOICE,
+	.name = "MODE", .group = "RADIO", .choices = "USB/LSB/CW/CWR/AM/2TONE",
+};
+static const struct link_description no_more = {
+	.number = LINK_NO_MORE_CONTROLS,
+};
+
+static int same_description(const struct link_description *a,
+		const struct link_description *b) {
+	return a->number == b->number && a->kind == b->kind && a->min == b->min
+		&& a->max == b->max && a->step == b->step
+		&& strcmp(a->name, b->name) == 0 && strcmp(a->group, b->group) == 0
+		&& strcmp(a->choices, b->choices) == 0;
+}
+
+static void check_descriptions(void) {
+	static uint8_t said[LINK_COUNTED_MAX];
+	struct link_description got;
+	int used = 0;
+	int at = 0;
+	int taken;
+
+	used += link_put_description(said + used, sizeof(said) - used, &wpm);
+	used += link_put_description(said + used, sizeof(said) - used, &mode);
+	used += link_put_description(said + used, sizeof(said) - used, &no_more);
+	taken = link_get_description(said, used, &got);
+	expect(taken > 0 && same_description(&got, &wpm),
+		"a number's description comes back as it was put");
+	at += taken;
+	taken = link_get_description(said + at, used - at, &got);
+	expect(taken > 0 && same_description(&got, &mode),
+		"and a choice's after it, with its choices");
+	at += taken;
+	taken = link_get_description(said + at, used - at, &got);
+	expect(taken == 1 && got.number == LINK_NO_MORE_CONTROLS && at + taken == used,
+		"and then the mark that there are no more");
+	expect(link_put_description(said, 20, &mode) == 0,
+		"a description is not put where there is no room for it");
+	expect(link_get_description(said, 20, &got) < 0,
+		"and one that is cut short is not taken");
+
+	start_both();
+	forget_what_was_taken();
+	link_offer_kept_bytes(&radio, LINK_DESCRIBE, said, used);
+	lose_the_word = 1;
+	one_turn();
+	lose_the_word = 0;
+	expect(lines_taken == 0 && link_is_waiting(&radio, LINK_DESCRIBE),
+		"descriptions whose frame is lost are still waiting to be said");
+	turns(3);
+	expect(lines_taken == 1 && line_control == LINK_DESCRIBE && line_count == used
+		&& memcmp(said, line_taken, used) == 0
+		&& !link_is_waiting(&radio, LINK_DESCRIBE),
+		"and are said again, taken once, and then no longer waiting");
+}
+
+static void check_sizes(void) {
+	start_both();
+	forget_what_was_taken();
+	link_offer(&panel, LINK_FIRST_DESCRIBED, 600);
+	one_turn();
+	expect(radio_took_only(LINK_FIRST_DESCRIBED, 600)
+		&& last_answer_bytes == IDLE_ANSWER_BYTES + 3,
+		"a value of 600 goes in two bytes");
+	forget_what_was_taken();
+	link_offer(&panel, LINK_FIRST_DESCRIBED, -25);
+	one_turn();
+	expect(radio_took_only(LINK_FIRST_DESCRIBED, -25),
+		"a value below zero arrives below zero");
+	forget_what_was_taken();
+	link_offer(&panel, LINK_FIRST_DESCRIBED, 40000);
+	one_turn();
+	expect(radio_took_only(LINK_FIRST_DESCRIBED, 40000)
+		&& last_answer_bytes == IDLE_ANSWER_BYTES + 5,
+		"and 40000 in four");
+}
+
 static int put_check(uint8_t *frame, int count) {
 	frame[count] = link_crc(frame, count);
 	return count + 1;
@@ -402,6 +484,8 @@ int main(void) {
 	check_the_radio_setting();
 	check_more_than_fits();
 	check_a_spectrum();
+	check_descriptions();
+	check_sizes();
 	check_frames_made_by_hand();
 
 	if (checks_failed > 0) {

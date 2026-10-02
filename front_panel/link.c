@@ -44,12 +44,47 @@
 // The size is in the record, so a control that is not known can be stepped
 // over.
 //
+// A value goes in as few bytes as hold it: one for 0 to 255, two for what
+// a signed 16 bits hold, four for anything else. Whoever takes it is told
+// the size by the record.
+//
 // A counted value is for what does not fit in four bytes. The spectrum is
-// one: a line of it is 240 bytes. A counted value is said once and not
+// one: a line of it is 144 bytes. A counted value is said once and not
 // again. If its frame is lost, it is lost, and that is right for a
 // spectrum: by the time it could be sent again there is a newer one. The
 // bytes offered are not copied. They must stay as they are until the frame
 // has been made, which is at the next poll.
+//
+// A counted value that is kept, link_offer_kept_bytes(), is said until the
+// other side has taken it, as a plain value is. Its bytes must stay as they
+// are until then; link_is_waiting() says when it has gone.
+//
+// THE RADIO DESCRIBES ITS CONTROLS
+//
+// The panel is not built knowing what controls the radio has. A modem
+// brings its own, and one written next year will bring more. So the radio
+// tells the panel: each control's number on this link, its name, the group
+// it belongs to, whether it is a number or a choice, and its least value,
+// greatest and step, or its choices with a / between them. The panel puts
+// the ones it has a place for in their places and lists the rest.
+//
+// FREQ and VOLUME keep the numbers 1 and 2 that they always had. The rest
+// are numbered from LINK_FIRST_DESCRIBED in the order of the radio's table.
+// A choice's value on the link is which of its choices it is, counted from
+// 0.
+//
+// The descriptions go as the kept, counted value of LINK_DESCRIBE, as many
+// to a frame as fit, one after another:
+//
+//     number     one byte; LINK_NO_MORE_CONTROLS, and nothing after it,
+//                when every control has been described
+//     kind       one byte
+//     least, greatest, step     four bytes each, low byte first
+//     name, group, choices      each ended by a zero byte
+//
+// The radio describes its controls when the panel says HELLO, and says
+// their values only when the last description has been taken, since a value
+// means nothing to a panel that has not been told whose it is.
 //
 // NUMBERS
 //
@@ -126,10 +161,16 @@ uint8_t link_crc(const uint8_t *bytes, int count) {
 	return crc;
 }
 
-static uint8_t bytes_of(int control) {
-	if (control == LINK_FREQ)
-		return 4;
-	return 1;
+#define ONE_BYTE_MAX 255
+#define TWO_BYTES_MIN (-32768)
+#define TWO_BYTES_MAX 32767
+
+static uint8_t bytes_for(int32_t value) {
+	if (value >= 0 && value <= ONE_BYTE_MAX)
+		return 1;
+	if (value >= TWO_BYTES_MIN && value <= TWO_BYTES_MAX)
+		return 2;
+	return 4;
 }
 
 static uint8_t size_code_of(uint8_t bytes) {
@@ -162,9 +203,10 @@ void link_offer(struct link_end *end, int control, int32_t value) {
 	c = &end->control[control];
 	c->value = value;
 	c->counted = NULL;
-	c->bytes = bytes_of(control);
+	c->bytes = bytes_for(value);
 	c->is_waiting = 1;
 	c->went_under = 0;
+	c->is_kept = 0;
 }
 
 void link_offer_bytes(struct link_end *end, int control, const uint8_t *bytes,
@@ -180,6 +222,23 @@ void link_offer_bytes(struct link_end *end, int control, const uint8_t *bytes,
 	c->bytes = (uint8_t)count;
 	c->is_waiting = 1;
 	c->went_under = 0;
+	c->is_kept = 0;
+}
+
+void link_offer_kept_bytes(struct link_end *end, int control,
+		const uint8_t *bytes, int count) {
+	if (control < 0 || control >= LINK_CONTROLS)
+		return;
+	if (bytes == NULL || count < 0 || count > LINK_COUNTED_MAX)
+		return;
+	link_offer_bytes(end, control, bytes, count);
+	end->control[control].is_kept = 1;
+}
+
+int link_is_waiting(const struct link_end *end, int control) {
+	if (control < 0 || control >= LINK_CONTROLS)
+		return 0;
+	return end->control[control].is_waiting;
 }
 
 int link_has_something_to_say(const struct link_end *end) {
@@ -260,7 +319,7 @@ int link_make_frame(struct link_end *end, uint8_t *frame) {
 			continue;
 		used += put_record(frame + used, i, c);
 		c->went_under = end->number;
-		if (c->counted != NULL)
+		if (c->counted != NULL && !c->is_kept)
 			c->is_waiting = 0;
 	}
 
@@ -371,4 +430,90 @@ int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
 	end->frames_taken++;
 	take_records(records, records_count, took, took_bytes);
 	return LINK_TOOK_RECORDS;
+}
+
+#define DESCRIPTION_NUMBERS 3
+#define DESCRIPTION_FIXED_BYTES (2 + DESCRIPTION_NUMBERS * 4)
+
+static void put_four(uint8_t *at, int32_t value) {
+	int i;
+
+	for (i = 0; i < 4; i++)
+		at[i] = (uint8_t)((uint32_t)value >> (BITS_IN_A_BYTE * i));
+}
+
+// puts a description at "at" if there is room for it, and says how many
+// bytes it took, or 0 if there is no room
+int link_put_description(uint8_t *at, int room,
+		const struct link_description *d) {
+	int name = (int)strlen(d->name) + 1;
+	int group = (int)strlen(d->group) + 1;
+	int choices = (int)strlen(d->choices) + 1;
+	int used = DESCRIPTION_FIXED_BYTES;
+
+	if (d->number == LINK_NO_MORE_CONTROLS) {
+		if (room < 1)
+			return 0;
+		at[0] = LINK_NO_MORE_CONTROLS;
+		return 1;
+	}
+	if (room < used + name + group + choices)
+		return 0;
+	at[0] = d->number;
+	at[1] = d->kind;
+	put_four(at + 2, d->min);
+	put_four(at + 6, d->max);
+	put_four(at + 10, d->step);
+	memcpy(at + used, d->name, name);
+	used += name;
+	memcpy(at + used, d->group, group);
+	used += group;
+	memcpy(at + used, d->choices, choices);
+	return used + choices;
+}
+
+// copies the text that begins at "at" and says how many bytes it took with
+// its zero, or -1 if it has no zero within "left" or is too long to keep
+static int get_text(const uint8_t *at, int left, char *text, int room) {
+	int length = 0;
+
+	while (length < left && at[length] != 0)
+		length++;
+	if (length == left || length >= room)
+		return -1;
+	memcpy(text, at, length + 1);
+	return length + 1;
+}
+
+// takes the description at "at" and says how many bytes it was, or -1 if
+// it is not a whole one
+int link_get_description(const uint8_t *at, int left,
+		struct link_description *d) {
+	int used = DESCRIPTION_FIXED_BYTES;
+	int taken;
+
+	memset(d, 0, sizeof(*d));
+	if (left < 1)
+		return -1;
+	d->number = at[0];
+	if (d->number == LINK_NO_MORE_CONTROLS)
+		return 1;
+	if (left < used)
+		return -1;
+	d->kind = at[1];
+	d->min = value_at(at + 2, 4);
+	d->max = value_at(at + 6, 4);
+	d->step = value_at(at + 10, 4);
+	taken = get_text(at + used, left - used, d->name, sizeof(d->name));
+	if (taken < 0)
+		return -1;
+	used += taken;
+	taken = get_text(at + used, left - used, d->group, sizeof(d->group));
+	if (taken < 0)
+		return -1;
+	used += taken;
+	taken = get_text(at + used, left - used, d->choices, sizeof(d->choices));
+	if (taken < 0)
+		return -1;
+	return used + taken;
 }

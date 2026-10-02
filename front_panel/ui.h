@@ -21,7 +21,10 @@
 //the encoder's switch and the two inputs from the knob are low when closed
 #define ENC_PRESSED LOW
 #define PULLUPS_SETTLE_MS 10
-#define KNOB_COUNTS_IGNORED 1
+//the knob gives two counts to a click of its detent, and a press held this
+//long is a long press
+#define KNOB_COUNTS_A_STEP 2
+#define KNOB_HELD_MS 600
 
 //the pins to the display are driven as gently as they can be. Painting the
 //display puts a hash in the receiver, and at 2 mA with slow edges it was
@@ -63,53 +66,12 @@ struct saved {
 	struct ap ap_list[MAX_APS];	
 };
 
-// screens
+// the main screen
 void main_ui();
+void main_controls_described();
 void main_knob_turned(int steps);
-void main_knob_pressed();
+void main_knob_clicked();
+void main_knob_held();
+void main_select(const char *name);
 void main_note(const char *text);
 void main_note_large(const char *text);
-
-#ifndef FIELDS_H
-#define FIELDS_H
-#endif
-
-#define FIELD_TEXT_MAX_LENGTH 128
-
-#define FIELD_NUMBER 0
-#define FIELD_BUTTON 1
-#define FIELD_TOGGLE 2
-#define FIELD_SELECTION 3
-#define FIELD_TEXT 4
-#define FIELD_STATIC 5
-#define FIELD_CONSOLE 6
-#define FIELD_KEY 7
-#define FIELD_FREQ 8
-#define FIELD_WATERFALL 9
-#define FIELD_FT8 10
-#define FIELD_LOGBOOK 11
-#define FIELD_SMETER 12
-#define FIELD_TITLE 13
-
-struct field {
-  int16_t type;
-  uint16_t x;
-  uint16_t y;
-  uint16_t w;
-  uint16_t h;
-  uint16_t  color_scheme;
-  const char *label;
-  char value[FIELD_TEXT_MAX_LENGTH];
-	char selection[FIELD_TEXT_MAX_LENGTH];
-	void (*draw)(struct field *)=NULL;
-  void *data;
-  bool is_visible;
-  bool redraw;
-  bool update_to_radio;
-	unsigned int last_user_change;
-	//this is set whenever the value is changed
-	//we compare this with the millis() at which
-	//we receive the update from the radio
-	//WIP	
-	unsigned int last_update;
-};

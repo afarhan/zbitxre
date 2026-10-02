@@ -232,28 +232,40 @@ void ui_screen_to_serial(){
   Serial.flush();
 }
 
-/* the knob is read here and not by LVGL, because LVGL's way with a knob is
-   to move the focus by turning and to edit by pressing, and the panel's way
-   is the other way about: turning changes what has the focus and pressing
-   moves the focus on. The shipping firmware waits for more than one count
-   of the knob before it takes a step, and so does this */
+/* the knob is read here and not by LVGL, because the panel has its own way
+   with a knob: main.cpp says what turning, a click and a long press do.
+   A click is a press let go before KNOB_HELD_MS; a press still down then is
+   a long press, taken as soon as that time has passed. Every step the knob
+   has made since the last look is handed over, so that tuning is as fast
+   as the hand */
+static unsigned long knob_down_since;
+static bool knob_was_held;
+
 void knob_slice(){
-	if (digitalRead(ENC_S) != ENC_PRESSED && encoder_switch == true){
-		encoder_switch = false;
-	}
-	if (digitalRead(ENC_S) == ENC_PRESSED && encoder_switch == false){
+	bool is_down = digitalRead(ENC_S) == ENC_PRESSED;
+	int steps;
+
+	if (is_down && !encoder_switch){
 		encoder_switch = true;
-		main_knob_pressed();
+		knob_was_held = false;
+		knob_down_since = millis();
+	}
+	if (is_down && !knob_was_held && millis() - knob_down_since >= KNOB_HELD_MS){
+		knob_was_held = true;
+		main_knob_held();
+	}
+	if (!is_down && encoder_switch){
+		encoder_switch = false;
+		if (!knob_was_held)
+			main_knob_clicked();
 	}
 
-	if (wheel_move > KNOB_COUNTS_IGNORED){
-		main_knob_turned(1);
-		wheel_move = 0;
-	}
-	else if (wheel_move < -KNOB_COUNTS_IGNORED){
-		main_knob_turned(-1);
-		wheel_move = 0;
-	}
+	noInterrupts();
+	steps = wheel_move / KNOB_COUNTS_A_STEP;
+	wheel_move -= steps * KNOB_COUNTS_A_STEP;
+	interrupts();
+	if (steps != 0)
+		main_knob_turned(steps);
 }
 
 void ui_slice(){

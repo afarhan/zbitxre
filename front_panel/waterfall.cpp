@@ -3,7 +3,7 @@
 //
 // waterfall.cpp — the spectrum and the waterfall, below the controls.
 //
-// The radio sends a line of the spectrum a few times a second: 240 points,
+// The radio sends a line of the spectrum a few times a second: 144 points,
 // the lowest frequency first, each the strength in dB above the bottom of
 // the display. The frequency the radio is tuned to is in the middle.
 //
@@ -14,8 +14,11 @@
 //
 // WHAT IS KEPT
 //
+// It is 288 pixels wide, six widgets' width, on the left of the screen, with the list of
+// controls beside it; main.cpp has the whole layout.
+//
 // The waterfall is kept as the points themselves, a byte each, 96 lines
-// of 240. They are kept in a ring, so that a new line costs nothing to put
+// of 144. They are kept in a ring, so that a new line costs nothing to put
 // in; only where the newest line is, is moved. A point is two pixels wide
 // on the screen.
 //
@@ -27,7 +30,7 @@
 // alone once it has painted it black.
 //
 // The display cannot scroll this way up, so a new line means sending the
-// whole of the graph and the waterfall again: 76,800 pixels, three bytes
+// whole of the graph and the waterfall again: 46,080 pixels, three bytes
 // each. That takes longer than the knob and the touch screen can be kept
 // waiting. So it is painted a few rows at a time, one slice to each turn
 // of loop(), and the screen shows the new line wiping down from the top.
@@ -63,7 +66,7 @@
 #include "waterfall.h"
 
 #define LEFT 0
-#define WIDTH ILI_W
+#define WIDTH 288
 #define PIXELS_A_POINT (WIDTH / WATERFALL_POINTS)
 
 #define GRAPH_TOP 96

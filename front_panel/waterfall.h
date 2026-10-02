@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#define WATERFALL_POINTS 240
+#define WATERFALL_POINTS 144
 #define WATERFALL_ALL_ROWS 96
 
 void waterfall_init(void);

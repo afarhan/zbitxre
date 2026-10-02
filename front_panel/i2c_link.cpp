@@ -26,7 +26,9 @@
 //   What the radio said is only noted in the interrupt. It is shown on the
 //   screen from loop(), by i2c_link_slice(), because the screen is not for
 //   an interrupt to draw on. A line of the spectrum is handed to the
-//   waterfall, which keeps it until loop() comes to paint it.
+//   waterfall, which keeps it until loop() comes to paint it. The radio's
+//   descriptions of its controls are handed to controls.cpp, which stages
+//   them until the last has come.
 //
 // loop() and the interrupt both use the link's book-keeping, so loop() holds
 // interrupts off while it does. That is for the time it takes to offer a
@@ -36,11 +38,14 @@
 #include <Wire.h>
 #include "link.h"
 #include "waterfall.h"
+#include "controls.h"
 #include "ui.h"
 
 #define LINK_SDA 6
 #define LINK_SCL 7
-#define SAID_MAX 16
+//when the radio has described its controls it says every one's value, and
+//they may all come in one frame
+#define SAID_MAX 64
 
 struct said {
 	int control;
@@ -64,6 +69,10 @@ static void make_the_answer_ready(){
 }
 
 static void on_took(int control, int32_t value){
+	if (control == LINK_HELLO){
+		controls_forget_staged();
+		return;
+	}
 	if (said_count >= SAID_MAX){
 		said_and_lost = said_and_lost + 1;
 		return;
@@ -76,6 +85,8 @@ static void on_took(int control, int32_t value){
 static void on_took_bytes(int control, const uint8_t *bytes, int count){
 	if (control == LINK_SPECTRUM && count == WATERFALL_POINTS)
 		waterfall_update(bytes);
+	if (control == LINK_DESCRIBE)
+		controls_stage(bytes, count);
 }
 
 static void on_request(){
@@ -118,10 +129,14 @@ void i2c_link_changed(int control, int32_t value){
 }
 
 void i2c_link_slice(){
-	struct said said[SAID_MAX];
+	static struct said said[SAID_MAX];
 	int count;
 	int i;
 
+	//the controls the radio described come into use before the values it
+	//said after them are shown
+	if (controls_slice())
+		main_controls_described();
 	if (said_count == 0)
 		return;
 	noInterrupts();

@@ -80,6 +80,16 @@ void panel_set_bytes(int control, const uint8_t *bytes, int count) {
 	link_offer_bytes(&radio_end, control, bytes, count);
 }
 
+// bytes that are said until the panel has taken them; they must be left
+// alone until panel_is_waiting() says they have gone
+void panel_set_kept_bytes(int control, const uint8_t *bytes, int count) {
+	link_offer_kept_bytes(&radio_end, control, bytes, count);
+}
+
+int panel_is_waiting(int control) {
+	return link_is_waiting(&radio_end, control);
+}
+
 void panel_set_polling(int on) {
 	is_polling = on;
 }

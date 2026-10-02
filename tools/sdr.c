@@ -41,14 +41,16 @@
 // before it will transmit again. And however the program ends, by "quit",
 // by its input ending or by a signal, it goes to receive first.
 //
-// From the panel it takes the frequency and the volume, over the link that
-// hw/panel.c keeps. When the panel says HELLO, which it does when it starts,
-// it is told the frequency and the volume.
+// From the panel it takes a new value for any control, over the link that
+// hw/panel.c keeps. When the radio starts, and when the panel says HELLO,
+// which it does when it starts, the panel is told what controls there are
+// and then their values, and after that every change that it did not make
+// itself. panel_controls.c does the telling.
 //
 // Four times a second it sends the panel a line of the spectrum, for the
-// panel's graph and waterfall. The line is 240 points across 25 kHz, the
+// panel's graph and waterfall. The line is 144 points across 25 kHz, the
 // tuned frequency in the middle, as zbitxv2 shows it: each point is the
-// strongest of the two or three bins it stands for, in dB, with 30 added so
+// strongest of the three or four bins it stands for, in dB, with 30 added so
 // that the noise sits a little above the bottom. spectrum_plot runs from
 // the highest frequency down, so the line is turned round to have the
 // lowest frequency first.
@@ -119,6 +121,7 @@
 #include "audio.h"
 #include "board.h"
 #include "panel.h"
+#include "panel_controls.h"
 #include "control.h"
 #include "modem.h"
 #include "radio.h"
@@ -142,6 +145,7 @@
 
 #define SNAPSHOT_FILE   "data/snapshot.raw"
 #define SNAPSHOT_CHANNELS 2
+
 
 #define TX_LIMIT_MS     120000
 #define PTT_SETTLED_MS  30
@@ -380,17 +384,10 @@ static void measure_update(long now) {
 
 static void on_control_changed(const struct control *c, int origin) {
 	server_broadcast(c, origin);
-	if (origin != ORIGIN_PANEL && !strcmp(c->name, "FREQ"))
-		panel_set(LINK_FREQ, atoi(c->value));
-	if (origin != ORIGIN_PANEL && !strcmp(c->name, "AUDIO"))
-		panel_set(LINK_VOLUME, atoi(c->value));
+	if (origin != ORIGIN_PANEL)
+		panel_controls_changed(c);
 	printf("%s %s\n", c->name, c->value);
 	fflush(stdout);
-}
-
-static void panel_send_settings(void) {
-	panel_set(LINK_FREQ, control_get_int("FREQ"));
-	panel_set(LINK_VOLUME, control_get_int("AUDIO"));
 }
 
 static void set_setting(const char *name, const char *value, int origin) {
@@ -402,16 +399,17 @@ static void set_setting(const char *name, const char *value, int origin) {
 
 static void on_panel_record(int control, int32_t value) {
 	char text[CONTROL_VALUE_MAX];
+	const char *name;
 
-	snprintf(text, sizeof(text), "%d", (int)value);
 	if (control == LINK_HELLO) {
 		printf("panel: HELLO, version %d\n", (int)value);
-		panel_send_settings();
+		panel_controls_describe();
+		fflush(stdout);
+		return;
 	}
-	if (control == LINK_FREQ)
-		set_setting("FREQ", text, ORIGIN_PANEL);
-	if (control == LINK_VOLUME)
-		set_setting("AUDIO", text, ORIGIN_PANEL);
+	name = panel_controls_took(control, value, text, sizeof(text));
+	if (name != NULL)
+		set_setting(name, text, ORIGIN_PANEL);
 	fflush(stdout);
 }
 
@@ -614,6 +612,7 @@ static void main_loop(void) {
 		snapshot_save();
 		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record);
+		panel_controls_poll();
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -657,7 +656,7 @@ int main(int argc, char **argv) {
 		set_setting("MODE", mode, ORIGIN_TERMINAL);
 	if (volume != NULL)
 		set_setting("AUDIO", volume, ORIGIN_TERMINAL);
-	panel_send_settings();
+	panel_controls_describe();
 
 	if (server_open(SERVER_PORT) < 0)
 		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);

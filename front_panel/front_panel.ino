@@ -4,16 +4,20 @@
 // front_panel.ino — the zbitx's front panel: a Raspberry Pi Pico W with a
 // 480 by 320 touch screen and a knob.
 //
-// This is the beginning of the panel for zbitxre. It comes from the sketch
-// zbitx_front_panel_lvgl, and draws its controls with LVGL. It has two
-// controls, the frequency and the volume, and tells the radio of them over
-// I2C. Below them it shows the spectrum the radio sends, and its waterfall.
+// This is the panel for zbitxre. It comes from the sketch
+// zbitx_front_panel_lvgl, and draws its controls with LVGL. The radio
+// describes its controls to it over I2C, and the panel shows them, changes
+// them and tunes the radio. It shows the spectrum the radio sends, and its
+// waterfall.
 //
 // The files:
 //
 //   front_panel.ino   setup() and loop(), and nothing else
 //   ui.cpp, ui.h      the display, the touch screen and the knob, given to LVGL
-//   main.cpp          the main screen
+//   main.cpp          the main screen: where every control is, the knob's
+//                     three states, and the tuning
+//   controls.cpp      the controls the radio has described, and the panel's
+//                     own
 //   block.cpp         what the panel remembers: access points and the touch
 //                     screen's calibration, in the last 4K of the flash
 //   ili9488.cpp       the display's driver, from ltp1_text_ui, where it was
@@ -44,6 +48,11 @@
 // says how the link to the radio and the waterfall have been doing. 'n'
 // stops the waterfall being painted and 'w' starts it again, so that the
 // hash of the painting can be told by ear from the rest.
+//
+// The knob can be worked from the serial port, for trying the screen with
+// no hand on the panel: '+' and '-' are a step of the knob each way, 'k' is
+// a click and 'h' a long press. '@' and a name and a new line select what a
+// touch would: @FREQ, @LIST, or a control, @WPM.
 //
 // Painting the display is what puts the hash in the receiver. To find what
 // quietens it, '2' and '4' drive the display's pins at 2 and 4 mA with slow
@@ -97,7 +106,12 @@
 #define RATE_FULL_HZ 37500000u
 #define RATE_HALF_HZ 12000000u
 #define RATE_QUARTER_HZ 6000000u
+#define KNOB_TURNED_UP '+'
+#define KNOB_TURNED_DOWN '-'
+#define KNOB_CLICKED 'k'
+#define KNOB_HELD 'h'
 #define A_NOTE_FOLLOWS '#'
+#define A_TOUCH_FOLLOWS '@'
 #define NOTE_MAX 24
 #define NOTE_WAITED_FOR_MS 200
 
@@ -125,9 +139,21 @@ void take_a_note() {
   main_note_large(text);
 }
 
+void take_a_touch() {
+  char text[NOTE_MAX];
+  size_t count;
+
+  Serial.setTimeout(NOTE_WAITED_FOR_MS);
+  count = Serial.readBytesUntil('\n', text, sizeof(text) - 1);
+  text[count] = 0;
+  main_select(text);
+}
+
 void on_serial(int c) {
   if (c == A_NOTE_FOLLOWS)
     take_a_note();
+  if (c == A_TOUCH_FOLLOWS)
+    take_a_touch();
   if (c == ASK_ABOUT_LINK) {
     i2c_link_report();
     waterfall_report();
@@ -176,6 +202,14 @@ void on_serial(int c) {
     ili_set_rate(RATE_QUARTER_HZ);
     main_note("6 MHz");
   }
+  if (c == KNOB_TURNED_UP)
+    main_knob_turned(1);
+  if (c == KNOB_TURNED_DOWN)
+    main_knob_turned(-1);
+  if (c == KNOB_CLICKED)
+    main_knob_clicked();
+  if (c == KNOB_HELD)
+    main_knob_held();
   if (c == ASK_FOR_SCREEN)
     ui_screen_to_serial();
   if (c == ASK_TO_RESTART)
