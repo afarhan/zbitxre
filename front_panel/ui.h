@@ -85,6 +85,8 @@ void i2c_link_send_text(int number, const char *text);
 
 // the other screens
 void screens_open_settings();
+void screens_open_log();
+void screens_log_part(const uint8_t *bytes, int count);
 void screens_close();
 bool screens_is_open();
 void screens_radio_said();

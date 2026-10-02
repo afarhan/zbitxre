@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #define LINK_ADDRESS 0x0a
-#define LINK_VERSION 2
+#define LINK_VERSION 3
 
 // the most the panel answers with, its count byte included, and the most
 // the radio writes
@@ -56,6 +56,13 @@ extern "C" {
 #define LINK_WIFI_KEY_MIN 8
 #define LINK_WIFI_KEY_MAX 63
 
+// the newest contacts in the logbook, for the panel's LOG screen: a part of
+// the list, as a kept, counted value; link.c says what is in a part
+#define LINK_LOG_LIST 8
+#define LINK_LOG_PART_HEADER 2
+#define LINK_LOG_LINE_MAX 63
+#define LINK_LOG_LINES_MAX 100
+
 struct link_wifi_point {
 	int8_t signal_dbm;
 	uint8_t is_secured;
@@ -63,7 +70,7 @@ struct link_wifi_point {
 };
 // the radio numbers the rest of its controls from here, in the order of
 // its table, and tells the panel which is which by describing them
-#define LINK_FIRST_DESCRIBED 8
+#define LINK_FIRST_DESCRIBED 16
 
 // one line of the spectrum: a byte for each point, left to right on the
 // screen, the lowest frequency first. A byte is the strength in dB above

@@ -94,11 +94,13 @@
 //
 // The author's decision: the card is not reopened as a matter of course at
 // every start, since nothing shows that a second opening is always a good
-// one. It is to be reopened only when the fault is there, and how the
-// radio is to know that, without the author's eye on the spectrum, is not
-// settled. What the two faulty snapshots have in common is a ripple in the
-// spectrum with a period of 7.5 kHz, 4.9 dB rms against 3.0 when healthy;
-// that is two cases, too few to set a threshold by.
+// one. It is reopened only when the fault is there. The radio knows that
+// by measuring the ripple in the spectrum as it starts, tools/start_check.c,
+// and reopens the card itself when it finds it, tools/sdr.c: by the end of
+// that day the fault had come three times, each measured at 4.4 dB or more
+// where good starts measure under 2.6, each seen by the author, and each
+// cured by reopening. The kernel's sync error turned out not to be the
+// cause: faulty starts came without it and good ones with it.
 //
 // The radio's block function runs on the audio thread. It must not wait for
 // anything. The level functions are for one other thread.

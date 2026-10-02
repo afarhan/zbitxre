@@ -147,6 +147,8 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 	}
 	if (control == LINK_WIFI_LIST)
 		stage_wifi_points(bytes, count);
+	if (control == LINK_LOG_LIST)
+		screens_log_part(bytes, count);
 	if (control == LINK_SAY && count <= LINK_SAY_MAX){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;

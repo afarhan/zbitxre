@@ -13,11 +13,9 @@
 // card has cured it the one time that was tried.
 //
 // The author's decision is that the card is to be reopened only when the
-// fault is there, and that the radio does not yet know when that is. So
-// for now the radio measures and says what it found, and does nothing
-// about it. When the author sees the humps, or sees none, what the radio
-// said at that start is compared with what he saw, until the two agree
-// often enough for the radio to be trusted to reopen the card by itself.
+// fault is there. So the radio measures as it starts, and when what it
+// measures says the humps are there, tools/sdr.c reopens the card and
+// measures again.
 //
 // WHAT IS MEASURED
 //
@@ -28,9 +26,9 @@
 // from 6 to 9 kHz. The size of the strongest, in dB from the middle to the
 // peak, is the figure.
 //
-// On 2 October 2026, with an antenna, it was 4.5 to 4.8 dB in three
-// snapshots with the humps and 1.1 to 1.5 dB in four without. That is one
-// occurrence. START_CHECK_SUSPECT_DB is put between the two.
+// On 2 October 2026 the fault came three times. With the humps the figure
+// was 4.4 to 4.8 dB; on a dozen good starts and after each cure it was 0.8
+// to 2.6 dB. START_CHECK_SUSPECT_DB, 3 dB, is between the two.
 //
 // Strong signals in the passband ripple the spectrum too and may raise the
 // figure with no fault there; that is one of the things to be found out.

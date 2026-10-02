@@ -49,6 +49,18 @@
 // the text to whoever asked for it; CANCEL, or the keyboard's cross, gives
 // nothing. Either way the screen it was opened from comes back.
 //
+// THE LOGBOOK
+//
+// LOG on the main screen opens it: the newest contacts in the radio's
+// logbook, the newest at the top, a hundred of them, which is what the
+// panel has memory for. Opening the screen asks the radio for them. A line
+// to a contact, in the order zbitxv2's panel showed them: the date and the
+// time in UTC, the frequency in kHz, the mode, the other station's
+// callsign, what was sent and what was received. Ten contacts are in view,
+// under a line of headings. One is marked; the knob moves the mark, and
+// when it goes past the top or the bottom the list moves on by a screenful.
+// A touch on a contact marks it. For now the list is only to be looked at.
+//
 // THE KNOB
 //
 // On the settings and on the WiFi list one row is marked with a bright
@@ -96,6 +108,7 @@
 #define COLOUR_DIM 0x506070
 #define COLOUR_EDGE 0x405060
 #define COLOUR_MARK 0xFFC000
+#define COLOUR_MARKED_ROW 0x604800
 
 #define WIFI_STATUS_LEFT (TITLE_LEFT + 64)
 #define WIFI_SHOWN_MAX 48
@@ -174,6 +187,29 @@ static const struct roller_place roller_places[ROLLERS] = {
 	{"Hour", 296, 80, 0, 24},
 	{"Minute", 384, 88, 0, 60},
 };
+
+//the log's columns, left to right, their headings and their widths, which
+//add up to the screen's
+#define LOG_COLUMNS 7
+#define LOG_ROWS_IN_VIEW 10
+#define LOG_TABLE_ROWS (LOG_ROWS_IN_VIEW + 1)
+#define LOG_ROW_PAD 4
+#define LOG_FIELDS_BETWEEN '|'
+
+static const char *const log_headings[LOG_COLUMNS] = {
+	"Date", "UTC", "kHz", "Mode", "Callsign", "Sent", "Rcvd",
+};
+static const int16_t log_widths[LOG_COLUMNS] = { 80, 44, 48, 42, 90, 88, 88 };
+
+static lv_obj_t *log_screen;
+static lv_obj_t *log_status;
+static lv_obj_t *log_table;
+static char log_lines[LINK_LOG_LINES_MAX][LINK_LOG_LINE_MAX + 1];
+static volatile int log_count;
+static volatile bool log_is_whole;
+static volatile bool log_is_to_show;
+static int log_top;
+static int log_mark;
 
 static lv_obj_t *date_screen;
 static lv_obj_t *date_status;
@@ -447,6 +483,189 @@ static void settings_create(){
 		settings[i].value = text_create(row, "", &lv_font_montserrat_16, COLOUR_VALUE);
 		lv_obj_align(settings[i].value, LV_ALIGN_RIGHT_MID, -PAD, 0);
 	}
+}
+
+/* the logbook */
+
+//the radio is asked for the newest contacts; they come in parts
+static void log_ask(){
+	struct panel_control *log = controls_find("LOG");
+
+	log_is_whole = false;
+	log_is_to_show = true;
+	log_top = 0;
+	log_mark = 0;
+	if (log == NULL)
+		return;
+	Serial.println("LOG LIST");
+	i2c_link_changed(log->d.number, 0);
+}
+
+//a contact's line is put into a row of the table, a field to a column; the
+//first field, the contact's number in the logbook, is not shown
+static void log_fill_row(int table_row, const char *line){
+	char field[LINK_LOG_LINE_MAX + 1];
+	const char *at = strchr(line, LOG_FIELDS_BETWEEN);
+	const char *end;
+	int column;
+	int length;
+
+	for (column = 0; column < LOG_COLUMNS; column++){
+		field[0] = 0;
+		if (at != NULL){
+			at++;
+			end = strchr(at, LOG_FIELDS_BETWEEN);
+			length = end == NULL ? (int)strlen(at) : (int)(end - at);
+			memcpy(field, at, length);
+			field[length] = 0;
+			at = end;
+		}
+		lv_table_set_cell_value(log_table, table_row, column, field);
+	}
+}
+
+//the contacts in view are put into the table
+static void log_fill(){
+	int row;
+
+	for (row = 0; row < LOG_ROWS_IN_VIEW; row++){
+		if (log_is_whole && log_top + row < log_count)
+			log_fill_row(row + 1, log_lines[log_top + row]);
+		else
+			log_fill_row(row + 1, "");
+	}
+}
+
+static void log_show(){
+	char text[WIFI_SHOWN_MAX];
+
+	log_is_to_show = false;
+	if (controls_find("LOG") == NULL)
+		snprintf(text, sizeof(text), "this radio has no logbook to show");
+	else if (!log_is_whole)
+		snprintf(text, sizeof(text), "loading...");
+	else
+		snprintf(text, sizeof(text), "the newest %d contacts", (int)log_count);
+	lv_label_set_text(log_status, text);
+	log_fill();
+}
+
+//a contact's row is painted again, and no more of the table than that: the
+//rows are all of one height, a line of text each
+static void log_row_repaint(int which){
+	lv_area_t area;
+	int row_height = lv_obj_get_self_height(log_table) / LOG_TABLE_ROWS;
+	int table_row = which - log_top + 1;
+
+	if (table_row < 1 || table_row >= LOG_TABLE_ROWS)
+		return;
+	lv_obj_get_coords(log_table, &area);
+	area.y1 += table_row * row_height;
+	area.y2 = area.y1 + row_height;
+	lv_obj_invalidate_area(log_table, &area);
+}
+
+//the mark is moved to a contact; if that is out of view, the list moves on
+//by a screenful, and only then is the table filled again
+static void log_mark_at(int which){
+	int top = log_top;
+	int was_marked = log_mark;
+
+	if (!log_is_whole || log_count == 0)
+		return;
+	if (which < 0)
+		which = 0;
+	if (which > log_count - 1)
+		which = log_count - 1;
+	log_mark = which;
+	while (log_mark < top)
+		top -= LOG_ROWS_IN_VIEW;
+	while (log_mark >= top + LOG_ROWS_IN_VIEW)
+		top += LOG_ROWS_IN_VIEW;
+	if (top < 0)
+		top = 0;
+	if (top != log_top){
+		log_top = top;
+		log_fill();
+		lv_obj_invalidate(log_table);
+		return;
+	}
+	log_row_repaint(was_marked);
+	log_row_repaint(log_mark);
+}
+
+//the headings and the marked contact are given their own colours as the
+//table is drawn
+static void on_log_drawn(lv_event_t *e){
+	lv_draw_task_t *task = lv_event_get_draw_task(e);
+	lv_draw_dsc_base_t *base = (lv_draw_dsc_base_t *)lv_draw_task_get_draw_dsc(task);
+	lv_draw_fill_dsc_t *fill = lv_draw_task_get_fill_dsc(task);
+
+	if (base == NULL || base->part != LV_PART_ITEMS || fill == NULL)
+		return;
+	if (base->id1 == 0)
+		fill->color = lv_color_hex(COLOUR_EDGE);
+	else if (log_is_whole && log_top + (int)base->id1 - 1 == log_mark
+			&& log_mark < log_count)
+		fill->color = lv_color_hex(COLOUR_MARKED_ROW);
+}
+
+static void on_log_touched(lv_event_t *e){
+	uint32_t row;
+	uint32_t column;
+
+	(void)e;
+	lv_table_get_selected_cell(log_table, &row, &column);
+	if (row != LV_TABLE_CELL_NONE && row > 0)
+		log_mark_at(log_top + (int)row - 1);
+}
+
+static void on_back_from_log(lv_event_t *e){
+	(void)e;
+	screens_close();
+}
+
+static void log_create(){
+	lv_obj_t *label;
+	int row;
+	int i;
+
+	log_screen = screen_create();
+	label = text_create(log_screen, "LOGBOOK", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
+	log_status = text_create(log_screen, "", &lv_font_montserrat_14, COLOUR_TITLE);
+	lv_obj_align(log_status, LV_ALIGN_TOP_LEFT, TITLE_LEFT + 100, (BAR_HEIGHT - 14) / 2);
+	back_button_create(log_screen, on_back_from_log);
+
+	log_table = lv_table_create(log_screen);
+	lv_obj_set_size(log_table, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
+	lv_obj_align(log_table, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
+	lv_table_set_column_count(log_table, LOG_COLUMNS);
+	lv_table_set_row_count(log_table, LOG_TABLE_ROWS);
+	lv_obj_set_style_radius(log_table, 0, 0);
+	lv_obj_set_style_border_width(log_table, 0, 0);
+	lv_obj_set_style_pad_all(log_table, 0, 0);
+	lv_obj_set_style_bg_color(log_table, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_remove_flag(log_table, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_color(log_table, lv_color_hex(COLOUR_BOX), LV_PART_ITEMS);
+	lv_obj_set_style_text_color(log_table, lv_color_hex(COLOUR_VALUE), LV_PART_ITEMS);
+	lv_obj_set_style_text_font(log_table, &lv_font_montserrat_12, LV_PART_ITEMS);
+	lv_obj_set_style_border_color(log_table, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
+	lv_obj_set_style_border_width(log_table, 1, LV_PART_ITEMS);
+	lv_obj_set_style_pad_ver(log_table, LOG_ROW_PAD, LV_PART_ITEMS);
+	lv_obj_set_style_pad_hor(log_table, PAD / 2, LV_PART_ITEMS);
+	//the headings are put in after the table has its font and its padding,
+	//so that their row is no higher than the rest; and no cell wraps its
+	//text onto a second line
+	for (i = 0; i < LOG_COLUMNS; i++){
+		lv_table_set_column_width(log_table, i, log_widths[i]);
+		lv_table_set_cell_value(log_table, 0, i, log_headings[i]);
+		for (row = 0; row < LOG_TABLE_ROWS; row++)
+			lv_table_set_cell_ctrl(log_table, row, i, LV_TABLE_CELL_CTRL_TEXT_CROP);
+	}
+	lv_obj_add_event_cb(log_table, on_log_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
+	lv_obj_add_flag(log_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+	lv_obj_add_event_cb(log_table, on_log_touched, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* the date and the time */
@@ -745,6 +964,49 @@ static void wifi_open(){
 
 /* what the rest of the panel calls */
 
+//a part of the radio's list of contacts. This is called from the link's
+//interrupt, so it only keeps the lines; screens_slice() shows them when the
+//part marked last has come
+void screens_log_part(const uint8_t *bytes, int count){
+	int at = LINK_LOG_PART_HEADER;
+	int length;
+
+	if (count < LINK_LOG_PART_HEADER)
+		return;
+	if (bytes[0] == 0){
+		log_count = 0;
+		log_is_whole = false;
+	}
+	while (at < count && log_count < LINK_LOG_LINES_MAX){
+		length = 0;
+		while (at + length < count && bytes[at + length] != 0)
+			length++;
+		if (at + length >= count)
+			break;
+		if (length > LINK_LOG_LINE_MAX)
+			length = LINK_LOG_LINE_MAX;
+		memcpy(log_lines[log_count], bytes + at, length);
+		log_lines[log_count][length] = 0;
+		log_count = log_count + 1;
+		while (bytes[at] != 0)
+			at++;
+		at++;
+	}
+	if (bytes[1]){
+		log_is_whole = true;
+		log_is_to_show = true;
+	}
+}
+
+void screens_open_log(){
+	if (log_screen == NULL)
+		log_create();
+	waterfall_set_painting(false);
+	main_hide();
+	lv_obj_remove_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
+	log_ask();
+}
+
 //the radio's list of access points has come. This is called with
 //interrupts held off, so it only keeps the list; screens_slice() shows it
 void screens_wifi_listed(const struct link_wifi_point *points, int count){
@@ -773,6 +1035,8 @@ void screens_knob_turned(int steps){
 		lv_obj_scroll_to_view(wifi_rows[wifi_mark].box, LV_ANIM_OFF);
 		wifi_show();
 	}
+	if (is_up(log_screen))
+		log_mark_at(log_mark + steps);
 	if (is_up(date_screen)){
 		roller_set(roller_marked, roller_value(roller_marked) + steps);
 		date_show();
@@ -811,6 +1075,8 @@ void screens_status(const char *text){
 void screens_slice(){
 	if (wifi_is_to_show && wifi_screen != NULL)
 		wifi_show();
+	if (log_is_to_show && log_screen != NULL)
+		log_show();
 }
 
 //what typing a text and saving it would do, for trying it from the serial
@@ -845,6 +1111,8 @@ bool screens_is_open(){
 		return true;
 	if (date_screen != NULL && !lv_obj_has_flag(date_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
+	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN))
+		return true;
 	return input_screen != NULL && !lv_obj_has_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -867,8 +1135,11 @@ void screens_close(){
 		lv_obj_add_flag(wifi_screen, LV_OBJ_FLAG_HIDDEN);
 	if (date_screen != NULL)
 		lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
+	if (log_screen != NULL)
+		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
 	input_done = NULL;
-	lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+	if (settings_screen != NULL)
+		lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
 	main_ui();
 	waterfall_set_painting(true);
 }

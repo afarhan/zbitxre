@@ -81,6 +81,20 @@
 // text, in parts as a text control's does, with LINK_WIFI_CHOSEN where the
 // control's number would be: its name, a tab, and its key.
 //
+// THE LOGBOOK
+//
+// The radio lists the newest contacts in the logbook when the panel asks,
+// the newest first, no more than LINK_LOG_LINES_MAX of them. The list goes
+// as the kept, counted value of LINK_LOG_LIST, in parts as the access
+// points do:
+//
+//     first      one byte, which place in the list this part's first
+//                contact has, counted from 0
+//     last       one byte, 1 if the list ends with this part, or else 0
+//     and for each contact in the part a line of text, ended by a zero
+//     byte, no longer than LINK_LOG_LINE_MAX; panel_log.c on the radio says
+//     what is in a line
+//
 // THE RADIO DESCRIBES ITS CONTROLS
 //
 // The panel is not built knowing what controls the radio has. A modem
@@ -91,7 +105,10 @@
 // the ones it has a place for in their places and lists the rest.
 //
 // FREQ and VOLUME keep the numbers 1 and 2 that they always had. The rest
-// are numbered from LINK_FIRST_DESCRIBED in the order of the radio's table.
+// are numbered from LINK_FIRST_DESCRIBED in the order of the radio's table;
+// the numbers below it are for what is not a control: the spectrum, the
+// lists. A control's number is six bits, so the radio can describe 48
+// controls beyond those two.
 // A choice's value on the link is which of its choices it is, counted from
 // 0. An action is described as a choice is, with the things it can do for
 // its choices; it has no value, and the panel sends which of them is to be

@@ -30,9 +30,9 @@
 // each with its macro's label, and a touch sends that macro; modem_cw.c
 // says where the macros come from.
 //
-// SET opens the settings, which are in screens.cpp. LOG, TERM and MENU are
-// for the logbook, the keyboard and whatever else; none of those is
-// written yet, so those buttons are shown dim and do nothing.
+// SET opens the settings and LOG the logbook, which are in screens.cpp.
+// TERM and MENU are for the keyboard and whatever else; neither is written
+// yet, so those buttons are shown dim and do nothing.
 //
 // The frequency is shown with the VFO in use before it, A: or B:, and a
 // click of the knob while the frequency is selected goes to the other VFO.
@@ -89,9 +89,10 @@
 // TUNING
 //
 // The tuning is the panel's own, as it is each client's: the zbitx's knob
-// is on the panel. STEP alone is a control of the radio's, so that the
-// radio remembers it when the panel is switched off; RIT, SPLIT and the
-// VFO start afresh each time, as it would not do to come up with RIT on. It is the desktop window's, which was zbitxv2's. The
+// is on the panel. What is to be there when the panel is next switched on
+// the radio keeps for it, as controls of the radio's that the radio does
+// nothing with: STEP, the VFO in use, and each VFO's dial. RIT and SPLIT
+// start afresh each time, as it would not do to come up with RIT on. It is the desktop window's, which was zbitxv2's. The
 // dial moves by STEP, onto a multiple of it. While RIT is on, tuning moves
 // the receiver's offset and leaves the dial. With SPLIT on, the
 // transmitter is on the other VFO's dial. The radio is sent where the
@@ -243,6 +244,7 @@ static bool is_changing_the_marked_row;
 
 static int dial_hz = STARTING_HZ;
 static int vfo_dial_hz[VFOS];
+static const char *const vfo_dial_names[VFOS] = { "VFO_A", "VFO_B" };
 static int vfo_in_use = VFO_A;
 static bool is_transmitting;
 static unsigned long freq_last_user_change;
@@ -338,6 +340,19 @@ static void tune(int steps){
 	send_frequency();
 }
 
+//the radio is told a number it keeps for the panel: which VFO is in use,
+//and each VFO's dial, so that they are there when the panel is next
+//switched on
+static void keep_on_the_radio(const char *name, int32_t value){
+	struct panel_control *c = controls_find(name);
+
+	if (c == NULL || c->d.number == NOT_ON_THE_LINK || c->value == value)
+		return;
+	c->value = value;
+	c->last_user_change = millis();
+	i2c_link_changed(c->d.number, value);
+}
+
 //a VFO chosen: the dial of the one left is kept, and the other's taken up
 static void choose_vfo(int vfo){
 	if (vfo == vfo_in_use)
@@ -345,16 +360,17 @@ static void choose_vfo(int vfo){
 	vfo_dial_hz[vfo_in_use] = dial_hz;
 	if (vfo_dial_hz[vfo] == NOT_USED_YET)
 		vfo_dial_hz[vfo] = dial_hz;
+	keep_on_the_radio(vfo_dial_names[vfo_in_use], dial_hz);
 	vfo_in_use = vfo;
 	dial_hz = vfo_dial_hz[vfo];
 }
 
-//one of the panel's own controls has changed
+//one of the tuning's controls has changed: RIT, SPLIT or the VFO
 static void apply_own(struct panel_control *c){
 	struct panel_control *vfo = controls_find("VFO");
 
-	if (!strcmp(c->d.name, "SPLIT") && is_on("SPLIT") && vfo != NULL)
-		vfo->value = VFO_A;
+	if (!strcmp(c->d.name, "SPLIT") && is_on("SPLIT"))
+		keep_on_the_radio("VFO", VFO_A);
 	if (vfo != NULL)
 		choose_vfo((int)vfo->value);
 	send_frequency();
@@ -679,10 +695,10 @@ static void change(struct panel_control *c, int steps){
 	c->last_user_change = millis();
 	controls_value_text(c, text, sizeof(text));
 	Serial.printf("%s %s\n", c->d.name, text);
-	if (c->d.number == NOT_ON_THE_LINK)
-		apply_own(c);
-	else
+	if (c->d.number != NOT_ON_THE_LINK)
 		i2c_link_changed(c->d.number, v);
+	if (c->d.number == NOT_ON_THE_LINK || !strcmp(c->d.name, "VFO"))
+		apply_own(c);
 	if (!strcmp(c->d.name, "MODE"))
 		lay_out();
 }
@@ -865,14 +881,19 @@ static void on_set_touched(lv_event_t *e){
 	screens_open_settings();
 }
 
-//SET opens the settings
-static void set_button_create(int x, int y){
+static void on_log_touched(lv_event_t *e){
+	(void)e;
+	screens_open_log();
+}
+
+//a button that opens another screen: SET the settings, LOG the logbook
+static void live_button_create(int x, int y, const char *label, lv_event_cb_t touched){
 	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
 	lv_obj_t *text = text_create(box, &lv_font_montserrat_14, COLOUR_VALUE);
 
-	lv_label_set_text(text, "SET");
+	lv_label_set_text(text, label);
 	lv_obj_align(text, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_add_event_cb(box, on_set_touched, LV_EVENT_CLICKED, NULL);
+	lv_obj_add_event_cb(box, touched, LV_EVENT_CLICKED, NULL);
 }
 
 static void screen_create(){
@@ -892,7 +913,9 @@ static void screen_create(){
 	//what these are for is not written yet, so they are dim and do nothing
 	for (i = 0; i < COLUMN_BUTTONS; i++){
 		if (!strcmp(column_names[i], "SET"))
-			set_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT);
+			live_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, "SET", on_set_touched);
+		else if (!strcmp(column_names[i], "LOG"))
+			live_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
 		else
 			dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, column_names[i]);
 	}
@@ -975,6 +998,14 @@ void main_radio_says(int number, int32_t value){
 	c->value = value;
 	if (!strcmp(c->d.name, "MODE"))
 		lay_out();
+	//what the radio kept for the panel: the VFO that was in use, whose
+	//dial is the radio's frequency, and each VFO's dial
+	if (!strcmp(c->d.name, "VFO"))
+		vfo_in_use = (int)value;
+	if (!strcmp(c->d.name, vfo_dial_names[VFO_A]))
+		vfo_dial_hz[VFO_A] = (int)value;
+	if (!strcmp(c->d.name, vfo_dial_names[VFO_B]))
+		vfo_dial_hz[VFO_B] = (int)value;
 	if (!strcmp(c->d.name, "TX")){
 		is_transmitting = controls_is("TX", "ON");
 		if (is_transmitting != was_transmitting)
@@ -1087,6 +1118,8 @@ void main_select(const char *name){
 	}
 	if (!strcmp(name, "SET"))
 		screens_open_settings();
+	else if (!strcmp(name, "LOG"))
+		screens_open_log();
 	else if (name[0] == 'F' && name[1] >= '1' && name[1] <= '0' + MACROS && name[2] == 0)
 		macro_touched(name[1] - '1');
 	else if (!strcmp(name, "FREQ"))
@@ -1110,7 +1143,6 @@ void main_ui(){
 		controls_add_own("RIT", "OFF/ON", 0, 0, 0);
 		controls_add_own("RIT_DELTA", NULL, -RIT_MAX_HZ, RIT_MAX_HZ, 0);
 		controls_add_own("SPLIT", "OFF/ON", 0, 0, 0);
-		controls_add_own("VFO", "A/B", 0, 0, VFO_A);
 		screen_create();
 		lay_out();
 		show();

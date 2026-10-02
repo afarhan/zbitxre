@@ -48,6 +48,10 @@
 // volume given when the program is started comes after it and is what the
 // radio starts with.
 //
+// "LOG LIST" lists the newest contacts in the logbook, data/sbitx.db, on
+// the terminal and to the panel, whose LOG screen asks for it; panel_log.c
+// and logbook.c say how.
+//
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
@@ -78,7 +82,8 @@
 // how much of the spectrum the line shows, the tuned frequency staying in
 // the middle. The author's panel steps it when the waterfall is touched.
 // It is in the group PANEL, so that no client's list shows it. STEP, the
-// panel's tuning step, is there too, kept by the radio for the panel.
+// panel's tuning step, is there too, kept by the radio for the panel, and
+// so are the VFO the panel has in use and each VFO's dial.
 //
 // Ten times a second, while a network client has asked for it, it sends the
 // same spectrum at the full resolution of the bins, 534 points, one to a
@@ -123,11 +128,20 @@
 // itself, measures the ripple in its spectrum, tools/start_check.c says
 // how, and prints what it found and what it guesses: "start check: ripple
 // 4.7 dB at 8.0 kHz, I2S sync error at this start: yes, HUMPS SUSPECTED".
-// It does nothing about it. The line is added to data/start_checks.log
-// with the date and the time, and the snapshot is kept beside it under the
-// same date and time, so that when the author sees the humps, or sees
-// none, the radio's guess for that start can be set against what he saw,
-// and the measure corrected until it can be trusted.
+// The line is added to data/start_checks.log with the date and the time,
+// and the snapshot is kept beside it under the same date and time, so that
+// what the radio guessed at a start can be set against what was seen.
+//
+// When it suspects the humps it closes the sound card and opens it again,
+// which is what cures them, and three seconds later measures once more and
+// says what it found then; and again, up to START_CHECK_REOPENINGS times,
+// if they are still there. The author let it do so on 2 October 2026, when
+// on three starts in a day the radio had guessed the humps, each time at
+// 4.4 dB or more where a good start measures under 2.6, each time the
+// author had seen them, and each time reopening the card had cured them.
+// It measures again because nothing shows that a second opening is always
+// a good one, which was the author's objection to reopening the card as a
+// matter of course at every start.
 //
 // Whether the kernel logged "I2S SYNC error!" as this run's stream started
 // is noted with it, since that is a lead on the cause; hw/audio.c says
@@ -164,6 +178,7 @@
 #include "board.h"
 #include "panel.h"
 #include "panel_controls.h"
+#include "panel_log.h"
 #include "panel_wifi.h"
 #include "control.h"
 #include "modem.h"
@@ -191,8 +206,10 @@
 #define SNAPSHOT_FILE   "data/snapshot.raw"
 #define SNAPSHOT_CHANNELS 2
 #define SETTINGS_FILE "data/user_settings.ini"
+#define LOGBOOK_FILE "data/sbitx.db"
 
 #define START_CHECK_AFTER_MS 3000
+#define START_CHECK_REOPENINGS 3
 #define START_CHECK_LOG "data/start_checks.log"
 #define START_CHECK_NAME_MAX 64
 #define KERNEL_LOG_COMMAND "dmesg"
@@ -213,6 +230,7 @@
 #define SPECTRUM_HIGHEST 255
 #define SPECTRUM_HZ_PER_BIN 46.875
 #define HZ_PER_K 1000.0
+#define VFO_DIAL_MAX_HZ 30000000
 #define CLIENT_SPECTRUM_EVERY_MS 100
 
 // what is measured: 3 kHz either side of the tuned frequency, which is bin
@@ -324,6 +342,27 @@ static struct control step = {
 	.value = "100H",
 };
 
+// the VFO the panel has in use, and each VFO's dial, kept for the panel in
+// the same way. 0 is a VFO that has not been used yet. The radio's own
+// frequency is the dial of the VFO in use.
+static struct control vfo = {
+	.group = "PANEL", .name = "VFO", .kind = CONTROL_CHOICE,
+	.choices = "A/B",
+	.value = "A",
+};
+
+static struct control vfo_a = {
+	.group = "PANEL", .name = "VFO_A", .kind = CONTROL_NUMBER,
+	.min = 0, .max = VFO_DIAL_MAX_HZ, .step = 1,
+	.value = "0",
+};
+
+static struct control vfo_b = {
+	.group = "PANEL", .name = "VFO_B", .kind = CONTROL_NUMBER,
+	.min = 0, .max = VFO_DIAL_MAX_HZ, .step = 1,
+	.value = "0",
+};
+
 static struct control span = {
 	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
 	.choices = "25K/10K/6K/2.5K",
@@ -406,6 +445,7 @@ static double started_at_s;
 static long start_check_at_ms;
 static int is_start_check_due;
 static int is_start_check_waiting;
+static int start_check_reopenings;
 
 static double monotonic_s(void) {
 	struct timespec now;
@@ -434,8 +474,30 @@ static int was_sync_error_logged(void) {
 	return found;
 }
 
+// the humps are suspected: the sound card is closed and opened again, and
+// the check is made once more in a while, unless that has been done as
+// often as it is to be
+static void reopen_the_card_and_check_again(void) {
+	if (start_check_reopenings >= START_CHECK_REOPENINGS) {
+		printf("start check: the humps are still suspected after the sound card "
+			"was reopened %d times\n", start_check_reopenings);
+		fflush(stdout);
+		return;
+	}
+	start_check_reopenings++;
+	printf("start check: reopening the sound card\n");
+	fflush(stdout);
+	if (audio_reopen() < 0) {
+		printf("start check: the sound card did not open again\n");
+		return;
+	}
+	start_check_at_ms = now_ms() + START_CHECK_AFTER_MS;
+	is_start_check_due = 1;
+}
+
 // the snapshot taken at the start is measured, and what was found is
-// printed, logged and kept; nothing is done about it
+// printed, logged and kept; if the humps are suspected the sound card is
+// reopened
 static void start_check_report(const int32_t *samples) {
 	char when[START_CHECK_NAME_MAX];
 	char name[START_CHECK_NAME_MAX * 2];
@@ -446,6 +508,7 @@ static void start_check_report(const int32_t *samples) {
 	time_t now = time(NULL);
 	double period_hz;
 	double ripple_db;
+	int is_suspected;
 	FILE *file;
 
 	ripple_db = start_check_ripple_db(samples, AUDIO_SNAPSHOT_FRAMES,
@@ -462,6 +525,7 @@ static void start_check_report(const int32_t *samples) {
 	fflush(stdout);
 	snprintf(for_panel, sizeof(for_panel), "start: ripple %.1f dB, %s", ripple_db, guess);
 	panel_say(for_panel);
+	is_suspected = ripple_db > START_CHECK_SUSPECT_DB;
 
 	file = fopen(START_CHECK_LOG, "a");
 	if (file != NULL) {
@@ -474,6 +538,8 @@ static void start_check_report(const int32_t *samples) {
 		fwrite(samples, sizeof(int32_t), AUDIO_SNAPSHOT_FRAMES * SNAPSHOT_CHANNELS, file);
 		fclose(file);
 	}
+	if (is_suspected)
+		reopen_the_card_and_check_again();
 }
 
 static void start_check_poll(long now) {
@@ -815,6 +881,7 @@ static void main_loop(void) {
 		panel_controls_poll();
 		settings_poll(now_ms());
 		panel_wifi_poll(now_ms());
+		panel_log_poll();
 		radio_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
@@ -857,7 +924,11 @@ int main(int argc, char **argv) {
 	radio_open();
 	control_register(&span);
 	control_register(&step);
+	control_register(&vfo);
+	control_register(&vfo_a);
+	control_register(&vfo_b);
 	panel_wifi_open();
+	panel_log_open(LOGBOOK_FILE);
 	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
