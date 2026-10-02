@@ -41,7 +41,26 @@ extern "C" {
 #define LINK_TEXT_PART 6
 #define LINK_TEXT_PART_HEADER 3
 #define LINK_TEXT_PART_DATA 8
-#define LINK_TEXT_MAX 63
+#define LINK_TEXT_MAX 100
+// the access points the radio can hear, for the panel's WiFi screen: a part
+// of the list, as a kept, counted value; link.c says what is in a part
+#define LINK_WIFI_LIST 7
+#define LINK_WIFI_PART_HEADER 2
+#define LINK_WIFI_NAME_MAX 32
+#define LINK_WIFI_POINTS_MAX 16
+// the access point the operator chose from the list, and its key: a text
+// from the panel, in parts as any text is, with this for its control: the
+// name, LINK_WIFI_BETWEEN, and the key, which is empty for an open one
+#define LINK_WIFI_CHOSEN LINK_WIFI_LIST
+#define LINK_WIFI_BETWEEN '\t'
+#define LINK_WIFI_KEY_MIN 8
+#define LINK_WIFI_KEY_MAX 63
+
+struct link_wifi_point {
+	int8_t signal_dbm;
+	uint8_t is_secured;
+	char name[LINK_WIFI_NAME_MAX + 1];
+};
 // the radio numbers the rest of its controls from here, in the order of
 // its table, and tells the panel which is which by describing them
 #define LINK_FIRST_DESCRIBED 8
@@ -120,6 +139,9 @@ int link_take_frame(struct link_end *end, const uint8_t *frame, int count,
 int link_put_text_part(uint8_t *at, int control, const char *text, int offset);
 int link_get_text_part(const uint8_t *bytes, int count, int *control,
 	char *text, int room);
+
+int link_put_wifi_point(uint8_t *at, int room, const struct link_wifi_point *point);
+int link_get_wifi_point(const uint8_t *at, int left, struct link_wifi_point *point);
 
 int link_put_description(uint8_t *at, int room,
 	const struct link_description *description);

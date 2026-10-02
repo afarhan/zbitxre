@@ -990,8 +990,10 @@ void main_note_large(const char *text){
 
 //the knob goes to whatever is selected
 void main_knob_turned(int steps){
-	if (screens_is_open())
+	if (screens_is_open()){
+		screens_knob_turned(steps);
 		return;
+	}
 	if (selected == ON_FREQUENCY)
 		tune(steps);
 	if (selected == ON_A_CONTROL && selected_control != NULL)
@@ -1010,8 +1012,10 @@ void main_knob_turned(int steps){
 void main_knob_clicked(){
 	struct panel_control *vfo = controls_find("VFO");
 
-	if (screens_is_open())
+	if (screens_is_open()){
+		screens_knob_clicked();
 		return;
+	}
 	if (selected == ON_FREQUENCY && vfo != NULL)
 		change_to_the_next_choice(vfo);
 	if (selected == ON_A_CONTROL && selected_control != NULL)

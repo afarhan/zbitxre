@@ -237,6 +237,7 @@ void on_serial(int c) {
 void loop() {
   ui_slice();
   i2c_link_slice();
+  screens_slice();
   waterfall_slice();
   if (Serial.available())
     on_serial(Serial.read());

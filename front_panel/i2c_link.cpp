@@ -70,6 +70,11 @@ struct said_text {
 static struct said_text texts[TEXTS_MAX];
 static volatile int texts_count;
 
+//the access points the radio listed, staged until the list is whole
+static struct link_wifi_point wifi_staged[LINK_WIFI_POINTS_MAX];
+static volatile int wifi_staged_count;
+static volatile bool wifi_is_new;
+
 //a text on its way to the radio, a part at a time
 static char sending[LINK_TEXT_MAX + 1];
 static uint8_t sending_part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
@@ -103,6 +108,31 @@ static void on_took(int control, int32_t value){
 	said_count = said_count + 1;
 }
 
+//a part of the radio's list of access points: the list is whole when the
+//part marked last has come, and loop() then takes it
+static void stage_wifi_points(const uint8_t *bytes, int count){
+	struct link_wifi_point point;
+	int at = LINK_WIFI_PART_HEADER;
+	int used;
+
+	if (count < LINK_WIFI_PART_HEADER)
+		return;
+	if (bytes[0] == 0)
+		wifi_staged_count = 0;
+	while (at < count){
+		used = link_get_wifi_point(bytes + at, count - at, &point);
+		if (used < 0)
+			return;
+		at += used;
+		if (wifi_staged_count < LINK_WIFI_POINTS_MAX){
+			wifi_staged[wifi_staged_count] = point;
+			wifi_staged_count = wifi_staged_count + 1;
+		}
+	}
+	if (bytes[1])
+		wifi_is_new = true;
+}
+
 static void on_took_bytes(int control, const uint8_t *bytes, int count){
 	if (control == LINK_SPECTRUM && count == WATERFALL_POINTS)
 		waterfall_update(bytes);
@@ -115,6 +145,8 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		texts[texts_count].text[count] = 0;
 		texts_count = texts_count + 1;
 	}
+	if (control == LINK_WIFI_LIST)
+		stage_wifi_points(bytes, count);
 	if (control == LINK_SAY && count <= LINK_SAY_MAX){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;
@@ -204,6 +236,12 @@ void i2c_link_slice(){
 	if (controls_slice())
 		main_controls_described();
 	send_the_next_part();
+	if (wifi_is_new){
+		noInterrupts();
+		wifi_is_new = false;
+		screens_wifi_listed(wifi_staged, wifi_staged_count);
+		interrupts();
+	}
 	while (texts_count > 0){
 		noInterrupts();
 		text_said = texts[0];
@@ -218,6 +256,7 @@ void i2c_link_slice(){
 		is_text_said = false;
 		interrupts();
 		main_status(text);
+		screens_status(text);
 	}
 	if (said_count == 0)
 		return;

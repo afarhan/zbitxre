@@ -46,6 +46,10 @@
 // radio is tuned is not; settings.c says what is kept and when it is
 // written. It is written once more as the program ends.
 //
+// "WIFI SCAN" lists the WiFi access points the radio can hear, on the
+// terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
+// says how.
+//
 // The panel has a status bar, a line of text. The radio puts there what it
 // found at the start check, and why it refused a change the panel asked
 // for. hw/panel.c's panel_say() sends it.
@@ -153,6 +157,7 @@
 #include "board.h"
 #include "panel.h"
 #include "panel_controls.h"
+#include "panel_wifi.h"
 #include "control.h"
 #include "modem.h"
 #include "radio.h"
@@ -585,6 +590,7 @@ static void on_panel_bytes(int control, const uint8_t *bytes, int count) {
 	name = panel_controls_took_bytes(control, bytes, count, text, sizeof(text));
 	if (name != NULL)
 		set_setting(name, text, ORIGIN_PANEL);
+	panel_wifi_took_bytes(control, bytes, count, now_ms());
 	fflush(stdout);
 }
 
@@ -790,6 +796,7 @@ static void main_loop(void) {
 		panel_poll(now_ms(), on_panel_record, on_panel_bytes);
 		panel_controls_poll();
 		settings_poll(now_ms());
+		panel_wifi_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -830,6 +837,7 @@ int main(int argc, char **argv) {
 	panel_open();
 	radio_open();
 	control_register(&span);
+	panel_wifi_open();
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
 	if (hz != NULL)

@@ -59,6 +59,28 @@
 // other side has taken it, as a plain value is. Its bytes must stay as they
 // are until then; link_is_waiting() says when it has gone.
 //
+// THE ACCESS POINTS
+//
+// The radio lists the WiFi access points it can hear when the panel asks,
+// the strongest first, no more than LINK_WIFI_POINTS_MAX of them. The list
+// goes as the kept, counted value of LINK_WIFI_LIST, in as many parts as
+// it needs, each sent when the one before has been taken:
+//
+//     first      one byte, which place in the list this part's first
+//                access point has, counted from 0
+//     last       one byte, 1 if the list ends with this part, or else 0
+//     and for each access point in the part:
+//     signal     one byte, its strength in dBm, a number below zero
+//     secured    one byte, 1 if it wants a key, or else 0
+//     name       its name, ended by a zero byte
+//
+// A list with nothing in it is one part, marked last, with no access
+// points.
+//
+// The access point the operator chooses comes back from the panel as a
+// text, in parts as a text control's does, with LINK_WIFI_CHOSEN where the
+// control's number would be: its name, a tab, and its key.
+//
 // THE RADIO DESCRIBES ITS CONTROLS
 //
 // The panel is not built knowing what controls the radio has. A modem
@@ -578,4 +600,36 @@ int link_get_text_part(const uint8_t *bytes, int count, int *control,
 		return 0;
 	text[offset + length] = 0;
 	return 1;
+}
+
+#define WIFI_POINT_FIXED_BYTES 2
+
+// puts an access point at "at" if there is room, and says how many bytes
+// it took, or 0 if there is no room
+int link_put_wifi_point(uint8_t *at, int room, const struct link_wifi_point *point) {
+	int name = (int)strlen(point->name) + 1;
+
+	if (room < WIFI_POINT_FIXED_BYTES + name)
+		return 0;
+	at[0] = (uint8_t)point->signal_dbm;
+	at[1] = point->is_secured;
+	memcpy(at + WIFI_POINT_FIXED_BYTES, point->name, name);
+	return WIFI_POINT_FIXED_BYTES + name;
+}
+
+// takes the access point at "at" and says how many bytes it was, or -1 if
+// it is not a whole one
+int link_get_wifi_point(const uint8_t *at, int left, struct link_wifi_point *point) {
+	int taken;
+
+	memset(point, 0, sizeof(*point));
+	if (left < WIFI_POINT_FIXED_BYTES + 1)
+		return -1;
+	point->signal_dbm = (int8_t)at[0];
+	point->is_secured = at[1];
+	taken = get_text(at + WIFI_POINT_FIXED_BYTES, left - WIFI_POINT_FIXED_BYTES,
+		point->name, sizeof(point->name));
+	if (taken < 0)
+		return -1;
+	return WIFI_POINT_FIXED_BYTES + taken;
 }

@@ -1,5 +1,7 @@
 // the display is 320 by 480 as it is made, and is used on its side, so the
 // screen is 480 wide and 320 high. ili9488.cpp does the turning.
+#include "link.h"
+
 #define TFT_HOR_RES   320
 #define TFT_VER_RES   480
 #define SCREEN_WIDTH  TFT_VER_RES
@@ -87,5 +89,10 @@ bool screens_is_open();
 void screens_radio_said();
 void screens_set_text(char *control_and_text);
 void screens_select(const char *name);
+void screens_wifi_listed(const struct link_wifi_point *points, int count);
+void screens_slice();
+void screens_knob_turned(int steps);
+void screens_knob_clicked();
+void screens_status(const char *text);
 void main_note(const char *text);
 void main_note_large(const char *text);
