@@ -28,6 +28,8 @@
 //           band the radio is on.
 //   MIC     the gain of the sound card's input from the microphone, 0 to
 //           100.
+//   AGC     how fast the receiver's gain follows the signal: OFF, SLOW, MED
+//           or FAST, as in zbitxv2, which starts with SLOW.
 //   TX      OFF or ON: whether the radio is transmitting. Setting it ON
 //           goes to transmit, if the mode in use can transmit: USB, LSB,
 //           CW, CWR and 2TONE can; AM cannot yet, and setting TX ON in it
@@ -75,6 +77,8 @@
 #define STARTING_IF "60"
 #define STARTING_DRIVE "40"
 #define STARTING_MIC "40"
+// zbitxv2 starts with the AGC slow
+#define STARTING_AGC "SLOW"
 #define GAIN_MAX 100
 #define DRIVE_MAX 100
 #define REQUEST_MAX 64
@@ -240,6 +244,14 @@ static int apply_drive(struct control *c, const char *value, char *why, int room
 	return 0;
 }
 
+static int apply_agc(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	core_request("r1:agc", value);
+	return 0;
+}
+
 static int apply_mic(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
@@ -302,6 +314,12 @@ static struct control mic = {
 	.value = STARTING_MIC, .apply = apply_mic,
 };
 
+static struct control agc = {
+	.group = "RADIO", .name = "AGC", .kind = CONTROL_CHOICE,
+	.choices = "OFF/SLOW/MED/FAST",
+	.value = STARTING_AGC, .apply = apply_agc,
+};
+
 static struct control tx = {
 	.group = "RADIO", .name = "TX", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
@@ -312,7 +330,8 @@ int radio_open(void) {
 	if (control_register(&freq) < 0 || control_register(&band) < 0
 			|| control_register(&mode) < 0 || control_register(&audio) < 0
 			|| control_register(&if_gain) < 0 || control_register(&drive) < 0
-			|| control_register(&mic) < 0 || control_register(&tx) < 0)
+			|| control_register(&mic) < 0 || control_register(&agc) < 0
+			|| control_register(&tx) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);
@@ -320,5 +339,6 @@ int radio_open(void) {
 	core_request("r1:gain", if_gain.value);
 	core_request("tx_power", drive.value);
 	core_request("tx_gain", mic.value);
+	core_request("r1:agc", agc.value);
 	return 0;
 }
