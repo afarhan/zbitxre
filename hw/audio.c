@@ -83,6 +83,23 @@
 // sees. If that alone puts the samples right, what was wrong was in how the
 // card had started and not in the radio's own numbers.
 //
+// It did, the one time it has been tried with the fault there, on
+// 2 October 2026: the band's noise had nulls some 10 dB deep and 7.5 kHz
+// apart, reopening the card made it flat at once, and setting the Si5351
+// up afresh after that changed nothing. A lead, and no more than a lead:
+// the kernel had logged "bcm2835-i2s: I2S SYNC error!" as that run's
+// stream started, and logged nothing at the reopening; but it has logged
+// the same at starts where no fault was seen, and the day before the fault
+// came with no such line near it.
+//
+// The author's decision: the card is not reopened as a matter of course at
+// every start, since nothing shows that a second opening is always a good
+// one. It is to be reopened only when the fault is there, and how the
+// radio is to know that, without the author's eye on the spectrum, is not
+// settled. What the two faulty snapshots have in common is a ripple in the
+// spectrum with a period of 7.5 kHz, 4.9 dB rms against 3.0 when healthy;
+// that is two cases, too few to set a threshold by.
+//
 // The radio's block function runs on the audio thread. It must not wait for
 // anything. The level functions are for one other thread.
 //

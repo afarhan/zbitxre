@@ -44,7 +44,7 @@ RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_cw_keyer $(BUILD)/test_server \
-	$(BUILD)/test_panel_controls
+	$(BUILD)/test_panel_controls $(BUILD)/test_start_check
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -70,6 +70,7 @@ check: $(HOST_TESTS)
 	$(BUILD)/test_cw_keyer
 	$(BUILD)/test_server
 	$(BUILD)/test_panel_controls
+	$(BUILD)/test_start_check
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -93,10 +94,11 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 		dsp/kiss_fft/_kiss_fft_guts.h | $(BUILD)
 	$(CC) -std=gnu11 -O2 -g -w -Idsp/kiss_fft -c -o $@ dsp/kiss_fft/kiss_fft.c
 
-sdr: tools/sdr.c radio.c server.c panel_controls.c radio.h server.h control.h \
-		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tools/sdr.c radio.c server.c panel_controls.c $(DSP) $(HW) \
-		$(RADIO_LIBS)
+sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
+		panel_controls.c radio.h server.h control.h panel_controls.h $(DSP) $(HW) \
+		$(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
+		panel_controls.c $(DSP) $(HW) $(RADIO_LIBS)
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
 		$(HW_HEADERS) tests/si5351_golden.h | $(BUILD)
@@ -119,6 +121,11 @@ $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.
 $(BUILD)/test_panel_controls: tests/test_panel_controls.c panel_controls.c \
 		panel_controls.h control.c control.h $(LINK) $(LINK_HEADERS) hw/panel.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_panel_controls.c panel_controls.c control.c $(LINK)
+
+$(BUILD)/test_start_check: tests/test_start_check.c tools/start_check.c \
+		tools/start_check.h $(KISS_FFT) | $(BUILD)
+	$(CC) $(CFLAGS) -Itools -o $@ tests/test_start_check.c tools/start_check.c \
+		$(KISS_FFT) -lm
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

@@ -91,6 +91,23 @@
 // of the receiver's own. They are for use in receive: take a snapshot, give
 // one of them, and take another.
 //
+// THE CHECK AT THE START
+//
+// The same fault, the author says, is there from the start or not at all.
+// So three seconds after it starts the program takes such a snapshot by
+// itself, measures the ripple in its spectrum, tools/start_check.c says
+// how, and prints what it found and what it guesses: "start check: ripple
+// 4.7 dB at 8.0 kHz, I2S sync error at this start: yes, HUMPS SUSPECTED".
+// It does nothing about it. The line is added to data/start_checks.log
+// with the date and the time, and the snapshot is kept beside it under the
+// same date and time, so that when the author sees the humps, or sees
+// none, the radio's guess for that start can be set against what he saw,
+// and the measure corrected until it can be trusted.
+//
+// Whether the kernel logged "I2S SYNC error!" as this run's stream started
+// is noted with it, since that is a lead on the cause; hw/audio.c says
+// what is known. It is read from the kernel's log, by way of dmesg.
+//
 // "measure=5" measures for five seconds how strong what reaches the sound
 // card is, within 3 kHz either side of the tuned frequency, and then prints
 // it in dB. It looks at the spectrum twenty times a second and averages the
@@ -128,6 +145,7 @@
 #include "server.h"
 #include "si5351.h"
 #include "sdr.h"
+#include "start_check.h"
 
 #define BFO_CLOCK       1
 #define VFO_CLOCK       2
@@ -146,6 +164,15 @@
 #define SNAPSHOT_FILE   "data/snapshot.raw"
 #define SNAPSHOT_CHANNELS 2
 
+#define START_CHECK_AFTER_MS 3000
+#define START_CHECK_LOG "data/start_checks.log"
+#define START_CHECK_NAME_MAX 64
+#define KERNEL_LOG_COMMAND "dmesg"
+#define KERNEL_LOG_LINE_MAX 400
+#define SYNC_ERROR_TEXT "I2S SYNC error"
+// the kernel's times and the program's are not quite the same clock
+#define SYNC_ERROR_SLACK_S 2.0
+#define HZ_PER_KHZ 1000.0
 
 #define TX_LIMIT_MS     120000
 #define PTT_SETTLED_MS  30
@@ -307,12 +334,96 @@ static void print_snapshot_channel(const char *name, const int32_t *samples,
 		AUDIO_SNAPSHOT_FRAMES);
 }
 
+static double started_at_s;
+static long start_check_at_ms;
+static int is_start_check_due;
+static int is_start_check_waiting;
+
+static double monotonic_s(void) {
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return now.tv_sec + now.tv_nsec / (double)(NS_PER_MS * MS_PER_SECOND);
+}
+
+// whether the kernel has logged an I2S sync error since this program started
+static int was_sync_error_logged(void) {
+	char line[KERNEL_LOG_LINE_MAX];
+	FILE *log = popen(KERNEL_LOG_COMMAND, "r");
+	double at_s;
+	int found = 0;
+
+	if (log == NULL)
+		return 0;
+	while (fgets(line, sizeof(line), log) != NULL) {
+		if (strstr(line, SYNC_ERROR_TEXT) == NULL)
+			continue;
+		if (sscanf(line, "[%lf]", &at_s) == 1
+				&& at_s >= started_at_s - SYNC_ERROR_SLACK_S)
+			found = 1;
+	}
+	pclose(log);
+	return found;
+}
+
+// the snapshot taken at the start is measured, and what was found is
+// printed, logged and kept; nothing is done about it
+static void start_check_report(const int32_t *samples) {
+	char when[START_CHECK_NAME_MAX];
+	char name[START_CHECK_NAME_MAX * 2];
+	char said[KERNEL_LOG_LINE_MAX];
+	const char *guess = "looks normal";
+	const char *sync = "no";
+	time_t now = time(NULL);
+	double period_hz;
+	double ripple_db;
+	FILE *file;
+
+	ripple_db = start_check_ripple_db(samples, AUDIO_SNAPSHOT_FRAMES,
+		SNAPSHOT_CHANNELS, &period_hz);
+	if (ripple_db > START_CHECK_SUSPECT_DB)
+		guess = "HUMPS SUSPECTED";
+	if (was_sync_error_logged())
+		sync = "yes";
+	strftime(when, sizeof(when), "%Y-%m-%d_%H-%M-%S", localtime(&now));
+	snprintf(said, sizeof(said),
+		"start check: ripple %.1f dB at %.1f kHz, I2S sync error at this start: %s, %s",
+		ripple_db, period_hz / HZ_PER_KHZ, sync, guess);
+	printf("%s\n", said);
+	fflush(stdout);
+
+	file = fopen(START_CHECK_LOG, "a");
+	if (file != NULL) {
+		fprintf(file, "%s %s\n", when, said);
+		fclose(file);
+	}
+	snprintf(name, sizeof(name), "data/start_check_%s.raw", when);
+	file = fopen(name, "wb");
+	if (file != NULL) {
+		fwrite(samples, sizeof(int32_t), AUDIO_SNAPSHOT_FRAMES * SNAPSHOT_CHANNELS, file);
+		fclose(file);
+	}
+}
+
+static void start_check_poll(long now) {
+	if (!is_start_check_due || now < start_check_at_ms)
+		return;
+	is_start_check_due = 0;
+	is_start_check_waiting = 1;
+	audio_take_snapshot();
+}
+
 static void snapshot_save(void) {
 	const int32_t *samples = audio_get_snapshot();
 	FILE *file;
 
 	if (samples == NULL)
 		return;
+	if (is_start_check_waiting) {
+		is_start_check_waiting = 0;
+		start_check_report(samples);
+		return;
+	}
 	print_snapshot_channel("receiver", samples, 0);
 	print_snapshot_channel("microphone", samples, 1);
 	file = fopen(SNAPSHOT_FILE, "wb");
@@ -609,6 +720,7 @@ static void main_loop(void) {
 		spectrum_send(now_ms());
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
+		start_check_poll(now_ms());
 		snapshot_save();
 		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record);
@@ -641,6 +753,9 @@ int main(int argc, char **argv) {
 	if (argc > 3)
 		volume = argv[3];
 
+	started_at_s = monotonic_s();
+	start_check_at_ms = now_ms() + START_CHECK_AFTER_MS;
+	is_start_check_due = 1;
 	if (setup(&board_zbitx_1) < 0) {
 		printf("the radio did not open\n");
 		return 1;
