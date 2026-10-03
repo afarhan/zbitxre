@@ -70,6 +70,17 @@
 // too late for most receivers to find. ft8_tx_cancel() stops a message,
 // whether it is waiting or being sent.
 //
+// What is sent is heard in the speaker as it goes, as zbitxv2 let it be
+// heard, at the level of the modem's own control, which the author asked
+// to have in FT8's list:
+//
+//   FT8_SIDETONE  how loud our own transmission is in the speaker, 0 to
+//                 100; 0 is silence. It is shown as SIDETONE in the list,
+//                 and is kept apart from CW's, which is often wanted
+//                 louder. It is kept with the other settings.
+//
+// At 100 the speaker gets the peak CW's sidetone has at 100.
+//
 // Which of the two threads has the message is in tx_state: IDLE, ARMED,
 // waiting for its slot, and SENDING. Only the thread that owns the
 // controls arms, and only while nothing is being sent; the audio thread
@@ -319,6 +330,7 @@
 #include <time.h>
 
 #include "sdr.h"
+#include "control.h"
 #include "modem.h"
 #include "messages.h"
 #include "radio_clock.h"
@@ -343,6 +355,10 @@
 #define TX_LATEST_START_S 2.0
 // zbitxv2's level for FT8: a seventh of full scale
 #define TX_DIVISOR 7.0
+// the speaker's peak with the sidetone at its loudest, as CW's
+#define SIDETONE_PEAK 150000000.0
+#define SIDETONE_HIGHEST 100
+#define SIDETONE_STARTING "30"
 
 enum tx_state {
 	TX_IDLE,
@@ -375,6 +391,8 @@ static int tx_wave_room;
 static time_t tx_slot;
 static long tx_pos;
 static atomic_int tx_state;
+static atomic_int sidetone_level;
+static int32_t sidetone_output[MAX_BINS/2];
 
 // the time, by the radio's clock, in seconds and their fractions
 double ft8_time_now(void) {
@@ -542,25 +560,32 @@ static int ft8_wants_tx(void) {
 	return 1;
 }
 
-// silence until half a second into the slot, then the message
+// silence until half a second into the slot, then the message, which is
+// heard in the speaker at the sidetone's level
 static void tx_ft8(const int32_t *mic, double *samples) {
+	double peak = SIDETONE_PEAK * atomic_load(&sidetone_level) / SIDETONE_HIGHEST;
 	int armed = TX_ARMED;
 	int i;
 
 	(void)mic;
+	memset(sidetone_output, 0, sizeof(sidetone_output));
 	if (atomic_compare_exchange_strong(&tx_state, &armed, TX_SENDING))
 		tx_pos = (long)((ft8_time_now() - (double)tx_slot - TX_STARTS_AT_S)
 			* SOUND_CARD_RATE);
 	if (atomic_load(&tx_state) != TX_SENDING) {
 		memset(samples, 0, MAX_BINS/2 * sizeof(samples[0]));
+		speaker_play(sidetone_output, MAX_BINS/2);
 		return;
 	}
 	for (i = 0; i < MAX_BINS/2; i++) {
 		samples[i] = 0;
-		if (tx_pos >= 0 && tx_pos < tx_wave_samples)
+		if (tx_pos >= 0 && tx_pos < tx_wave_samples) {
 			samples[i] = tx_wave[tx_pos] / TX_DIVISOR;
+			sidetone_output[i] = (int32_t)(tx_wave[tx_pos] * peak);
+		}
 		tx_pos++;
 	}
+	speaker_play(sidetone_output, MAX_BINS/2);
 	if (tx_pos >= tx_wave_samples)
 		atomic_store(&tx_state, TX_IDLE);
 }
@@ -574,7 +599,23 @@ static void ft8_reset(void) {
 	ft8_rx_buff_index = 0;
 }
 
+static int apply_sidetone(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	atomic_store(&sidetone_level, atoi(value));
+	return 0;
+}
+
+static struct control sidetone_control = {
+	.group = "FT8", .name = "FT8_SIDETONE", .kind = CONTROL_NUMBER,
+	.min = 0, .max = SIDETONE_HIGHEST, .step = 1,
+	.value = SIDETONE_STARTING, .apply = apply_sidetone,
+};
+
 static void ft8_init(void) {
+	control_register(&sidetone_control);
+	atomic_store(&sidetone_level, atoi(sidetone_control.value));
 	tx_wave_room = ft8_signal_samples(SOUND_CARD_RATE);
 	tx_wave = malloc(tx_wave_room * sizeof(tx_wave[0]));
 	sem_init(&slot_is_ready, 0, 0);

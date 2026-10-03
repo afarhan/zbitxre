@@ -46,7 +46,12 @@
 // which starts calling CQ, and HALT, which stops whatever is being sent and
 // ends the contact. TERM, which is not written yet, is not shown in FT8,
 // since only four buttons fit in the column. TX_PITCH, where in the
-// passband we send, is in the list on the right. A message is answered by
+// passband we send, is in the list on the right, and so is SIDETONE, how
+// loud our own transmission is; MENU is not shown in FT8, and the list has
+// a fourth row in its place, at the author's asking.
+//
+// When the mode changes, its list is shown from the top: a list left
+// scrolled from another mode hid FT8's SIDETONE above its first row. A message is answered by
 // marking it in the list and clicking the knob; messages.cpp says how.
 //
 // In FT8 the graph and the waterfall are not shown. In their place is the
@@ -156,6 +161,9 @@
 #define LIST_TOP 96
 #define LIST_WIDTH 144
 #define LIST_ROWS 3
+//in FT8 MENU is not shown, and the list has its place too
+#define LIST_ROWS_FT8 4
+#define LIST_ROWS_MAX 4
 
 #define TITLE_LEFT 3
 #define TITLE_TOP 1
@@ -277,12 +285,13 @@ static struct widget band_widget[BANDS];
 static struct widget footer_widget[FOOTER_TILES];
 static struct widget footer_button[FOOTER_TILES];
 static const struct footer *footer_in_use;
-static struct widget list_widget[LIST_ROWS];
+static struct widget list_widget[LIST_ROWS_MAX];
 static lv_obj_t *span_label;
 static lv_obj_t *spectrum_area;
 static lv_obj_t *term_button;
 static lv_obj_t *cq_button;
 static lv_obj_t *halt_button;
+static lv_obj_t *menu_button;
 static bool is_showing_messages;
 static bool is_status_above;
 
@@ -292,6 +301,8 @@ static struct panel_control *listed[CONTROLS_MAX];
 static int listed_count;
 static int list_top;
 static int list_mark;
+static int list_rows = LIST_ROWS;
+static char laid_out_group[CONTROL_TEXT_MAX];
 
 static enum selection selected = ON_FREQUENCY;
 static struct panel_control *selected_control;
@@ -522,12 +533,24 @@ static void lay_out(){
 		set_hidden(term_button, is_showing_messages);
 		set_hidden(cq_button, !is_showing_messages);
 		set_hidden(halt_button, !is_showing_messages);
+		set_hidden(menu_button, is_showing_messages);
 		place_the_status(is_showing_messages);
 	}
+	list_rows = LIST_ROWS;
+	if (is_showing_messages)
+		list_rows = LIST_ROWS_FT8;
 	if (!screens_is_open())
 		waterfall_set_painting(!is_showing_messages);
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
+
+	//another mode's list is shown from its top, so that none of its controls
+	//is out of sight above it
+	if (strcmp(group, laid_out_group) != 0){
+		snprintf(laid_out_group, sizeof(laid_out_group), "%s", group);
+		list_top = 0;
+		list_mark = 0;
+	}
 
 	listed_count = 0;
 	for (i = 0; i < controls_count(); i++){
@@ -545,8 +568,8 @@ static void lay_out(){
 		list_mark = listed_count - 1;
 	if (list_mark < 0)
 		list_mark = 0;
-	if (list_top > listed_count - LIST_ROWS)
-		list_top = listed_count - LIST_ROWS;
+	if (list_top > listed_count - list_rows)
+		list_top = listed_count - list_rows;
 	if (list_top < 0)
 		list_top = 0;
 }
@@ -555,8 +578,8 @@ static void lay_out(){
 static void keep_the_mark_in_view(){
 	if (list_mark < list_top)
 		list_top = list_mark;
-	if (list_mark >= list_top + LIST_ROWS)
-		list_top = list_mark - LIST_ROWS + 1;
+	if (list_mark >= list_top + list_rows)
+		list_top = list_mark - list_rows + 1;
 }
 
 /* showing it */
@@ -684,9 +707,9 @@ static void show_list(){
 	bool is_marked;
 	int i;
 
-	for (i = 0; i < LIST_ROWS; i++){
+	for (i = 0; i < LIST_ROWS_MAX; i++){
 		list_widget[i].control = NULL;
-		if (list_top + i < listed_count)
+		if (i < list_rows && list_top + i < listed_count)
 			list_widget[i].control = listed[list_top + i];
 		if (list_widget[i].control == NULL){
 			show_widget(&list_widget[i], "", false, false);
@@ -972,11 +995,11 @@ static void on_touched(lv_event_t *e){
 	if (w == &freq_widget)
 		select_the_frequency();
 	else if (w->control != NULL){
-		for (i = 0; i < LIST_ROWS; i++){
+		for (i = 0; i < LIST_ROWS_MAX; i++){
 			if (w == &list_widget[i])
 				break;
 		}
-		if (i < LIST_ROWS)
+		if (i < LIST_ROWS_MAX)
 			select_the_list(list_top + i);
 		else
 			select_a_control(w->control);
@@ -1132,7 +1155,7 @@ static void screen_create(){
 			&lv_font_montserrat_14, COLOUR_VALUE);
 		lv_obj_align(macro_widget[i].value, LV_ALIGN_CENTER, 0, 0);
 	}
-	dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
+	menu_button = dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
 
 	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_20);
 	for (i = 0; i < PLACES; i++)
@@ -1161,7 +1184,7 @@ static void screen_create(){
 		lv_obj_add_flag(footer_button[i].box, LV_OBJ_FLAG_HIDDEN);
 	}
 
-	for (i = 0; i < LIST_ROWS; i++)
+	for (i = 0; i < LIST_ROWS_MAX; i++)
 		row_create(&list_widget[i], LIST_LEFT, LIST_TOP + i * ROW_HEIGHT, LIST_WIDTH);
 
 	//nothing of LVGL's is drawn over the graph and the waterfall but the
