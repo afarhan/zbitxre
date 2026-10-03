@@ -52,6 +52,238 @@
 // file, which the audio thread must not do. What it keeps is how far the
 // radio's clock is ahead of the kernel's, and the audio thread adds that
 // to the kernel's time, which costs it nothing to read.
+//
+// ======================================================================
+// THE CONTACT: THE DESIGN, NOT YET BUILT
+// ======================================================================
+//
+// What follows was agreed with the author on 3 October 2026, before any of
+// it was written. It is here so that the code, when it comes, is written
+// to it, and so that whoever reads this file knows why it is so. The
+// procedure is the one in the WSJT-X User Guide, version 3.0.0, sections
+// 10.1 to 10.6, and the states are the six its auto-sequencer has, so that
+// an operator who knows WSJT-X finds the radio doing what is expected.
+//
+// WHY: WHAT WENT WRONG IN ZBITXV2
+//
+// Contacts and logging have been the problem with FT8 on the sbitx. In
+// zbitxv2's modem_ft8.c, ft8_process() chose what to send from the words
+// of the last message alone, and kept no state:
+//
+//   - ft8_on_signal_report() logged as soon as a report came, with an R or
+//     without, which can be before the other station has ours; the
+//     RR73/RRR branch logged again. Only enter_qso()'s refusal of the same
+//     call within 60 seconds kept the second entry out.
+//   - the RR73/RRR branch answered and logged anyone's RR73 to us, without
+//     looking at who was being worked.
+//   - a 73 aborted without logging, so an answering station that missed
+//     the RR73 and copied only the 73 lost the contact.
+//   - a message repeated by the other station, because ours was missed,
+//     was taken as new, and was answered and logged again.
+//   - the report we sent could change under us, taken from whatever
+//     message was last clicked or heard.
+//
+// THE STANDARD CONTACT
+//
+//     CQ K1ABC FN42                         K1ABC calls CQ
+//                       K1ABC G0XYZ IO91    G0XYZ answers          (Tx1)
+//     G0XYZ K1ABC -19                       K1ABC sends a report   (Tx2)
+//                       K1ABC G0XYZ R-22    G0XYZ: R and a report  (Tx3)
+//     G0XYZ K1ABC RR73                      K1ABC: RR73, or RRR    (Tx4)
+//                       K1ABC G0XYZ 73      G0XYZ: 73              (Tx5)
+//
+// A report is how strong the other station was, in dB over the noise in
+// 2500 Hz. A station may skip Tx1 and answer with a report. RR73 is sent
+// as if it were a grid square, so it is to be looked for before a word of
+// four characters is taken for a grid.
+//
+// THE OPERATOR'S CHOICES
+//
+// Two settings, in the SET screen's list, kept with the rest:
+//
+//   FT8-Operations  Normal, Running or Pouncing.
+//     Running    CQ is called until someone answers; the contact is
+//                finished, or given up, and CQ is called again.
+//     Pouncing   only CQs are answered: the operator marks a CQ in the list
+//                of messages and clicks the knob. The radio never calls CQ.
+//     Normal     a CQ is called no more than three times unanswered. A
+//                marked message is answered as in Pouncing.
+//
+//   FT8 Reply  RRR or RR73: what the station that called CQ sends once it
+//              has the other's R and report.
+//
+// Open, to be settled with the author: in Running, whether a CQ marked
+// and clicked while calling CQ is answered, and CQ called again after (we
+// think yes); in Pouncing, whether a station that calls us uncalled is
+// answered, or only shown (we think shown).
+//
+// THE RULES BOTH WAYS OF WORKING SHARE
+//
+//   - Only one station counts. A message moves the contact on only if its
+//     first callsign is ours, or our hash, and its second is the station
+//     being worked. Every other message is in the list and nothing more.
+//   - One step to a slot. The messages of the slot just searched are looked
+//     at together, and one from the station being worked moves the state
+//     once. What we send next is chosen before our slot begins; a second
+//     is plenty for that, the author says, and sbitx has missed no
+//     contact for want of it.
+//   - We send in the slots the other station does not: if its message
+//     began at 0 or 30 seconds, ours begin at 15 or 45, and so on.
+//   - Each state sends its message in each of our slots until something
+//     moves it, up to a limit, four sends say; then the contact is given
+//     up and nothing is logged.
+//   - The report we send is fixed when it is first sent, from the strength
+//     of the message we answered, and is the same in every repeat.
+//   - A contact is logged once. It keeps a flag that says it has been,
+//     which takes the place of zbitxv2's 60 second window.
+//   - Stopping, or changing the band, the frequency or the mode, ends the
+//     contact, and nothing is logged.
+//
+// WHEN WE CALL CQ
+//
+//   we are in, sending    from X               we send next
+//   ------------------    -----------------    ----------------------------
+//   CALLING CQ            MY X GRID            X MY rpt, to REPORT
+//     CQ MY GRID          MY X rpt (no Tx1)    X MY R-rpt, to ROGER_REPORT
+//                         MY X R-rpt           X MY RR73, to ROGERS; log
+//                         more than one        the first heard; the rest
+//                         caller               are only shown
+//                         nothing              CQ again; in Normal, no
+//                                              more than three times
+//
+//   REPORT                MY X R-rpt           X MY RR73, to ROGERS; log
+//     X MY rpt            MY X GRID again      rpt again: ours was missed
+//                         MY X rpt (no R)      X MY R-rpt, to ROGER_REPORT
+//                         MY X RRR, RR73       log, if we have their
+//                         or 73                report; the contact ends
+//                         nothing, to the      given up, not logged
+//                         limit
+//
+//   ROGER_REPORT          MY X RRR or RR73     log; X MY 73, to SIGNOFF
+//     X MY R-rpt          MY X 73              log; the contact ends
+//     (only when X        their report again   R-rpt again
+//     skipped a step)
+//
+//   ROGERS                MY X 73              the contact ends
+//     X MY RR73 (or       MY X R-rpt again     RR73 again: ours was missed;
+//     RRR)                                     not logged again
+//                         nothing for a slot   the contact ends
+//
+// With RR73, the station that called CQ logs when it first sends RR73,
+// which is when the R and the report have come: it has the other's
+// callsign and report, and the R says the other has ours. This is when
+// WSJT-X asks to log, as it sends a message with 73 in it. Should our RR73
+// not be copied, the other's R and report come again, and ROGERS sends
+// RR73 again, without a second entry.
+//
+// With RRR, which asks for a 73 back, the entry is made when the 73 comes,
+// or when two slots have passed after RRR with nothing more.
+//
+// When the contact has ended, or been given up, Running calls CQ again;
+// Normal stops, as WSJT-X does after every contact.
+//
+// WHEN WE ANSWER
+//
+// It begins with a message the operator has marked in the list and the
+// knob's click: a CQ from X, or the end of X's last contact, Y X RR73 or
+// Y X 73, which is answering at the tail.
+//
+//   we are in, sending    from X               we send next
+//   ------------------    -----------------    ----------------------------
+//   CALLING STN           MY X rpt             X MY R-rpt, to ROGER_REPORT
+//     X MY GRID           MY X R-rpt           X MY RR73, to ROGERS; log
+//                         Y X ...: X           stop; if X calls us later,
+//                         answered another     go on (WSJT-X's "Wait and
+//                                              Reply")
+//                         nothing, to the      given up, not logged
+//                         limit
+//
+//   ROGER_REPORT          MY X RR73 or RRR     log; X MY 73 once, to SIGNOFF
+//     X MY R-rpt          MY X 73              log; the contact ends
+//                         MY X rpt again       R-rpt again: ours was missed
+//                         nothing, to the      given up, not logged; the
+//                         limit                status bar says so
+//
+//   SIGNOFF               MY X RR73 again      73 once more; not logged
+//     X MY 73                                  again
+//                         anything else, or    the contact ends
+//                         nothing
+//
+// The answering station logs when the RR73, the RRR or the 73 comes. It is
+// what the guide says always to log on, and it is certain: X has had our
+// report and says so, and we have X's. A report alone is never enough.
+//
+// WHAT IS LOGGED
+//
+// Into the logbook, data/sbitx.db, as zbitxv2 kept it: callsign_recv the
+// station worked; rst_sent the report we sent; rst_recv the report X sent,
+// without its R; exch_sent our grid; exch_recv X's grid, if it was heard;
+// the mode, FT8; the frequency; and the date and the time, in UTC, of the
+// moment of logging.
+//
+// CALLSIGNS SENT AS A HASH
+//
+// A callsign that does not fit FT8's pattern for one is sent in full in
+// some messages and as a hash in others; the guide's section 10.6. These
+// fit, and are never hashed: K1ABC, K1ABC/P, K1ABC/R, and the CQs of the
+// activities, CQ POTA K1ABC FN42, CQ SOTA. These do not: a prefix,
+// VE3/K1ABC, PJ4/K1ABC; another suffix, /QRP, /M, /MM, /3; and calls longer
+// than the pattern, as many special event calls are.
+//
+//     CQ PJ4/K1ABC                    the callsign in full
+//     <PJ4/K1ABC> W9XYZ               PJ4/K1ABC as a 22 bit hash
+//     W9XYZ <PJ4/K1ABC> +03
+//     <W9XYZ> PJ4/K1ABC RRR           in full again; W9XYZ as a 12 bit hash
+//     PJ4/K1ABC <W9XYZ> 73
+//
+// The hash is worked out from the callsign by a fixed rule, so nobody
+// publishes a list of hashes: a receiver knows a hash only if it has heard
+// or been given the callsign it is of. WSJT-X shows the callsign if it
+// heard it in full "in the recent past", and <...> if not. zbitxv2's copy
+// of ft8_lib, which is ours, does not look hashes up at all, and always
+// shows <...>.
+//
+// The author's plan: the callsigns and their hashes are kept in the
+// SQLite database with the logbook, in a table of their own:
+//
+//     callsign_hash(call, hash22, hash12, hash10, source, last_seen)
+//
+// The hashes are worked out once, as a callsign goes in, and looked up by
+// an index, never by working them out again. The callsigns come from:
+//
+//   - ARRL's list of LoTW users, https://lotw.arrl.org/lotw-user-activity.csv,
+//     which WSJT-X fetches too and which is brought up to date weekly. On
+//     3 October 2026 it had 236,015 callsigns, 29,362 of them with a slash,
+//     in 6.3 MB.
+//   - the logbook.
+//   - every callsign heard in full on the air, saved as it is decoded. It is
+//     what WSJT-X keeps in memory, kept here across a restart.
+//
+// The radio looks for a new LoTW list once a day, when its clock is from
+// NTP, which says the network is there. It asks with curl, run as wpa_cli
+// is run, giving the ETag the server sent with the list it has: an
+// unchanged list is answered "304 Not Modified" and nothing is fetched. A
+// new one replaces the old in one transaction, and its ETag is kept.
+//
+// The three sizes of hash are looked up differently, since a short hash
+// is shared by many callsigns:
+//
+//   22 bits   the nonstandard callsign, in a standard message. Of 4,194,304
+//             values, so looked up in the table: the callsigns heard lately
+//             first, then the logbook's, then those of the LoTW list with a
+//             slash. Among the 29,362 of those, a wrong match is under one
+//             in a hundred.
+//   12 bits   the standard callsign beside a nonstandard one. Some 57 of the
+//             LoTW list share each value, so it is never looked up there: it
+//             is ours or the station's we are working, and is compared with
+//             those two.
+//   10 bits   the Fox's callsign, in DXpedition mode: the Fox being called.
+//
+// So in a contact the hashes need no table: ours is worked out from our
+// callsign, and the other's from the callsign heard in full when we
+// answered. The table turns <...> into callsigns in the list of messages,
+// and catches a station with a nonstandard callsign that calls us before
+// we have heard it.
 
 #include <pthread.h>
 #include <semaphore.h>
