@@ -73,6 +73,10 @@ extern "C" {
 // what is in it
 #define LINK_MESSAGES 10
 #define LINK_MESSAGE_LINE_MAX 47
+// a message the operator chose to answer: a text from the panel, in parts
+// as any text is, with this for its control; panel_messages.c on the radio
+// says what is in it
+#define LINK_FT8_ANSWER 11
 
 struct link_wifi_point {
 	int8_t signal_dbm;

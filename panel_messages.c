@@ -13,8 +13,20 @@
 //
 // the time the message was sent at, in UTC, as hours, minutes and seconds,
 // which for FT8 is the start of its slot; how strong it was, in dB over the
-// noise; its pitch in the passband, in Hz; and its text. How the panel
-// shows them is the panel's business.
+// noise; its pitch in the passband, in Hz; and its text. A message the
+// radio sent itself has TX where its strength would be:
+//
+//     043030|TX|1500|VU2ESE G0XYZ R-07
+//
+// How the panel shows them is the panel's business.
+//
+// THE PANEL ANSWERS A MESSAGE
+//
+// When the operator marks a message on the panel and clicks the knob, the
+// panel sends the message back, as a text in parts with LINK_FT8_ANSWER
+// for its control: the second of the minute its slot began at, its
+// strength, its pitch and its text, "45|-12|1797|CQ VU2ESE MK97". It goes to
+// ft8_qso.c, which says what is done with it.
 //
 // The lines go as the kept, counted value of LINK_MESSAGES, as many to a
 // part as fit, each part when the panel has taken the one before;
@@ -36,6 +48,7 @@
 #include "messages.h"
 #include "panel.h"
 #include "panel_messages.h"
+#include "ft8_qso.h"
 
 static uint8_t part[LINK_COUNTED_MAX];
 static unsigned long last_sent;
@@ -44,6 +57,9 @@ static int make_a_line(char *line, int room, const struct message *m) {
 	struct tm utc;
 
 	gmtime_r(&m->at, &utc);
+	if (m->is_sent)
+		return snprintf(line, room, "%02d%02d%02d|TX|%d|%s", utc.tm_hour, utc.tm_min,
+			utc.tm_sec, m->pitch_hz, m->text);
 	return snprintf(line, room, "%02d%02d%02d|%d|%d|%s", utc.tm_hour, utc.tm_min,
 		utc.tm_sec, m->snr_db, m->pitch_hz, m->text);
 }
@@ -66,4 +82,17 @@ void panel_messages_poll(void) {
 	}
 	if (used > 0)
 		panel_set_kept_bytes(LINK_MESSAGES, part, used);
+}
+
+// the panel's text, when it is whole: a message to be answered
+void panel_messages_took_bytes(int control, const uint8_t *bytes, int count) {
+	static char gathered[LINK_TEXT_MAX + 1];
+	int number = 0;
+
+	if (control != LINK_TEXT_PART)
+		return;
+	if (link_get_text_part(bytes, count, &number, gathered, sizeof(gathered)) != 1)
+		return;
+	if (number == LINK_FT8_ANSWER)
+		ft8_qso_answer(gathered);
 }

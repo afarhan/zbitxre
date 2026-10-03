@@ -91,6 +91,21 @@ int main(void) {
 	expect(logbook_open(LOGBOOK_PATH) == 0 && logbook_find("", rows, ROWS) == 1,
 		"closed and opened again, the logbook is still without it");
 
+	{
+		struct logbook_row added = {
+			0, "FT8", "14074", "2026-10-03", "0915", "-12", "MK97", "G0XYZ", "-07", "IO91",
+		};
+		int id = logbook_add(&added, "VU2ESE");
+
+		expect(id > 0 && logbook_find("G0X", rows, ROWS) == 1 && rows[0].id == id
+			&& !strcmp(rows[0].rst_sent, "-12") && !strcmp(rows[0].rst_recv, "-07")
+			&& !strcmp(rows[0].exch_recv, "IO91") && !strcmp(rows[0].freq, "14074")
+			&& !strcmp(rows[0].qso_time, "0915"),
+			"an entry is added, with every field, and found");
+		expect(logbook_find("", rows, ROWS) == 2 && rows[0].id == id,
+			"and it is the newest, and not marked deleted");
+	}
+
 	make_a_logbook(OLD_LOGBOOK_PATH,
 		"CREATE TABLE logbook (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, mode TEXT, "
 		"freq TEXT, qso_date TEXT, qso_time TEXT, callsign_sent TEXT, rst_sent TEXT, "

@@ -58,6 +58,11 @@
 // was sent at, its strength in dB, its pitch in Hz and its text. The same
 // goes to the panel; messages.c and panel_messages.c say how.
 //
+// In FT8, "FT8_DO CQ" calls CQ and "FT8_DO HALT" stops, as the panel's
+// buttons do, and "answer=G0XYZ" answers the newest message heard from
+// G0XYZ, as marking it on the panel and clicking the knob does; ft8_qso.c
+// says what follows.
+//
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
@@ -186,6 +191,7 @@
 #include "panel_controls.h"
 #include "panel_log.h"
 #include "panel_messages.h"
+#include "ft8_qso.h"
 #include "messages.h"
 #include "panel_wifi.h"
 #include "control.h"
@@ -216,6 +222,7 @@
 #define SETTINGS_FILE "data/user_settings.ini"
 #define LOGBOOK_FILE "data/sbitx.db"
 #define LOG_FOR "log="
+#define ANSWER "answer="
 
 #define START_CHECK_AFTER_MS 3000
 #define START_CHECK_REOPENINGS 3
@@ -685,6 +692,7 @@ static void on_panel_bytes(int control, const uint8_t *bytes, int count) {
 		set_setting(name, text, ORIGIN_PANEL);
 	panel_wifi_took_bytes(control, bytes, count, now_ms());
 	panel_log_took_bytes(control, bytes, count);
+	panel_messages_took_bytes(control, bytes, count);
 	fflush(stdout);
 }
 
@@ -755,6 +763,10 @@ static void handle_command(char *line) {
 		si5351_set_freq(BFO_CLOCK, bfo_freq);
 		si5351_reset_plls();
 		printf("ok\n");
+		return;
+	}
+	if (begins_with(line, ANSWER)) {
+		ft8_qso_answer_call(line + strlen(ANSWER));
 		return;
 	}
 	if (begins_with(line, LOG_FOR)) {
@@ -890,8 +902,12 @@ static void messages_print(void) {
 
 	while (message_next(&last_printed, &m)) {
 		gmtime_r(&m.at, &utc);
-		printf("%s %02d%02d%02d %+03d %4d  %s\n", m.mode, utc.tm_hour, utc.tm_min,
-			utc.tm_sec, m.snr_db, m.pitch_hz, m.text);
+		if (m.is_sent)
+			printf("%s %02d%02d%02d  TX %4d  %s\n", m.mode, utc.tm_hour, utc.tm_min,
+				utc.tm_sec, m.pitch_hz, m.text);
+		else
+			printf("%s %02d%02d%02d %+03d %4d  %s\n", m.mode, utc.tm_hour, utc.tm_min,
+				utc.tm_sec, m.snr_db, m.pitch_hz, m.text);
 		printed = 1;
 	}
 	if (printed)
@@ -915,6 +931,7 @@ static void main_loop(void) {
 		panel_wifi_poll(now_ms());
 		panel_log_poll();
 		messages_print();
+		ft8_qso_poll();
 		panel_messages_poll();
 		radio_poll(now_ms());
 
@@ -963,6 +980,7 @@ int main(int argc, char **argv) {
 	control_register(&vfo_b);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
+	ft8_qso_open();
 	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);

@@ -17,7 +17,9 @@
 //
 // A message has the mode it came in, the time it was sent at (for FT8 the
 // start of its slot), how strong it was in dB over the noise, its pitch in
-// the passband in Hz, and its text.
+// the passband in Hz, and its text. What the radio itself sends is added
+// too, with message_add_sent(), so that a list shows both sides of a
+// contact, as WSJT-X's does; it is marked as sent, and has no strength.
 //
 // The newest MESSAGES_KEPT are kept. Each has a serial number, counted from
 // 1, and a reader says the last it has read. One that has fallen further
@@ -37,7 +39,7 @@ static struct message kept[MESSAGES_KEPT];
 static unsigned long newest_serial;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
-void message_add(const char *mode, time_t at, int snr_db, int pitch_hz,
+static void add(const char *mode, time_t at, int snr_db, int pitch_hz, int is_sent,
 		const char *text) {
 	struct message *m;
 
@@ -48,9 +50,19 @@ void message_add(const char *mode, time_t at, int snr_db, int pitch_hz,
 	m->at = at;
 	m->snr_db = snr_db;
 	m->pitch_hz = pitch_hz;
+	m->is_sent = is_sent;
 	snprintf(m->mode, sizeof(m->mode), "%s", mode);
 	snprintf(m->text, sizeof(m->text), "%s", text);
 	pthread_mutex_unlock(&lock);
+}
+
+void message_add(const char *mode, time_t at, int snr_db, int pitch_hz,
+		const char *text) {
+	add(mode, at, snr_db, pitch_hz, 0, text);
+}
+
+void message_add_sent(const char *mode, time_t at, int pitch_hz, const char *text) {
+	add(mode, at, 0, pitch_hz, 1, text);
 }
 
 // gives the message after the last one read, and says whether there was one

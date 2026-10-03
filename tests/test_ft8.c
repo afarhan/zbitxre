@@ -10,10 +10,13 @@
 // slot and has to give the messages back, each at the pitch it was sent
 // at. A slot of noise alone has to give none.
 //
-// The sound of a message is made as zbitxv2's sbitx_ft8_encode() made it,
-// with synth_gfsk() and gfsk_pulse() from ft8_lib's example gen_ft8.c, by
-// Kārlis Goba, YL3JG, MIT licence: the tone glides from one symbol to the
-// next through a Gaussian filter, which is what keeps an FT8 signal narrow.
+// The sound of a message is made by modems/ft8_signal.c, which is what the
+// radio sends: at 12000 samples a second, and at the sound card's 96000,
+// kept one in eight as the receiver keeps it. The kinds of message the
+// library could not pack before it was brought up to date are made and
+// found: CQ POTA, /P, a nonstandard callsign, and that callsign sent as a
+// hash, which is found by the callsign heard in full before it. What
+// cannot be packed at all has to be refused.
 
 #include <math.h>
 #include <stdint.h>
@@ -21,10 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "ft8_lib/constants.h"
-#include "ft8_lib/encode.h"
-#include "ft8_lib/pack.h"
 #include "ft8_monitor.h"
+#include "ft8_signal.h"
 
 #define SLOT_SAMPLES (FT8_SAMPLE_RATE * 15)
 #define STARTS_AT_SAMPLE (FT8_SAMPLE_RATE / 2)
@@ -35,17 +36,15 @@
 #define WEAK 0.01f
 #define NOWHERE (-1)
 
-#define FT8_SYMBOL_BT 2.0f ///< symbol smoothing filter bandwidth factor (BT)
-#define GFSK_CONST_K 5.336446f ///< == pi * sqrt(2 / log(2))
-// a symbol is 0.16 second, which at 12000 samples a second is
-#define SYMBOL_SAMPLES 1920
-#define PULSE_SYMBOLS 3
-#define RAMP_DIVISOR 8
+#define SOUND_CARD_RATE 96000
+#define DECIMATION (SOUND_CARD_RATE / FT8_SAMPLE_RATE)
+// 79 symbols of 1920 samples at 12000 a second, and eight times that
+#define WAVE_ROOM 151680
+#define WAVE_96K_ROOM (WAVE_ROOM * DECIMATION)
 
 static float slot[SLOT_SAMPLES];
-static float wave[FT8_NN * SYMBOL_SAMPLES];
-static float dphi[(FT8_NN + 2) * SYMBOL_SAMPLES];
-static float pulse[PULSE_SYMBOLS * SYMBOL_SAMPLES];
+static float wave[WAVE_ROOM];
+static float wave_96k[WAVE_96K_ROOM];
 static struct ft8_decoded found[FOUND_MAX];
 static int found_count;
 static int checks_failed;
@@ -59,66 +58,6 @@ static void expect(int ok, const char *what) {
 	checks_failed++;
 }
 
-/// Computes a GFSK smoothing pulse.
-static void gfsk_pulse(int n_spsym, float symbol_bt, float *pulse) {
-	float t;
-	float arg1;
-	float arg2;
-	int i;
-
-	for (i = 0; i < PULSE_SYMBOLS * n_spsym; ++i) {
-		t = i / (float)n_spsym - 1.5f;
-		arg1 = GFSK_CONST_K * symbol_bt * (t + 0.5f);
-		arg2 = GFSK_CONST_K * symbol_bt * (t - 0.5f);
-		pulse[i] = (erff(arg1) - erff(arg2)) / 2;
-	}
-}
-
-/// Synthesize waveform data using GFSK phase shaping.
-static void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt,
-		int n_spsym, float *signal) {
-	int n_wave = n_sym * n_spsym;
-	float dphi_peak = 2 * M_PI / n_spsym;
-	float phi = 0;
-	float env;
-	int n_ramp = n_spsym / RAMP_DIVISOR;
-	int ib;
-	int i;
-	int j;
-	int k;
-
-	// Shift frequency up by f0
-	for (i = 0; i < n_wave + 2 * n_spsym; ++i)
-		dphi[i] = 2 * M_PI * f0 / FT8_SAMPLE_RATE;
-
-	gfsk_pulse(n_spsym, symbol_bt, pulse);
-	for (i = 0; i < n_sym; ++i) {
-		ib = i * n_spsym;
-		for (j = 0; j < PULSE_SYMBOLS * n_spsym; ++j)
-			dphi[j + ib] += dphi_peak * symbols[i] * pulse[j];
-	}
-
-	// Add dummy symbols at beginning and end with tone values equal to 1st
-	// and last symbol, respectively
-	for (j = 0; j < 2 * n_spsym; ++j) {
-		dphi[j] += dphi_peak * pulse[j + n_spsym] * symbols[0];
-		dphi[j + n_sym * n_spsym] += dphi_peak * pulse[j] * symbols[n_sym - 1];
-	}
-
-	// Calculate and insert the audio waveform
-	for (k = 0; k < n_wave; ++k) {
-		signal[k] = sinf(phi);
-		phi = fmodf(phi + dphi[k + n_spsym], 2 * M_PI);
-	}
-
-	// Apply envelope shaping to the first and last symbols
-	for (i = 0; i < n_ramp; ++i) {
-		env = (1 - cosf(2 * M_PI * i / (2 * n_ramp))) / 2;
-		signal[i] *= env;
-		signal[n_wave - 1 - i] *= env;
-	}
-}
-
 static void fill_with_noise(void) {
 	int i;
 
@@ -129,18 +68,26 @@ static void fill_with_noise(void) {
 
 // a message is added to the slot, at a pitch and a strength
 static int add_message(const char *text, int pitch_hz, float strength) {
-	uint8_t packed[FTX_LDPC_K_BYTES];
-	uint8_t tones[FT8_NN];
-	char message[FT8_TEXT_ROOM];
+	int samples = sbitx_ft8_encode(text, pitch_hz, FT8_SAMPLE_RATE, wave, WAVE_ROOM);
 	int i;
 
-	snprintf(message, sizeof(message), "%s", text);
-	if (pack77(message, packed) < 0)
+	if (samples < 0)
 		return -1;
-	ft8_encode(packed, tones);
-	synth_gfsk(tones, FT8_NN, (float)pitch_hz, FT8_SYMBOL_BT, SYMBOL_SAMPLES, wave);
-	for (i = 0; i < FT8_NN * SYMBOL_SAMPLES; i++)
+	for (i = 0; i < samples; i++)
 		slot[STARTS_AT_SAMPLE + i] += strength * wave[i];
+	return 0;
+}
+
+// a message made at the sound card's rate, and kept one sample in eight,
+// as the receiver does
+static int add_message_at_96k(const char *text, int pitch_hz, float strength) {
+	int samples = sbitx_ft8_encode(text, pitch_hz, SOUND_CARD_RATE, wave_96k, WAVE_96K_ROOM);
+	int i;
+
+	if (samples < 0)
+		return -1;
+	for (i = 0; i < samples / DECIMATION; i++)
+		slot[STARTS_AT_SAMPLE + i] += strength * wave_96k[i * DECIMATION];
 	return 0;
 }
 
@@ -195,6 +142,39 @@ int main(void) {
 	fill_with_noise();
 	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
 	expect(found_count == 0, "the next slot, of noise, has nothing left over in it");
+
+	fill_with_noise();
+	expect(add_message_at_96k("G0XYZ VU2ESE R-07", 1500, STRONG) == 0,
+		"a message is made at the sound card's rate");
+	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
+	expect(found_count == 1 && is_found_at("G0XYZ VU2ESE R-07", 1500),
+		"and is found in what the receiver keeps of it");
+
+	fill_with_noise();
+	expect(add_message("CQ POTA VU2ESE MK97", 600, STRONG) == 0
+		&& add_message("G0XYZ VU2ESE/P R-05", 1100, STRONG) == 0
+		&& add_message("CQ PJ4/K1ABC", 1600, STRONG) == 0,
+		"a CQ POTA, a /P and a nonstandard callsign are made into sound");
+	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
+	for (i = 0; i < found_count; i++)
+		printf("          %+3d dB %4d Hz %4.1f s  %s\n", found[i].snr, found[i].freq_hz,
+			found[i].time_sec, found[i].text);
+	expect(is_found_at("CQ POTA VU2ESE MK97", 600) && is_found_at("G0XYZ VU2ESE/P R-05", 1100)
+		&& is_found_at("CQ PJ4/K1ABC", 1600), "and are found as they were sent");
+
+	fill_with_noise();
+	expect(add_message("W9XYZ PJ4/K1ABC -05", 900, STRONG) == 0,
+		"a report from the nonstandard callsign is made, the callsign as a hash");
+	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
+	expect(found_count == 1 && !strcmp(found[0].text, "W9XYZ <PJ4/K1ABC> -05"),
+		"and its hash is turned back into the callsign heard before");
+
+	expect(add_message("HELLO THERE FRIEND", 1000, STRONG) < 0,
+		"a text longer than free text allows is refused, not sent cut short");
+	expect(add_message("G0XYZ VU2ESE RR73", 1000, STRONG) == 0
+		&& add_message("CQ VU2ESE MK97", 1000, STRONG) == 0
+		&& add_message("G0XYZ VU2ESE +05", 1000, STRONG) == 0,
+		"and the messages of a standard contact are made");
 
 	if (checks_failed) {
 		printf("ft8: %d checks FAILED\n", checks_failed);

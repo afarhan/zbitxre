@@ -14,6 +14,10 @@
 //
 // freq is in kHz, qso_date is 2026-04-08 and qso_time 0445, both UTC.
 //
+// logbook_add() puts in a new entry, as zbitxv2's logbook_add() did, with
+// the callsign of the station that made it, ours, in callsign_sent. It is
+// how a contact made in FT8 is logged; ft8_qso.c says when.
+//
 // The author's rule for a logbook: an entry in it is never changed, but a
 // bad one can be deleted. logbook_delete() takes one out for good, by its
 // number, as zbitxv2 did; nothing here changes an entry.
@@ -134,4 +138,34 @@ int logbook_delete(int id) {
 	if (!is_done || sqlite3_changes(db) != 1)
 		return -1;
 	return 0;
+}
+
+// a new entry, with our callsign; the row's number is not used, the
+// logbook gives the entry its own. Says the entry's number, or -1 if the
+// logbook is not open or cannot be written
+int logbook_add(const struct logbook_row *row, const char *callsign_sent) {
+	sqlite3_stmt *prepared = NULL;
+	int is_done;
+
+	if (db == NULL)
+		return -1;
+	if (sqlite3_prepare_v2(db, "insert into logbook (mode, freq, qso_date, qso_time, "
+			"callsign_sent, rst_sent, exch_sent, callsign_recv, rst_recv, exch_recv) "
+			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &prepared, NULL) != SQLITE_OK)
+		return -1;
+	sqlite3_bind_text(prepared, 1, row->mode, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 2, row->freq, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 3, row->qso_date, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 4, row->qso_time, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 5, callsign_sent, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 6, row->rst_sent, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 7, row->exch_sent, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 8, row->callsign_recv, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 9, row->rst_recv, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(prepared, 10, row->exch_recv, -1, SQLITE_TRANSIENT);
+	is_done = sqlite3_step(prepared) == SQLITE_DONE;
+	sqlite3_finalize(prepared);
+	if (!is_done)
+		return -1;
+	return (int)sqlite3_last_insert_rowid(db);
 }

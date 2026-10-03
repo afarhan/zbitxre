@@ -5,9 +5,12 @@
 // which in FT8 is where the spectrum and the waterfall are in other modes.
 //
 // The author's plan: in FT8 the messages are in a list box that takes the
-// place of the spectrum and the waterfall. It is the same 288 by 160, and
-// main.cpp shows it and stops the waterfall's painting when the mode is
-// FT8, and puts both back when it is not.
+// place of the spectrum and the waterfall. main.cpp shows it and stops the
+// waterfall's painting when the mode is FT8, and puts both back when it is
+// not. In FT8 the bottom row has nothing on it and the status line, which
+// shows how the contact stands, is above the list; so the list is the
+// waterfall's 288 wide and runs from under the status line to the bottom
+// of the screen, 208 high: MESSAGES_TOP and MESSAGES_HEIGHT.
 //
 // A message is a row:
 //
@@ -15,7 +18,7 @@
 //
 // the second of the minute its slot began at, 00, 15, 30 or 45; how strong
 // it was, in dB over the noise; its pitch in the passband, in Hz; and its
-// text. Ten rows are in view, the newest at the bottom, and the list moves
+// text. Thirteen rows are in view, the newest at the bottom, and the list moves
 // up as more come, as a terminal does. The rows of one slot are told from
 // those of the next by their ground, which is a little lighter for every
 // other slot, and a station calling CQ is in green.
@@ -38,15 +41,21 @@
 // taken off, and the list follows the newest again. So is one whose
 // message has been pushed out by newer ones.
 //
-// Nothing is done with the marked message yet: it is what answering a
-// station will start from, when FT8 transmits.
+// A click of the knob on a marked message answers it: the message goes
+// back to the radio, as the line it came as, with LINK_FT8_ANSWER, and the
+// mark is taken off. What may be answered, and what follows, is the
+// radio's business, ft8_qso.c. With nothing marked, a click goes to the
+// newest, as before.
+//
+// What the radio itself sends is in the list too, as WSJT-X shows it: TX
+// where the strength would be, and in red.
 //
 // THE BAR AT THE RIGHT
 //
-// When more messages are kept than the ten in view, a bar at the right
+// When more messages are kept than the thirteen in view, a bar at the right
 // edge shows it: its length is the part of the kept messages that is in
 // view, and its place is where in them the view is, as a scroll bar's.
-// With ten or fewer there is no bar.
+// With thirteen or fewer there is no bar.
 //
 // FROM THE RADIO
 //
@@ -67,8 +76,10 @@
 
 #define MESSAGES_MAX 60
 #define TEXT_ROOM 26
-#define ROWS 10
-#define ROW_HEIGHT (WATERFALL_HEIGHT / ROWS)
+#define MESSAGES_TOP (WATERFALL_TOP + MESSAGES_STATUS_HEIGHT)
+#define MESSAGES_HEIGHT (SCREEN_BOTTOM - MESSAGES_TOP)
+#define ROWS 13
+#define ROW_HEIGHT (MESSAGES_HEIGHT / ROWS)
 #define COLUMNS 4
 #define SLOT_COLUMN 0
 #define SNR_COLUMN 1
@@ -89,6 +100,9 @@
 #define COLOUR_MARKED_ROW 0x604800
 #define COLOUR_VALUE 0xFFFFFF
 #define COLOUR_CALLING 0x60E060
+#define COLOUR_SENT 0xFF6060
+#define SENT "TX"
+#define ANSWER_ROOM 48
 #define COLOUR_SELECTED 0xFFC000
 #define COLOUR_BAR 0x90A0B0
 #define SELECTED_WIDTH 2
@@ -100,6 +114,7 @@ struct line {
 	uint8_t slot_second;
 	int8_t snr_db;
 	int16_t pitch_hz;
+	bool is_sent;
 	char text[TEXT_ROOM];
 };
 
@@ -146,6 +161,7 @@ static void keep_a_line(const char *sent, int length){
 	if (text == NULL)
 		return;
 	l->slot_second = (uint8_t)(atoi(whole + TIME_DIGITS - SECOND_DIGITS) % SECONDS_IN_MINUTE);
+	l->is_sent = !strncmp(snr + 1, SENT, strlen(SENT));
 	l->snr_db = (int8_t)atoi(snr + 1);
 	l->pitch_hz = (int16_t)atoi(pitch + 1);
 	snprintf(l->text, sizeof(l->text), "%s", text + 1);
@@ -195,6 +211,8 @@ static void row_show(int row, long which){
 	snprintf(cell, sizeof(cell), "%02d", l->slot_second);
 	cell_show(row, SLOT_COLUMN, cell);
 	snprintf(cell, sizeof(cell), "%d", l->snr_db);
+	if (l->is_sent)
+		snprintf(cell, sizeof(cell), SENT);
 	cell_show(row, SNR_COLUMN, cell);
 	snprintf(cell, sizeof(cell), "%d", l->pitch_hz);
 	cell_show(row, PITCH_COLUMN, cell);
@@ -205,7 +223,7 @@ static void row_show(int row, long which){
 //view, and placed where in it the view is. It is moved only when its place
 //or its length is new
 static void bar_show(long kept, long first_in_view){
-	int height = WATERFALL_HEIGHT;
+	int height = MESSAGES_HEIGHT;
 	int top = 0;
 
 	if (kept <= ROWS){
@@ -214,10 +232,10 @@ static void bar_show(long kept, long first_in_view){
 		bar_top = NO_LINE;
 		return;
 	}
-	height = (int)(WATERFALL_HEIGHT * ROWS / kept);
+	height = (int)(MESSAGES_HEIGHT * ROWS / kept);
 	if (height < BAR_SHORTEST)
 		height = BAR_SHORTEST;
-	top = (int)((WATERFALL_HEIGHT - height) * first_in_view / (kept - ROWS));
+	top = (int)((MESSAGES_HEIGHT - height) * first_in_view / (kept - ROWS));
 	if (top == bar_top && height == bar_height)
 		return;
 	if (bar_top == NO_LINE)
@@ -226,7 +244,7 @@ static void bar_show(long kept, long first_in_view){
 	bar_height = height;
 	lv_obj_set_size(bar, BAR_WIDTH, height);
 	lv_obj_align(bar, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + WATERFALL_WIDTH - BAR_WIDTH,
-		WATERFALL_TOP + top);
+		MESSAGES_TOP + top);
 }
 
 //the rows are filled from what is kept: the newest at the bottom, or as far
@@ -316,7 +334,9 @@ static void on_drawn(lv_event_t *e){
 		fill->color = lv_color_hex(COLOUR_MARKED_ROW);
 	else if (fill != NULL && (l->slot_second / SLOT_SECONDS) % 2 == 1)
 		fill->color = lv_color_hex(COLOUR_OTHER_SLOT);
-	if (label != NULL && !strncmp(l->text, CALLING, strlen(CALLING)))
+	if (label != NULL && l->is_sent)
+		label->color = lv_color_hex(COLOUR_SENT);
+	else if (label != NULL && !strncmp(l->text, CALLING, strlen(CALLING)))
 		label->color = lv_color_hex(COLOUR_CALLING);
 }
 
@@ -340,8 +360,8 @@ void messages_create(){
 	int column;
 
 	table = lv_table_create(main_screen);
-	lv_obj_set_size(table, WATERFALL_WIDTH, WATERFALL_HEIGHT);
-	lv_obj_align(table, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
+	lv_obj_set_size(table, WATERFALL_WIDTH, MESSAGES_HEIGHT);
+	lv_obj_align(table, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, MESSAGES_TOP);
 	lv_table_set_column_count(table, COLUMNS);
 	lv_table_set_row_count(table, ROWS);
 	lv_obj_set_style_radius(table, 0, 0);
@@ -378,8 +398,8 @@ void messages_create(){
 
 	frame = lv_obj_create(main_screen);
 	lv_obj_remove_style_all(frame);
-	lv_obj_set_size(frame, WATERFALL_WIDTH, WATERFALL_HEIGHT);
-	lv_obj_align(frame, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
+	lv_obj_set_size(frame, WATERFALL_WIDTH, MESSAGES_HEIGHT);
+	lv_obj_align(frame, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, MESSAGES_TOP);
 	lv_obj_set_style_border_color(frame, lv_color_hex(COLOUR_SELECTED), 0);
 	lv_obj_set_style_border_width(frame, SELECTED_WIDTH, 0);
 	lv_obj_remove_flag(frame, LV_OBJ_FLAG_CLICKABLE);
@@ -467,4 +487,23 @@ void messages_scroll(int steps){
 void messages_show_newest(){
 	if (is_shown)
 		mark(NO_LINE);
+}
+
+//a click of the knob on a marked message: it is sent to the radio to be
+//answered, and the mark is taken off. Says whether there was one to send
+bool messages_answer_marked(){
+	const struct line *l;
+	char line[ANSWER_ROOM];
+
+	if (!is_shown || marked == NO_LINE)
+		return false;
+	l = &lines[marked % MESSAGES_MAX];
+	if (l->is_sent)
+		return false;
+	snprintf(line, sizeof(line), "%02d|%d|%d|%s", l->slot_second, l->snr_db, l->pitch_hz,
+		l->text);
+	Serial.printf("ANSWER %s\n", line);
+	i2c_link_send_text(LINK_FT8_ANSWER, line);
+	mark(NO_LINE);
+	return true;
 }

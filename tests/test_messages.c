@@ -15,6 +15,7 @@
 #include "messages.h"
 #include "panel.h"
 #include "panel_messages.h"
+#include "ft8_qso.h"
 
 #define LINES_MAX 400
 // 2026-10-02 04:30:15 UTC
@@ -50,6 +51,14 @@ void panel_set_kept_bytes(int control, const uint8_t *bytes, int count) {
 		at += (int)strlen((const char *)bytes + at) + 1;
 		line_count++;
 	}
+}
+
+// what the panel asked to be answered
+static char answered[LINK_TEXT_MAX + 1];
+
+int ft8_qso_answer(const char *line) {
+	snprintf(answered, sizeof(answered), "%s", line);
+	return 0;
 }
 
 int panel_is_waiting(int control) {
@@ -109,6 +118,25 @@ int main(void) {
 		"a busy slot of forty goes in parts, every message in its order");
 	expect(longest_part <= LINK_COUNTED_MAX && parts_set > 3,
 		"and no part is longer than the link carries");
+
+	message_add_sent("FT8", A_SLOT + 45, 1500, "G0XYZ VU2ESE R-07");
+	send_everything();
+	expect(!strcmp(lines[line_count - 1], "043100|TX|1500|G0XYZ VU2ESE R-07"),
+		"what the radio sent goes too, with TX where the strength would be");
+
+	{
+		uint8_t part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
+		const char *line = "45|-12|1797|CQ VU2ESE MK97";
+		int offset;
+		int used;
+
+		for (offset = 0; offset < (int)strlen(line); offset += LINK_TEXT_PART_DATA) {
+			used = link_put_text_part(part, LINK_FT8_ANSWER, line, offset);
+			panel_messages_took_bytes(LINK_TEXT_PART, part, used);
+		}
+		expect(!strcmp(answered, line),
+			"a message the panel asks to answer reaches ft8_qso.c whole");
+	}
 
 	for (i = 0; i < 3 * MESSAGES_KEPT; i++)
 		message_add("FT8", A_SLOT, 0, i, "TEST");

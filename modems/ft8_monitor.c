@@ -7,6 +7,9 @@
 // and the monitor and the waterfall here are from the library's example,
 // decode_ft8.c, by way of zbitxv2's modem_ft8.c, with their names. MIT
 // licence, Copyright (c) 2018 Kārlis Goba; modems/ft8_lib/LICENSE.
+// get_snr(), and selectionSort() and swap() which it uses, are zbitxv2's,
+// which had them inside the library's decode.c; they are here now, so
+// that the library is as its author wrote it.
 //
 // sbitx_ft8_decode() is given the sound of a slot, as samples at 12000 a
 // second, and gives back the messages it finds in it. It is zbitxv2's
@@ -27,13 +30,23 @@
 // on a bin. The transform is 3840 samples long, two symbols, with a Hann
 // window. Each bin is kept as a byte, half a dB to a step.
 //
-// ft8_find_sync() looks in the waterfall for the Costas pattern, seven
-// tones in a fixed order that every message has at its start, its middle
-// and its end, at every time and frequency a signal could be, and gives
-// the likeliest places, the candidates. ft8_decode() reads the symbols at
-// each candidate, corrects the errors with the LDPC code, checks the CRC,
-// and unpacks the 77 bits into the text. A signal is found at more than
-// one candidate, so a message already found is left out.
+// Only the bins from 100 Hz to 4000 Hz are kept, the receiver's passband;
+// the library's monitor does the same, with min_bin and max_bin.
+//
+// ftx_find_candidates() looks in the waterfall for the Costas pattern,
+// seven tones in a fixed order that every message has at its start, its
+// middle and its end, at every time and frequency a signal could be, and
+// gives the likeliest places, the candidates. ftx_decode_candidate() reads
+// the symbols at each candidate, corrects the errors with the LDPC code
+// and checks the CRC. A signal is found at more than one candidate, so a
+// message already found is left out. ftx_message_decode() unpacks the 77
+// bits into the text, asking ft8_callsign_hash.c for the callsign of any
+// hash in it; one it does not know is shown <...>, as WSJT-X shows it.
+//
+// The strength of each message is zbitxv2's get_snr(): from the waterfall
+// at the candidate, the strongest bins against the weakest, less 26 dB,
+// which puts it in the 2500 Hz bandwidth reports are given in. The
+// library has no measure of its own; its example halves the sync score.
 //
 // WHAT IS DIFFERENT FROM ZBITXV2
 //
@@ -54,12 +67,14 @@
 #include "kiss_fft.h"
 #include "ft8_lib/constants.h"
 #include "ft8_lib/decode.h"
+#include "ft8_lib/message.h"
+#include "ft8_callsign_hash.h"
 #include "ft8_monitor.h"
 
 static const int kMin_score = 10; // Minimum sync score threshold for candidates
-static const int kLDPC_iterations = 20;
+static const int kLDPC_iterations = 25;
 
-#define kMax_candidates 120
+#define kMax_candidates 140
 #define kMax_decoded_messages 50
 
 static const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
@@ -69,6 +84,12 @@ static const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
 #define DB_STEPS_PER_DB 2
 #define DB_OFFSET 240
 #define MAG_MAX 255
+#define F_MIN_HZ 100.0f
+#define F_MAX_HZ 4000.0f
+// zbitxv2's get_snr(): the bins are a symbol's 8 tones at the oversampling
+#define TONES 8
+#define DB_STEPS_PER_DB_SNR 2
+#define SNR_IN_2500_HZ 26
 
 static float hann_i(int i, int N)
 {
@@ -76,7 +97,7 @@ static float hann_i(int i, int N)
 	return x * x;
 }
 
-static void waterfall_init(waterfall_t* me, int max_blocks, int num_bins, int time_osr, int freq_osr)
+static void waterfall_init(ftx_waterfall_t* me, int max_blocks, int num_bins, int time_osr, int freq_osr)
 {
 	size_t mag_size = max_blocks * time_osr * freq_osr * num_bins * sizeof(me->mag[0]);
 	me->max_blocks = max_blocks;
@@ -94,6 +115,8 @@ typedef struct
 	int sample_rate;         ///< Sample rate in Hertz
 	int time_osr;            ///< Number of time subdivisions
 	int freq_osr;            ///< Number of frequency subdivisions
+	float f_min;             ///< Lower frequency bound for analysis
+	float f_max;             ///< Upper frequency bound for analysis
 	ftx_protocol_t protocol; ///< Protocol: FT4 or FT8
 } monitor_config_t;
 
@@ -102,13 +125,15 @@ typedef struct
 typedef struct
 {
 	float symbol_period; ///< FT4/FT8 symbol period in seconds
+	int min_bin;         ///< First FFT bin in the frequency range (begin)
+	int max_bin;         ///< First FFT bin outside the frequency range (end)
 	int block_size;      ///< Number of samples per symbol (block)
 	int subblock_size;   ///< Analysis shift size (number of samples)
 	int nfft;            ///< FFT size
 	float fft_norm;      ///< FFT normalization factor
 	float* window;       ///< Window function for STFT analysis (nfft samples)
 	float* last_frame;   ///< Current STFT analysis frame (nfft samples)
-	waterfall_t wf;      ///< Waterfall object
+	ftx_waterfall_t wf;  ///< Waterfall object
 	float max_mag;       ///< Maximum detected magnitude (debug stats)
 
 	// KISS FFT housekeeping variables
@@ -123,7 +148,7 @@ static void monitor_init(monitor_t* me, const monitor_config_t* cfg)
 	float symbol_period = FT8_SYMBOL_PERIOD;
 	int i;
 
-	if (cfg->protocol == PROTO_FT4) {
+	if (cfg->protocol == FTX_PROTOCOL_FT4) {
 		slot_time = FT4_SLOT_TIME;
 		symbol_period = FT4_SYMBOL_PERIOD;
 	}
@@ -143,7 +168,10 @@ static void monitor_init(monitor_t* me, const monitor_config_t* cfg)
 	me->freqdata = (kiss_fft_cpx *)malloc(me->nfft * sizeof(me->freqdata[0]));
 
 	const int max_blocks = (int)(slot_time / symbol_period);
-	const int num_bins = (int)(cfg->sample_rate * symbol_period / 2);
+	// Keep only FFT bins in the specified frequency range (f_min/f_max)
+	me->min_bin = (int)(cfg->f_min * symbol_period);
+	me->max_bin = (int)(cfg->f_max * symbol_period) + 1;
+	const int num_bins = me->max_bin - me->min_bin;
 	waterfall_init(&me->wf, max_blocks, num_bins, cfg->time_osr, cfg->freq_osr);
 	me->wf.protocol = cfg->protocol;
 	me->symbol_period = symbol_period;
@@ -187,7 +215,7 @@ static void monitor_process(monitor_t* me, const float* frame)
 		// Loop over two possible frequency bin offsets (for averaging)
 		for (int freq_sub = 0; freq_sub < me->wf.freq_osr; ++freq_sub)
 		{
-			for (int bin = 0; bin < me->wf.num_bins; ++bin)
+			for (int bin = me->min_bin; bin < me->max_bin; ++bin)
 			{
 				int src_bin = (bin * me->wf.freq_osr) + freq_sub;
 				float mag2 = (me->freqdata[src_bin].i * me->freqdata[src_bin].i)
@@ -213,6 +241,80 @@ static void monitor_process(monitor_t* me, const float* frame)
 	++me->wf.num_blocks;
 }
 
+static void swap(int* xp, int* yp)
+{
+	int temp = *xp;
+	*xp = *yp;
+	*yp = temp;
+}
+
+// Function to perform Selection Sort
+static void selectionSort(int arr[], int n)
+{
+	int i, j, min_idx;
+
+	// One by one move boundary of unsorted subarray
+	for (i = 0; i < n-1; i++)
+	{
+		// Find the minimum element in unsorted array
+		min_idx = i;
+		for (j = i+1; j < n; j++)
+			if (arr[j] < arr[min_idx])
+				min_idx = j;
+
+		// Swap the found minimum element with the first element
+		swap(&arr[min_idx], &arr[i]);
+	}
+}
+
+static int get_snr(const ftx_waterfall_t* wf, ftx_candidate_t candidate)
+{
+	//array with wf.num_blocks (row of watterfall) x 8*wf.freq_osr (signals witdh)
+	//Get this watterfall zoom on the candidate symbols
+	//Sort max to min and calculate max/min = ft8snr and return with substract of -26db for get snr on 2500hz
+	int osr = wf->freq_osr * wf->time_osr;
+	float minC = 0, maxC = 0;
+
+	int i = 0;
+	while(i<wf->num_blocks){
+
+		int candidate_zoom[TONES*osr];
+
+		for(int j = 0; j< TONES; j++){
+
+			for(int k = 0; k<osr; k++){
+
+			candidate_zoom[(j*osr)+k] = wf->mag[( (i * wf->block_stride) + candidate.freq_offset + candidate.freq_sub + (j*osr) + k )];
+			}
+
+		}
+
+		selectionSort(candidate_zoom,TONES*osr);
+
+		for(int j = 0; j< osr*2; j++){
+			minC += candidate_zoom[j+(2*osr)];
+
+		}
+
+		for(int j = 1; j<= osr; j++){
+			maxC += candidate_zoom[(TONES*osr)-j];
+
+		}
+
+		i++;
+
+	}
+
+	minC = minC / (wf->num_blocks*osr*2);
+	maxC = maxC / (wf->num_blocks*osr);
+
+	int min = (int)(minC/DB_STEPS_PER_DB_SNR - DB_OFFSET);
+	int max = (int)(maxC/DB_STEPS_PER_DB_SNR - DB_OFFSET);
+	int snr= max - min - SNR_IN_2500_HZ;
+
+	return snr;
+}
+
 static void monitor_reset(monitor_t* me)
 {
 	me->wf.num_blocks = 0;
@@ -229,7 +331,9 @@ int sbitx_ft8_decode(const float *signal, int num_samples,
 		.sample_rate = FT8_SAMPLE_RATE,
 		.time_osr = kTime_osr,
 		.freq_osr = kFreq_osr,
-		.protocol = PROTO_FT8,
+		.f_min = F_MIN_HZ,
+		.f_max = F_MAX_HZ,
+		.protocol = FTX_PROTOCOL_FT8,
 	};
 
 	if (!is_mon_made) {
@@ -243,12 +347,12 @@ int sbitx_ft8_decode(const float *signal, int num_samples,
 		monitor_process(&mon, signal + frame_pos);
 
 	// Find top candidates by Costas sync score and localize them in time and frequency
-	candidate_t candidate_list[kMax_candidates];
-	int num_candidates = ft8_find_sync(&mon.wf, kMax_candidates, candidate_list, kMin_score);
+	ftx_candidate_t candidate_list[kMax_candidates];
+	int num_candidates = ftx_find_candidates(&mon.wf, kMax_candidates, candidate_list, kMin_score);
 
 	// Hash table for decoded messages (to check for duplicates)
-	message_t decoded[kMax_decoded_messages];
-	message_t* decoded_hashtable[kMax_decoded_messages];
+	ftx_message_t decoded[kMax_decoded_messages];
+	ftx_message_t* decoded_hashtable[kMax_decoded_messages];
 
 	// Initialize hash table pointers
 	for (int i = 0; i < kMax_decoded_messages; ++i)
@@ -260,16 +364,16 @@ int sbitx_ft8_decode(const float *signal, int num_samples,
 	// Go over candidates and attempt to decode messages
 	for (int idx = 0; idx < num_candidates; ++idx)
 	{
-		const candidate_t* cand = &candidate_list[idx];
+		const ftx_candidate_t* cand = &candidate_list[idx];
 		if (cand->score < kMin_score)
 			continue;
 
-		float freq_hz = (cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
+		float freq_hz = (mon.min_bin + cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
 		float time_sec = (cand->time_offset + (float)cand->time_sub / mon.wf.time_osr) * mon.symbol_period;
 
-		message_t message;
-		decode_status_t status;
-		if (!ft8_decode(&mon.wf, cand, &message, kLDPC_iterations, &status))
+		ftx_message_t message;
+		ftx_decode_status_t status;
+		if (!ftx_decode_candidate(&mon.wf, cand, kLDPC_iterations, &message, &status))
 			continue;
 
 		int idx_hash = message.hash % kMax_decoded_messages;
@@ -279,7 +383,7 @@ int sbitx_ft8_decode(const float *signal, int num_samples,
 			if (decoded_hashtable[idx_hash] == NULL) {
 				found_empty_slot = true;
 			}
-			else if ((decoded_hashtable[idx_hash]->hash == message.hash) && (0 == strcmp(decoded_hashtable[idx_hash]->text, message.text))) {
+			else if ((decoded_hashtable[idx_hash]->hash == message.hash) && (0 == memcmp(decoded_hashtable[idx_hash]->payload, message.payload, sizeof(message.payload)))) {
 				found_duplicate = true;
 			}
 			else {
@@ -289,18 +393,24 @@ int sbitx_ft8_decode(const float *signal, int num_samples,
 		} while (!found_empty_slot && !found_duplicate);
 
 		if (found_empty_slot && n_decodes < room && n_decodes < kMax_decoded_messages - 1) {
+			char text[FTX_MAX_MESSAGE_LENGTH];
+			ftx_message_offsets_t offsets;
+
 			// Fill the empty hashtable slot
 			memcpy(&decoded[idx_hash], &message, sizeof(message));
 			decoded_hashtable[idx_hash] = &decoded[idx_hash];
+			if (ftx_message_decode(&message, ft8_callsign_hashes(), text, &offsets) != FTX_MESSAGE_RC_OK)
+				continue;
 
 			found[n_decodes].score = cand->score;
-			found[n_decodes].snr = cand->snr;
+			found[n_decodes].snr = get_snr(&mon.wf, *cand);
 			found[n_decodes].freq_hz = (int)(freq_hz + 0.5f);
 			found[n_decodes].time_sec = time_sec;
-			snprintf(found[n_decodes].text, sizeof(found[n_decodes].text), "%s", message.text);
+			snprintf(found[n_decodes].text, sizeof(found[n_decodes].text), "%s", text);
 			n_decodes++;
 		}
 	}
 
+	ft8_callsign_age();
 	return n_decodes;
 }

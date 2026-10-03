@@ -39,6 +39,16 @@
 // so a click of the knob cannot key the transmitter. 2TONE has the same
 // two buttons.
 //
+// In FT8 the bottom row is empty, so that the list of messages can run to
+// the foot of the screen, and the status line, which says how the contact
+// stands, is above the list instead of under it: the author's layout. The
+// radio's FT8_DO is two buttons in the left column, under LOG and SET: CQ,
+// which starts calling CQ, and HALT, which stops whatever is being sent and
+// ends the contact. TERM, which is not written yet, is not shown in FT8,
+// since only four buttons fit in the column. TX_PITCH, where in the
+// passband we send, is in the list on the right. A message is answered by
+// marking it in the list and clicking the knob; messages.cpp says how.
+//
 // In FT8 the graph and the waterfall are not shown. In their place is the
 // list of the messages the radio has copied, which is the author's plan
 // for FT8; messages.cpp says what is in it. A touch selects it, the knob
@@ -134,6 +144,8 @@
 #define FREQ_WIDTH 144
 #define MENU_LEFT 432
 #define COLUMN_BUTTONS 3
+#define FT8_CQ_ROW 2
+#define FT8_HALT_ROW 3
 #define MACROS 6
 #define STATUS_HEIGHT 16
 #define STATUS_SHOWN_MAX 44
@@ -202,7 +214,8 @@ struct place {
 };
 
 //what is at a place on the bottom row: a control, shown with its value and
-//changed by the knob once it is touched; or, where a choice is named, a
+//changed by the knob once it is touched, under the label given, or its
+//name if none is; or, where a choice is named, a
 //button with a label of its own, that puts the control at that choice when
 //it is touched, and is filled with its colour while the control is there
 struct footer_tile {
@@ -267,7 +280,11 @@ static const struct footer *footer_in_use;
 static struct widget list_widget[LIST_ROWS];
 static lv_obj_t *span_label;
 static lv_obj_t *spectrum_area;
+static lv_obj_t *term_button;
+static lv_obj_t *cq_button;
+static lv_obj_t *halt_button;
 static bool is_showing_messages;
+static bool is_status_above;
 
 //the controls in the list, the row at the top of what is in view, and the
 //row that is marked
@@ -428,6 +445,7 @@ static void take_radio_frequency(int hz){
 /* what is where */
 
 static void set_hidden(lv_obj_t *box, bool is_hidden);
+static void place_the_status(bool is_above);
 
 //the group of the modem that has the mode in use
 static void mode_group(char *group, int room){
@@ -499,8 +517,13 @@ static void lay_out(){
 	//the mode's messages take the place of the graph and the waterfall
 	is_showing_messages = !strcmp(group, MESSAGES_GROUP);
 	messages_set_shown(is_showing_messages);
-	if (spectrum_area != NULL)
+	if (spectrum_area != NULL){
 		set_hidden(spectrum_area, is_showing_messages);
+		set_hidden(term_button, is_showing_messages);
+		set_hidden(cq_button, !is_showing_messages);
+		set_hidden(halt_button, !is_showing_messages);
+		place_the_status(is_showing_messages);
+	}
 	if (!screens_is_open())
 		waterfall_set_painting(!is_showing_messages);
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
@@ -731,7 +754,9 @@ static void show_footer_buttons(){
 			set_hidden(footer_button[i].box, true);
 			continue;
 		}
-		is_in_force = controls_is(tile->control, tile->choice);
+		//an action is done each time, and is never in force
+		is_in_force = controls_find(tile->control)->d.kind != LINK_KIND_ACTION
+			&& controls_is(tile->control, tile->choice);
 		fill = COLOUR_BOX;
 		if (is_in_force)
 			fill = tile->fill_in_force;
@@ -750,7 +775,9 @@ static void show(){
 	for (i = 0; i < PLACES; i++)
 		show_tile(&placed[i], places[i].label);
 	for (i = 0; i < FOOTER_TILES; i++){
-		if (footer_widget[i].control != NULL)
+		if (footer_widget[i].control != NULL && footer_in_use->tiles[i].label != NULL)
+			show_tile(&footer_widget[i], footer_in_use->tiles[i].label);
+		else if (footer_widget[i].control != NULL)
 			show_tile(&footer_widget[i], label_of(footer_widget[i].control));
 		else
 			show_tile(&footer_widget[i], "");
@@ -838,6 +865,23 @@ static void band_touched(const char *band){
 	show();
 }
 
+//an action is told to the radio each time, as the macros are: it has no
+//value to change
+static void do_the_action(struct panel_control *c, const char *choice){
+	struct panel_control tried = *c;
+	char text[CONTROL_TEXT_MAX];
+	int i;
+
+	for (i = 0; i < controls_choices(c); i++){
+		tried.value = i;
+		controls_value_text(&tried, text, sizeof(text));
+		if (!strcmp(text, choice)){
+			Serial.printf("%s %s\n", c->d.name, choice);
+			i2c_link_changed(c->d.number, i);
+		}
+	}
+}
+
 //a button of the bottom row: its control is put at its choice. Touched
 //again while the control is there already, it does nothing
 static void footer_button_touched(int which){
@@ -847,7 +891,9 @@ static void footer_button_touched(int which){
 	if (tile == NULL)
 		return;
 	c = controls_find(tile->control);
-	if (c != NULL)
+	if (c != NULL && c->d.kind == LINK_KIND_ACTION)
+		do_the_action(c, tile->choice);
+	else if (c != NULL)
 		change_to_the_choice(c, tile->choice);
 	show();
 }
@@ -985,6 +1031,20 @@ static void row_create(struct widget *w, int x, int y, int width){
 }
 
 //a button for something that is not written yet
+//the status line: under the graph and the waterfall, or in FT8 above the
+//list of messages. It is moved only when its place changes
+static void place_the_status(bool is_above){
+	if (status_label == NULL || is_above == is_status_above)
+		return;
+	is_status_above = is_above;
+	if (is_above)
+		lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
+			WATERFALL_TOP);
+	else
+		lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
+			WATERFALL_TOP + WATERFALL_HEIGHT);
+}
+
 static lv_obj_t *dim_button_create(int x, int y, const char *label){
 	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
 	lv_obj_t *text = text_create(box, &lv_font_montserrat_12, COLOUR_DIM);
@@ -1005,13 +1065,32 @@ static void on_log_touched(lv_event_t *e){
 }
 
 //a button that opens another screen: SET the settings, LOG the logbook
-static void live_button_create(int x, int y, const char *label, lv_event_cb_t touched){
+static lv_obj_t *live_button_create(int x, int y, const char *label, lv_event_cb_t touched){
 	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
 	lv_obj_t *text = text_create(box, &lv_font_montserrat_14, COLOUR_VALUE);
 
 	lv_label_set_text(text, label);
 	lv_obj_align(text, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_add_event_cb(box, touched, LV_EVENT_CLICKED, NULL);
+	return box;
+}
+
+//FT8's two buttons: the radio's action FT8_DO, CQ or HALT
+static void ft8_do(const char *choice){
+	struct panel_control *c = controls_find("FT8_DO");
+
+	if (c != NULL)
+		do_the_action(c, choice);
+}
+
+static void on_cq_touched(lv_event_t *e){
+	(void)e;
+	ft8_do("CQ");
+}
+
+static void on_halt_touched(lv_event_t *e){
+	(void)e;
+	ft8_do("HALT");
 }
 
 static void screen_create(){
@@ -1034,8 +1113,16 @@ static void screen_create(){
 		else if (!strcmp(column_names[i], "LOG"))
 			live_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
 		else
-			dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, column_names[i]);
+			term_button = dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT,
+				column_names[i]);
 	}
+	//in FT8, CQ where TERM is and HALT under it; shown by lay_out()
+	cq_button = live_button_create(0, WATERFALL_TOP + FT8_CQ_ROW * ROW_HEIGHT, "CQ",
+		on_cq_touched);
+	halt_button = live_button_create(0, WATERFALL_TOP + FT8_HALT_ROW * ROW_HEIGHT, "HALT",
+		on_halt_touched);
+	lv_obj_add_flag(cq_button, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_add_flag(halt_button, LV_OBJ_FLAG_HIDDEN);
 	for (i = 0; i < MACROS; i++){
 		macro_widget[i].box = box_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
 			TILE_WIDTH, ROW_HEIGHT);
@@ -1225,7 +1312,7 @@ void main_knob_clicked(){
 		change_to_the_next_choice(selected_control);
 	if (selected == ON_THE_LIST && listed_count > 0)
 		is_changing_the_marked_row = !is_changing_the_marked_row;
-	if (selected == ON_THE_MESSAGES)
+	if (selected == ON_THE_MESSAGES && !messages_answer_marked())
 		messages_show_newest();
 	show();
 }
@@ -1270,6 +1357,8 @@ void main_select(const char *name){
 	}
 	else if (button != NOWHERE)
 		footer_button_touched(button);
+	else if (is_showing_messages && (!strcmp(name, "CQ") || !strcmp(name, "HALT")))
+		ft8_do(name);
 	else if (c != NULL && has_a_place(c))
 		select_a_control(c);
 	for (i = 0; i < listed_count; i++){

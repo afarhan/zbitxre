@@ -6,8 +6,9 @@
 #pragma once
 
 #define FT8_SAMPLE_RATE 12000
-// the longest text of a message, with the zero at its end: ft8_lib's size
-#define FT8_TEXT_ROOM 25
+// the longest text of a message, with the zero at its end: ft8_lib's
+// FTX_MAX_MESSAGE_LENGTH
+#define FT8_TEXT_ROOM 35
 
 struct ft8_decoded {
 	int score;

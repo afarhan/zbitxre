@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// modem_ft8.c — FT8. So far it only receives.
+// modem_ft8.c — FT8: the slots heard and searched, and a message sent.
 //
 // FT8 is heard as USB is, 50 to 4000 Hz above the dial, which is the width
 // zbitxv2 gave it, and goes to the speaker as USB does. The same sound is
@@ -52,6 +52,30 @@
 // file, which the audio thread must not do. What it keeps is how far the
 // radio's clock is ahead of the kernel's, and the audio thread adds that
 // to the kernel's time, which costs it nothing to read.
+//
+// SENDING
+//
+// What is sent, and when, is ft8_qso.c's to decide, from the thread that
+// owns the controls. It hands a message and the slot it is for to
+// ft8_tx_arm(), which makes it into sound then and there, with
+// ft8_signal.c, at the sound card's rate, so that the audio thread has
+// only to copy it out.
+//
+// The radio goes to transmit while wants_tx() says so: from the start of
+// that slot until the message has been sent. tx() gives the transmitter
+// silence until half a second into the slot, where WSJT-X and every other
+// station begin, and then the message, 12.64 seconds of it, at zbitxv2's
+// level, a seventh of full scale. A message armed for a slot that began
+// more than two seconds ago is not sent at all: begun later, it would be
+// too late for most receivers to find. ft8_tx_cancel() stops a message,
+// whether it is waiting or being sent.
+//
+// Which of the two threads has the message is in tx_state: IDLE, ARMED,
+// waiting for its slot, and SENDING. Only the thread that owns the
+// controls arms, and only while nothing is being sent; the audio thread
+// takes an ARMED message to SENDING, and back to IDLE when it is done.
+// A change between them is made with an exchange that cannot be split, so
+// that a cancel and the start of the sending cannot both win.
 //
 // ======================================================================
 // THE CONTACT: THE DESIGN, NOT YET BUILT
@@ -290,6 +314,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -298,6 +323,8 @@
 #include "messages.h"
 #include "radio_clock.h"
 #include "ft8_monitor.h"
+#include "ft8_signal.h"
+#include "modem_ft8.h"
 
 #define FT8_LOW_HZ 50
 #define FT8_HIGH_HZ 4000
@@ -311,6 +338,17 @@
 #define FT8_FULL_SCALE 200000000.0f
 #define MS_PER_S 1000
 #define NS_PER_MS 1000000
+#define NS_PER_S 1000000000.0
+#define TX_STARTS_AT_S 0.5
+#define TX_LATEST_START_S 2.0
+// zbitxv2's level for FT8: a seventh of full scale
+#define TX_DIVISOR 7.0
+
+enum tx_state {
+	TX_IDLE,
+	TX_ARMED,
+	TX_SENDING,
+};
 
 static int32_t baseband_output[MAX_BINS/2];
 
@@ -329,6 +367,27 @@ static atomic_int is_decoding;
 static atomic_long clock_ahead_s;
 
 static struct ft8_decoded found[FT8_FOUND_MAX];
+static atomic_long searched_slot;
+
+static float *tx_wave;
+static int tx_wave_samples;
+static int tx_wave_room;
+static time_t tx_slot;
+static long tx_pos;
+static atomic_int tx_state;
+
+// the time, by the radio's clock, in seconds and their fractions
+double ft8_time_now(void) {
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	return (double)(now.tv_sec + atomic_load(&clock_ahead_s)) + now.tv_nsec / NS_PER_S;
+}
+
+// the start of the newest slot that has been searched
+time_t ft8_searched_slot(void) {
+	return (time_t)atomic_load(&searched_slot);
+}
 
 // how far the radio's clock is ahead of the kernel's, for the audio thread
 static void read_the_clock(void) {
@@ -374,6 +433,7 @@ static void *ft8_thread_function(void *ptr) {
 		printf("ft8: slot %02d:%02d:%02d, found %d, searched in %ld ms\n",
 			utc.tm_hour, utc.tm_min, utc.tm_sec, count, elapsed_ms(&began));
 		fflush(stdout);
+		atomic_store(&searched_slot, (long)ft8_decode_slot);
 		atomic_store(&is_decoding, 0);
 	}
 	return NULL;
@@ -433,6 +493,78 @@ static void rx_ft8(complex float *bins) {
 	ft8_rx(baseband_output, MAX_BINS/2);
 }
 
+/* sending */
+
+// the message is made into sound, at its pitch, for the slot that begins
+// at slot_start; 0, or -1 if it cannot be packed or something is being
+// sent. For the thread that owns the controls
+int ft8_tx_arm(const char *message, int pitch_hz, time_t slot_start) {
+	int samples;
+
+	if (tx_wave == NULL || atomic_load(&tx_state) == TX_SENDING)
+		return -1;
+	atomic_store(&tx_state, TX_IDLE);
+	samples = sbitx_ft8_encode(message, pitch_hz, SOUND_CARD_RATE, tx_wave, tx_wave_room);
+	if (samples < 0)
+		return -1;
+	tx_wave_samples = samples;
+	tx_slot = slot_start;
+	atomic_store(&tx_state, TX_ARMED);
+	return 0;
+}
+
+void ft8_tx_cancel(void) {
+	atomic_store(&tx_state, TX_IDLE);
+}
+
+int ft8_tx_is_busy(void) {
+	return atomic_load(&tx_state) != TX_IDLE;
+}
+
+// from the start of the armed message's slot until it has been sent; one
+// whose slot began too long ago is let go
+static int ft8_wants_tx(void) {
+	int armed = TX_ARMED;
+	double now;
+
+	if (atomic_load(&tx_state) == TX_SENDING)
+		return 1;
+	if (atomic_load(&tx_state) != TX_ARMED)
+		return 0;
+	now = ft8_time_now();
+	if (now < (double)tx_slot)
+		return 0;
+	if (now > (double)tx_slot + TX_LATEST_START_S) {
+		if (atomic_compare_exchange_strong(&tx_state, &armed, TX_IDLE))
+			printf("ft8: too late for the slot, not sent\n");
+		return 0;
+	}
+	return 1;
+}
+
+// silence until half a second into the slot, then the message
+static void tx_ft8(const int32_t *mic, double *samples) {
+	int armed = TX_ARMED;
+	int i;
+
+	(void)mic;
+	if (atomic_compare_exchange_strong(&tx_state, &armed, TX_SENDING))
+		tx_pos = (long)((ft8_time_now() - (double)tx_slot - TX_STARTS_AT_S)
+			* SOUND_CARD_RATE);
+	if (atomic_load(&tx_state) != TX_SENDING) {
+		memset(samples, 0, MAX_BINS/2 * sizeof(samples[0]));
+		return;
+	}
+	for (i = 0; i < MAX_BINS/2; i++) {
+		samples[i] = 0;
+		if (tx_pos >= 0 && tx_pos < tx_wave_samples)
+			samples[i] = tx_wave[tx_pos] / TX_DIVISOR;
+		tx_pos++;
+	}
+	if (tx_pos >= tx_wave_samples)
+		atomic_store(&tx_state, TX_IDLE);
+}
+
 static void ft8_select(void) {
 	set_passband(FT8_LOW_HZ, FT8_HIGH_HZ);
 }
@@ -443,6 +575,8 @@ static void ft8_reset(void) {
 }
 
 static void ft8_init(void) {
+	tx_wave_room = ft8_signal_samples(SOUND_CARD_RATE);
+	tx_wave = malloc(tx_wave_room * sizeof(tx_wave[0]));
 	sem_init(&slot_is_ready, 0, 0);
 	pthread_create(&ft8_thread, NULL, ft8_thread_function, NULL);
 }
@@ -454,4 +588,6 @@ const struct modem modem_ft8 = {
 	.select = ft8_select,
 	.reset = ft8_reset,
 	.rx = rx_ft8,
+	.tx = tx_ft8,
+	.wants_tx = ft8_wants_tx,
 };

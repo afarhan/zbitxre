@@ -2,23 +2,37 @@ ft8_lib — the FT8 and FT4 coding, by Kārlis Goba, YL3JG.
 
     https://github.com/kgoba/ft8_lib        MIT licence, see LICENSE
 
-These are the files of the library's ft8/ folder as they are in zbitxv2,
-which has had them since 2022. They are not changed here. The one thing in
-them that is not the library's own is in decode.c: get_snr(), and the snr
-that ft8_find_sync() puts in each candidate, which were added in zbitxv2.
+These are the files of the library's ft8/ folder at its commit 9fec6ca of
+23 August 2025, "non-standard callsigns; special CQ; field type
+annotation". They are not changed here. They took the place, on 3 October
+2026, of the copy zbitxv2 had had since 2022, which could not pack or
+unpack /P, /R, CQ POTA and the like, or a callsign sent as a hash.
 
     constants   the Costas pattern, the Gray map, the LDPC matrices
     crc         the 14 bit check on a message
     ldpc        the error correction: belief propagation
     decode      finds where the signals are in a slot and reads them
-    unpack      turns the 77 bits of a message into its text
+    message     packs a text into its 77 bits and unpacks it, with every
+                kind of message, and asks the program for the callsigns
+                of hashes, through ftx_callsign_hash_interface_t
     text        the alphabets of callsigns and grids
-    pack        turns a text into its 77 bits       (for transmitting)
     encode      turns the 77 bits into the 79 tones (for transmitting)
+    debug       its logging, which is left off
 
-The library's own example, decode_ft8.c, is where modems/ft8_monitor.c
-comes from. The library used its own copy of kiss_fft; the radio has
-kiss_fft already, in dsp/kiss_fft, and that one is used.
+What the radio has of the library's example programs, and of zbitxv2:
+
+    modems/ft8_monitor.c          the monitor and the decoding loop, from the
+                                  example decode_ft8.c, and zbitxv2's
+                                  get_snr(), which zbitxv2 had added to
+                                  decode.c and which is kept out of the
+                                  library now
+    modems/ft8_callsign_hash.c    the table of callsigns and their hashes,
+                                  from the example decode_ft8.c
+    modems/ft8_signal.c           the sound of a message, from the example
+                                  gen_ft8.c
+
+The library's own monitor uses kiss_fft's real transform, which the radio
+does not have; the radio's kiss_fft, in dsp/kiss_fft, is used instead.
 
 They are built on their own with their warnings off, as kiss_fft is, so
 that the warnings shown are all the radio's own.

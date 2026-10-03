@@ -18,9 +18,11 @@ struct message {
 	char mode[MESSAGE_MODE_ROOM];
 	int snr_db;
 	int pitch_hz;
+	int is_sent;
 	char text[MESSAGE_TEXT_ROOM];
 };
 
 void message_add(const char *mode, time_t at, int snr_db, int pitch_hz,
 	const char *text);
+void message_add_sent(const char *mode, time_t at, int pitch_hz, const char *text);
 int message_next(unsigned long *last_read, struct message *m);

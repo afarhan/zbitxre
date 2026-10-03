@@ -81,6 +81,9 @@ void main_hide();
 void main_radio_says_text(int number, const char *text);
 
 // the list of copied messages, in FT8
+// the status line is above the list, and the list runs to the screen's foot
+#define MESSAGES_STATUS_HEIGHT 16
+#define SCREEN_BOTTOM 320
 void messages_create();
 void messages_part(const uint8_t *bytes, int count);
 void messages_slice();
@@ -88,6 +91,7 @@ void messages_set_shown(bool shown);
 void messages_set_selected(bool selected);
 void messages_scroll(int steps);
 void messages_show_newest();
+bool messages_answer_marked();
 
 // the link, for text
 void i2c_link_send_text(int number, const char *text);

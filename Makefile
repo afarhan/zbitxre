@@ -29,7 +29,8 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw
 	hw/radio_clock.h \
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h modems/cw_keyer.h \
-	modems/cw_text.h modems/ft8_monitor.h
+	modems/cw_text.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
+	modems/ft8_callsign_hash.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c \
 	$(LINK)
@@ -52,7 +53,8 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_cw_keyer $(BUILD)/test_server \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
-	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages
+	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
+	$(BUILD)/test_ft8_qso
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -86,6 +88,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_logbook
 	$(BUILD)/test_ft8
 	$(BUILD)/test_messages
+	$(BUILD)/test_ft8_qso
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -117,11 +120,12 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
-		panel_messages.c panel_messages.h \
+		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h \
 		server.h control.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c panel_wifi.c panel_log.c panel_messages.c logbook.c settings.c \
+		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c logbook.c \
+		settings.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
@@ -174,13 +178,20 @@ $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUIL
 	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
 
 $(BUILD)/test_ft8: tests/test_ft8.c modems/ft8_monitor.c modems/ft8_monitor.h \
-		$(FT8_LIB) $(KISS_FFT) | $(BUILD)
+		modems/ft8_signal.c modems/ft8_signal.h modems/ft8_callsign_hash.c \
+		modems/ft8_callsign_hash.h $(FT8_LIB) $(KISS_FFT) | $(BUILD)
 	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_ft8.c modems/ft8_monitor.c \
-		$(FT8_LIB) $(KISS_FFT) -lm
+		modems/ft8_signal.c modems/ft8_callsign_hash.c $(FT8_LIB) $(KISS_FFT) -lpthread -lm
 
 $(BUILD)/test_messages: tests/test_messages.c messages.c messages.h \
-		panel_messages.c panel_messages.h $(LINK_HEADERS) hw/panel.h | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_messages.c messages.c panel_messages.c -lpthread
+		panel_messages.c panel_messages.h $(LINK) $(LINK_HEADERS) hw/panel.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_messages.c messages.c panel_messages.c $(LINK) \
+		-lpthread
+
+$(BUILD)/test_ft8_qso: tests/test_ft8_qso.c ft8_qso.c ft8_qso.h control.c control.h \
+		messages.c messages.h logbook.c logbook.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_ft8_qso.c ft8_qso.c control.c messages.c logbook.c \
+		-lsqlite3 -lpthread
 
 $(BUILD)/test_link: tests/test_link.c $(LINK) $(LINK_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_link.c $(LINK)

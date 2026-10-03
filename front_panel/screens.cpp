@@ -37,6 +37,15 @@
 //               and says on this screen's top line how it went. An open
 //               one is joined with no key asked for.
 //
+//   FT8 Operations  NORMAL, RUNNING or POUNCING, the radio's FT8_OPS: how
+//               FT8 is worked, ft8_qso.c on the radio says. A touch, or a
+//               click of the knob, goes to the next.
+//   FT8 Reply   RR73 or RRR, the radio's FT8_REPLY, the same way.
+//
+// There are more rows than the screen has room for under its title, so
+// they are in a list that scrolls, by a finger, or by the knob, which
+// keeps the marked row in view.
+//
 // The radio keeps the callsign and the grid and remembers them; the panel
 // only shows what the radio last said and sends what was typed.
 //
@@ -166,6 +175,7 @@ static void callsign_open();
 static void grid_open();
 static void date_open();
 static void wifi_open();
+static void next_choice_open();
 static void settings_show_values();
 
 static struct setting settings[] = {
@@ -173,6 +183,8 @@ static struct setting settings[] = {
 	{"Grid", "MYGRID", grid_open, NULL, NULL},
 	{"Date/Time", "CLOCK", date_open, NULL, NULL},
 	{"WiFi", NULL, wifi_open, NULL, NULL},
+	{"FT8 Operations", "FT8_OPS", next_choice_open, NULL, NULL},
+	{"FT8 Reply", "FT8_REPLY", next_choice_open, NULL, NULL},
 };
 #define SETTINGS ((int)(sizeof(settings) / sizeof(settings[0])))
 
@@ -437,6 +449,8 @@ static void settings_show_values(){
 	char text[INPUT_TEXT_MAX];
 	int i;
 
+	if (settings[settings_mark].box != NULL)
+		lv_obj_scroll_to_view(settings[settings_mark].box, LV_ANIM_OFF);
 	for (i = 0; i < SETTINGS; i++){
 		show_mark(settings[i].box, i == settings_mark);
 		if (settings[i].control == NULL)
@@ -494,6 +508,22 @@ static void grid_open(){
 		GRID_MAX, false, "SAVE", grid_done);
 }
 
+//a setting that is a choice goes to its next choice, and from the last to
+//the first, and the radio is told
+static void next_choice_open(){
+	struct panel_control *c = controls_find(settings[settings_mark].control);
+	int next;
+
+	if (c == NULL || c->d.kind != LINK_KIND_CHOICE || controls_choices(c) < 1)
+		return;
+	next = ((int)c->value + 1) % controls_choices(c);
+	c->value = next;
+	c->last_user_change = millis();
+	Serial.printf("%s %d\n", c->d.name, next);
+	i2c_link_changed(c->d.number, next);
+	settings_show();
+}
+
 static void on_setting_touched(lv_event_t *e){
 	struct setting *s = (struct setting *)lv_event_get_user_data(e);
 
@@ -509,6 +539,7 @@ static void on_back(lv_event_t *e){
 }
 
 static void settings_create(){
+	lv_obj_t *list;
 	lv_obj_t *row;
 	lv_obj_t *label;
 	uint32_t colour;
@@ -519,9 +550,18 @@ static void settings_create(){
 	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
 	back_button_create(settings_screen, on_back);
 
+	//the rows, in a list under the title that scrolls
+	list = lv_obj_create(settings_screen);
+	lv_obj_set_size(list, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
+	lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
+	lv_obj_set_style_bg_color(list, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_border_width(list, 0, 0);
+	lv_obj_set_style_radius(list, 0, 0);
+	lv_obj_set_style_pad_all(list, 0, 0);
+	lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
 	for (i = 0; i < SETTINGS; i++){
-		row = box_create(settings_screen, 0, BAR_HEIGHT + i * ROW_HEIGHT, SCREEN_WIDTH,
-			ROW_HEIGHT);
+		row = box_create(list, 0, i * ROW_HEIGHT, SCREEN_WIDTH, ROW_HEIGHT);
 		settings[i].box = row;
 		lv_obj_add_event_cb(row, on_setting_touched, LV_EVENT_CLICKED, &settings[i]);
 		//what is not written yet is dim
@@ -1299,8 +1339,10 @@ void screens_select(const char *name){
 	if (settings_screen == NULL || lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))
 		return;
 	for (i = 0; i < SETTINGS; i++){
-		if (!strcasecmp(name, settings[i].label) && settings[i].open != NULL)
+		if (!strcasecmp(name, settings[i].label) && settings[i].open != NULL){
+			settings_mark = i;
 			settings[i].open();
+		}
 	}
 }
 

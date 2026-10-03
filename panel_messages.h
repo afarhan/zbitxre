@@ -6,4 +6,7 @@
 
 #pragma once
 
+#include <stdint.h>
+
 void panel_messages_poll(void);
+void panel_messages_took_bytes(int control, const uint8_t *bytes, int count);

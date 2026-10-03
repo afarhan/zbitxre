@@ -24,3 +24,4 @@ int logbook_open(const char *path);
 void logbook_close(void);
 int logbook_find(const char *callsign, struct logbook_row *rows, int room);
 int logbook_delete(int id);
+int logbook_add(const struct logbook_row *row, const char *callsign_sent);
