@@ -62,7 +62,7 @@ GUI         = zbitx_gui
 # arduino-cli, which needs the rp2040 core and the lvgl library, version 9.3.0.
 PANEL        = front_panel
 PANEL_BUILD  = $(CURDIR)/$(BUILD)/$(PANEL)
-PANEL_BOARD  = rp2040:rp2040:rpipicow
+PANEL_BOARD  = rp2040:rp2040:rpipico
 PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2

@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <lvgl.h>
-#include <WiFi.h>
 #include "ui.h"
 
 

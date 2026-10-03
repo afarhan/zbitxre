@@ -82,7 +82,6 @@
 // receiver.
 
 #include <Arduino.h>
-#include <WiFi.h>
 #include <EEPROM.h>
 #include <lvgl.h>
 #include "ili9488.h"
