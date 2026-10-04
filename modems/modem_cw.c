@@ -929,8 +929,10 @@ static void cw_rx_reader(complex float *bins){
 
 	if (wpm <= 0)
 		return;
-	if (wpm != reader_wpm){
+	if (reader_wpm == 0)
 		cw_reader_init(&reader, wpm, SECONDS_A_TICK);
+	if (wpm != reader_wpm){
+		cw_reader_set_wpm(&reader, wpm);
 		reader_wpm = wpm;
 	}
 	middle = (int)lroundf(bin_of_audio(atomic_load(&pitch_hz))) + MAX_BINS;

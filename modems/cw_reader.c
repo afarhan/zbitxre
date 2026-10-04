@@ -713,6 +713,18 @@ void cw_reader_init(struct cw_reader *r, int wpm, double tick_s) {
 	r->unit_s = SECONDS_A_DOT_AT_1_WPM / wpm;
 }
 
+// a new WPM moves the span of speeds the reader looks in, and nothing else:
+// the callsigns learned, the station, the levels and the over being read
+// are kept. If the over has not set its speed yet, it starts from the new
+// one
+void cw_reader_set_wpm(struct cw_reader *r, int wpm) {
+	if (wpm <= 0)
+		return;
+	r->wpm = wpm;
+	if (!r->is_trained)
+		r->unit_s = SECONDS_A_DOT_AT_1_WPM / wpm;
+}
+
 // a tick: the ratio to the grass of each of the CW_READER_BINS bins around
 // the pitch, the pitch's in the middle
 void cw_reader_tick(struct cw_reader *r, const float *ratio) {

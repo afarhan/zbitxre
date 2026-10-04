@@ -71,5 +71,6 @@ struct cw_reader {
 };
 
 void cw_reader_init(struct cw_reader *r, int wpm, double tick_s);
+void cw_reader_set_wpm(struct cw_reader *r, int wpm);
 void cw_reader_tick(struct cw_reader *r, const float *ratio);
 int cw_reader_take(struct cw_reader *r, char *text, int room);
