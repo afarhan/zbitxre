@@ -46,46 +46,29 @@
 //
 // TWO DECODERS, SIDE BY SIDE
 //
-// The author can read CW off the waterfall, and asked whether the spectrum
-// itself could be decoded in place of the Goertzel filter. So, for now, two
-// decoders run side by side, each a struct cw_decoder with a ring of its
-// own, to be compared on the air:
+// The author can read CW off the waterfall, and set out how a decoder
+// should read it from the spectrum, which cw_reader.c does and says how.
+// For now both run, to be compared on the air:
 //
-//   decoder           zbitxv2's, as above: the Goertzel filter at the
-//                     pitch on the receiver's audio. Its text goes to the
-//                     panel, cw_rx_take().
-//   decoder_spectrum  the same, but how strong the signal is comes from the
-//                     receiver's own spectrum, the bins of the block: the
-//                     bin the pitch falls in, bin_of_audio(), and the one
-//                     each side, with the Hann window put on them as the
-//                     core puts it for the spectrum, half of a bin less a
-//                     quarter of each neighbour; the strongest of the three
-//                     is taken, so that a station a little off the pitch is
-//                     still read. The bins come before the receiver's
-//                     filter, so it is the window that keeps a neighbour
-//                     out, where for the first decoder it is BW_CW's
-//                     filter. Its text goes to the radio's terminal,
-//                     cw_rx_take_spectrum().
+//   decoder   zbitxv2's, as above: the Goertzel filter at the pitch on the
+//             receiver's audio. Its text goes to the radio's terminal,
+//             cw_rx_take().
+//   reader    cw_reader.c's, from the receiver's own spectrum, the bins of
+//             the block. Its text goes to the panel, cw_rx_take_reader().
 //
-// Both see a block every 10.7 ms. The Goertzel filter is 128 samples of
-// 12000 a second, 10.7 ms long and about 94 Hz wide; a bin of the spectrum
-// is 2048 samples of 96000, 21.3 ms long, half of them new each block, and
-// 47 Hz apart, about 70 Hz wide with the window, with its sidelobes 31 dB
-// down where the Goertzel filter's are 13. The bins are brought back to
-// the sound card's units, shifted down 8 bits. The Goertzel filter is on
-// the receiver's audio, after its gain, so the two decoders' magnitudes
-// are not the same numbers; but each decoder's levels follow its own
-// signal, and only how a mark stands over the noise matters to it.
+// The reader is given, each block, the ratio to the grass of the bins
+// around the pitch: the bin the pitch falls in, bin_of_audio(), and
+// CW_READER_SPAN each side, CW_READER_BINS in all. Each bin is windowed as
+// the core windows them for the spectrum, half of it less a quarter of each
+// neighbour, and its power is taken. The grass is the 25th percentile of the
+// power of the bins within GRASS_BINS of the pitch, 1.9 kHz each way: of so
+// many bins, the few that are signals do not move it.
 //
-// The Goertzel filter is at a whole number of its 93.75 Hz bins, the one
-// nearest the pitch: with PITCH at 600 it listens at 562.5 Hz. That is
-// zbitxv2's, and is kept; the spectrum's decoder is at the pitch's own bin.
-//
-// In the test, tests/test_cw_decoder.c, both read a station on the pitch
-// at 20 and 25 words a minute alike, and noise as nothing. Only the
-// spectrum's read a station 60 Hz off the pitch, a station with another
-// four times as strong 200 Hz away, and a station at 35 words a minute
-// without a stray letter.
+// The bins come before the receiver's filter, so BW_CW does not narrow what
+// the reader hears: it finds the station itself, within 250 Hz of the
+// pitch. The Goertzel filter is at a whole number of its 93.75 Hz bins, the
+// one nearest the pitch: with PITCH at 600 it listens at 562.5 Hz. That is
+// zbitxv2's, and is kept.
 //
 // THE KEYER
 //
@@ -266,6 +249,7 @@
 #include "cw_text.h"
 #include "macros.h"
 #include "modem_cw.h"
+#include "cw_reader.h"
 
 #define WPM_LOWEST 5
 #define WPM_HIGHEST 50
@@ -526,12 +510,12 @@ static void key_a_block(int32_t *speaker, double *tx) {
 // neighbour
 #define HANN_MIDDLE 0.5f
 #define HANN_SIDE 0.25f
-// the core divides the sound card's samples by CORE_SAMPLE_SCALE before its
-// FFT, and a steady tone of amplitude A is A * MAX_BINS / 4 in its windowed
-// bin; this brings the bin back to the sound card's units, shifted down by
-// 8 bits as the Goertzel filter's samples are
-#define CORE_SAMPLE_SCALE 20000000.0f
-#define SPECTRUM_GAIN (CORE_SAMPLE_SCALE / (MAX_BINS / 4) / 256.0f)
+// the grass is the 25th percentile of the bins this many each side of the
+// pitch
+#define GRASS_BINS 40
+#define GRASS_COUNT (2 * GRASS_BINS + 1)
+#define GRASS_PERCENTILE 4
+#define SECONDS_A_TICK ((double)(MAX_BINS / 2) / SOUND_CARD_RATE)
 
 struct morse_rx {
 	const char *c;
@@ -643,13 +627,13 @@ struct cw_decoder{
 };
 
 static struct decoded decoded_by_tone;
-static struct decoded decoded_by_spectrum;
+static struct decoded decoded_by_reader;
 static struct cw_decoder decoder = { .out = &decoded_by_tone };
-static struct cw_decoder decoder_spectrum = { .out = &decoded_by_spectrum };
+static struct cw_reader reader;
+static int reader_wpm;
 
-// the text read is put in the decoder's ring; what does not fit is lost
-static void cw_rx_say(struct cw_decoder *p, const char *text) {
-	struct decoded *d = p->out;
+// the text read is put in a ring; what does not fit is lost
+static void say_into(struct decoded *d, const char *text) {
 	unsigned head = atomic_load(&d->head);
 
 	while (*text != 0) {
@@ -659,6 +643,10 @@ static void cw_rx_say(struct cw_decoder *p, const char *text) {
 		head++;
 	}
 	atomic_store(&d->head, head);
+}
+
+static void cw_rx_say(struct cw_decoder *p, const char *text) {
+	say_into(p->out, text);
 }
 
 static int take_from(struct decoded *d, char *text, int room) {
@@ -681,8 +669,8 @@ int cw_rx_take(char *text, int room) {
 	return take_from(&decoded_by_tone, text, room);
 }
 
-int cw_rx_take_spectrum(char *text, int room) {
-	return take_from(&decoded_by_spectrum, text, room);
+int cw_rx_take_reader(char *text, int room) {
+	return take_from(&decoded_by_reader, text, room);
 }
 
 static void cw_rx_bin_init(struct bin *p, float freq, int n,
@@ -916,41 +904,64 @@ static void cw_rx(int32_t *samples, int count){
 	cw_rx_bin(&decoder, s);
 }
 
-// the windowed bin at a place among the block's bins
-static float hann_bin(complex float *bins, int k){
+// the windowed bin's power, at a place among the block's bins
+static float hann_power(complex float *bins, int k){
 	complex float below = bins[(k + MAX_BINS - 1) % MAX_BINS];
 	complex float above = bins[(k + 1) % MAX_BINS];
+	float magnitude = cabsf(HANN_MIDDLE * bins[k % MAX_BINS] - HANN_SIDE * (below + above));
 
-	return cabsf(HANN_MIDDLE * bins[k % MAX_BINS] - HANN_SIDE * (below + above));
+	return magnitude * magnitude;
 }
 
-// the second decoder's tick: the strongest of the three windowed bins
-// around the pitch, scaled to what the Goertzel filter gives
-static void cw_rx_spectrum(complex float *bins){
+// the reader's tick: the ratio to the grass of the bins around the pitch;
+// what it reads goes into its ring
+static void cw_rx_reader(complex float *bins){
+	float power[GRASS_COUNT];
+	float sorted[GRASS_COUNT];
+	float ratio[CW_READER_BINS];
+	char text[CW_READER_TEXT_ROOM];
 	int wpm = atomic_load(&decoder_wpm);
-	int pitch = atomic_load(&pitch_hz);
 	int middle;
-	float strongest = 0;
-	float level;
-	int k;
+	float grass;
+	float held;
+	int i;
+	int j;
 
 	if (wpm <= 0)
 		return;
-	if (wpm != decoder_spectrum.wpm || pitch != decoder_spectrum.signal.freq)
-		cw_rx_init(&decoder_spectrum, wpm, pitch);
-	middle = (int)lroundf(bin_of_audio(pitch)) + MAX_BINS;
-	for (k = middle - 1; k <= middle + 1; k++){
-		level = hann_bin(bins, k);
-		if (level > strongest)
-			strongest = level;
+	if (wpm != reader_wpm){
+		cw_reader_init(&reader, wpm, SECONDS_A_TICK);
+		reader_wpm = wpm;
 	}
-	cw_rx_level(&decoder_spectrum, (int)(strongest * SPECTRUM_GAIN));
+	middle = (int)lroundf(bin_of_audio(atomic_load(&pitch_hz))) + MAX_BINS;
+	for (i = 0; i < GRASS_COUNT; i++){
+		power[i] = hann_power(bins, middle - GRASS_BINS + i);
+		sorted[i] = power[i];
+	}
+	//enough of a sort to find the percentile: the least few, in order
+	for (i = 0; i <= GRASS_COUNT / GRASS_PERCENTILE; i++){
+		for (j = i + 1; j < GRASS_COUNT; j++){
+			if (sorted[j] < sorted[i]){
+				held = sorted[i];
+				sorted[i] = sorted[j];
+				sorted[j] = held;
+			}
+		}
+	}
+	grass = sorted[GRASS_COUNT / GRASS_PERCENTILE];
+	if (grass <= 0)
+		return;
+	for (i = 0; i < CW_READER_BINS; i++)
+		ratio[i] = power[GRASS_BINS - CW_READER_SPAN - 1 + i] / grass;
+	cw_reader_tick(&reader, ratio);
+	if (cw_reader_take(&reader, text, sizeof(text)) > 0)
+		say_into(&decoded_by_reader, text);
 }
 
 static void rx_cw(complex float *bins) {
 	demod_ssb(bins, baseband_output);
 	cw_rx(baseband_output, MAX_BINS/2);
-	cw_rx_spectrum(bins);
+	cw_rx_reader(bins);
 	key_a_block(baseband_output, NULL);
 	speaker_play(baseband_output, MAX_BINS/2);
 }

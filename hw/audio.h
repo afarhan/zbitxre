@@ -66,6 +66,14 @@ const int32_t *audio_get_snapshot(void);
 #define AUDIO_RECORD_RING_BLOCKS 1024
 
 void audio_record(int on);
+
+// a recording played back: each block in the ring takes the place of what
+// the card captured, both channels, until the ring runs dry
+void audio_play(int on);
+int audio_play_has_room(void);
+void audio_play_put(const int32_t *block);
+int audio_play_is_dry(void);
+long audio_play_underruns(void);
 const int32_t *audio_record_next(void);
 void audio_record_taken(void);
 long audio_record_dropped(void);

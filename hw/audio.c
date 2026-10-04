@@ -173,6 +173,11 @@ static atomic_int is_recording;
 static atomic_uint record_head;
 static atomic_uint record_tail;
 static atomic_long record_dropped;
+static int32_t played[AUDIO_RECORD_RING_BLOCKS * SAMPLES_PER_BLOCK];
+static atomic_int is_playing;
+static atomic_uint play_head;
+static atomic_uint play_tail;
+static atomic_long play_underruns;
 static int32_t to_play[SAMPLES_PER_BLOCK];
 static int32_t from_receiver[AUDIO_BLOCK_FRAMES];
 static int32_t from_microphone[AUDIO_BLOCK_FRAMES];
@@ -534,6 +539,22 @@ static void copy_to_recording(void) {
 	atomic_store(&record_head, head + 1);
 }
 
+// while playing, the next block of the recording takes the place of the
+// block the card gave; when there is none, the card's is used, and counted
+static void take_from_playing(void) {
+	unsigned tail = atomic_load(&play_tail);
+
+	if (!atomic_load(&is_playing))
+		return;
+	if (tail == atomic_load(&play_head)) {
+		atomic_fetch_add(&play_underruns, 1);
+		return;
+	}
+	memcpy(captured, played + (tail % AUDIO_RECORD_RING_BLOCKS) * SAMPLES_PER_BLOCK,
+		sizeof(captured));
+	atomic_store(&play_tail, tail + 1);
+}
+
 static int gather(void) {
 	int frame;
 
@@ -543,6 +564,7 @@ static int gather(void) {
 		if (wait_for_a_fresh_block() < 0)
 			return -1;
 	}
+	take_from_playing();
 	copy_to_snapshot();
 	copy_to_recording();
 	for (frame = 0; frame < AUDIO_BLOCK_FRAMES; frame++) {
@@ -757,6 +779,36 @@ void audio_record_taken(void) {
 
 long audio_record_dropped(void) {
 	return atomic_load(&record_dropped);
+}
+
+// playing starts empty, and stops at once
+void audio_play(int on) {
+	if (on) {
+		atomic_store(&play_underruns, 0);
+		atomic_store(&play_head, atomic_load(&play_tail));
+	}
+	atomic_store(&is_playing, on);
+}
+
+int audio_play_has_room(void) {
+	return atomic_load(&play_head) - atomic_load(&play_tail) < AUDIO_RECORD_RING_BLOCKS;
+}
+
+// a block of the recording, both channels, into the ring
+void audio_play_put(const int32_t *block) {
+	unsigned head = atomic_load(&play_head);
+
+	memcpy(played + (head % AUDIO_RECORD_RING_BLOCKS) * SAMPLES_PER_BLOCK, block,
+		SAMPLES_PER_BLOCK * sizeof(int32_t));
+	atomic_store(&play_head, head + 1);
+}
+
+int audio_play_is_dry(void) {
+	return atomic_load(&play_head) == atomic_load(&play_tail);
+}
+
+long audio_play_underruns(void) {
+	return atomic_load(&play_underruns);
 }
 
 void audio_take_snapshot(void) {

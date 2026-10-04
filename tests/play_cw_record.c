@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
 	static int32_t to_transmitter[AUDIO_BLOCK_FRAMES];
 	struct reader readers[] = {
 		{ "Goertzel", cw_rx_take, "", 0, 0 },
-		{ "spectrum", cw_rx_take_spectrum, "", 0, 0 },
+		{ "reader", cw_rx_take_reader, "", 0, 0 },
 	};
 	char pitch[VALUE_ROOM] = "600";
 	char wpm[VALUE_ROOM] = "20";

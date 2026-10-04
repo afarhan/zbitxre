@@ -8,16 +8,17 @@
 // side by side, which the author is comparing; modem_cw.c says how they
 // differ. This sends what they read on as it comes:
 //
-//   the Goertzel filter's, cw_rx_take(), to the panel, as the kept, counted
+//   the reader's, cw_rx_take_reader(), to the panel, as the kept, counted
 //   value of LINK_CW_TEXT: the characters read since the last value, no
-//   more than a value holds. The panel runs
+//   more than a value holds. The author is watching it there, against
+//   recordings played back with play=. The panel runs
 //   them through its status line from right to left, as the author asked;
 //   front_panel/main.cpp says how. The next value goes when the panel has
 //   taken the one before, and what was read meanwhile waits for it.
 //
-//   the spectrum's, cw_rx_take_spectrum(), to the terminal, a line at a
-//   time: "cw spectrum: CQ CQ DE VU2ESE K", when the line is LINE_MAX long
-//   or nothing more has come for IDLE_MS.
+//   zbitxv2's, with its Goertzel filter, cw_rx_take(), to the terminal, a
+//   line at a time: "cw goertzel: CQ CQ DE VU2ESE K", when the line is
+//   LINE_MAX long or nothing more has come for IDLE_MS.
 //
 // For the thread that owns the controls.
 
@@ -44,19 +45,19 @@ static void print_the_line(void) {
 	if (line_count == 0)
 		return;
 	line[line_count] = 0;
-	printf("cw spectrum: %s\n", line);
+	printf("cw goertzel: %s\n", line);
 	fflush(stdout);
 	line_count = 0;
 }
 
 void panel_cw_poll(long now_ms) {
 	char read[WAITING_MAX + 1];
-	int count = cw_rx_take(read, sizeof(read));
+	int count = cw_rx_take_reader(read, sizeof(read));
 	int i;
 
 	for (i = 0; i < count && waiting_count < WAITING_MAX; i++)
 		waiting[waiting_count++] = read[i];
-	count = cw_rx_take_spectrum(read, sizeof(read));
+	count = cw_rx_take(read, sizeof(read));
 	for (i = 0; i < count; i++) {
 		line[line_count++] = read[i];
 		if (line_count == LINE_MAX)

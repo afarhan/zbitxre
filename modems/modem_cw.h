@@ -7,4 +7,4 @@
 #pragma once
 
 int cw_rx_take(char *text, int room);
-int cw_rx_take_spectrum(char *text, int room);
+int cw_rx_take_reader(char *text, int room);

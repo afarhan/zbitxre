@@ -63,9 +63,9 @@
 // G0XYZ, as marking it on the panel and clicking the knob does; ft8_qso.c
 // says what follows.
 //
-// In CW what is read off the air runs through the panel's status line,
-// and what the second decoder, from the spectrum, reads is printed a line
-// at a time, "cw spectrum: CQ CQ DE VU2ESE"; panel_cw.c says how.
+// In CW what the reader reads off the air runs through the panel's status
+// line, and what zbitxv2's decoder reads is printed a line at a time, "cw
+// goertzel: CQ CQ DE VU2ESE"; panel_cw.c says how.
 //
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
@@ -127,6 +127,13 @@
 // for working on the decoders with signals heard off the air, played back
 // through the receiver as tests/hw_stand_ins.c plays a test's. Ten minutes
 // is about 460 MB.
+//
+// "play=data/record_20261004_023102.raw" plays such a recording back, in
+// real time: each block of it takes the place of what the sound card
+// heard, both channels, before the receiver has it, so that the decoders,
+// the panel and the speaker have the recording as if it were on the air.
+// The mode, the pitch and the speed are first set as the note beside it
+// says they were. "play=0" stops it; it stops by itself at the end.
 //
 // "snapshot" is for the times the sound and the spectrum go wrong and a
 // restart puts them right. It saves the samples of the next sixteen blocks
@@ -239,6 +246,9 @@
 #define LOGBOOK_FILE "data/sbitx.db"
 #define LOG_FOR "log="
 #define RECORD_FOR "record="
+#define PLAY_FOR "play="
+#define NOTE_LINE_ROOM 256
+#define NOTE_VALUE_ROOM 16
 #define RECORD_NAME_ROOM 96
 #define RECORD_STAMP_ROOM 20
 #define SAMPLE_RATE_HZ 96000
@@ -659,6 +669,87 @@ static void record_save(void) {
 		record_stop();
 }
 
+static void set_setting(const char *name, const char *value, int origin);
+
+// a recording played back: the main loop keeps the ring full from the
+// file, and the audio thread takes a block from it in place of each the
+// card gives
+static FILE *play_file;
+static long play_blocks;
+
+static void play_stop(void) {
+	audio_play(0);
+	fclose(play_file);
+	play_file = NULL;
+	printf("play: done, %ld blocks, %ld not ready in time\n", play_blocks,
+		audio_play_underruns());
+	fflush(stdout);
+}
+
+// the radio is set as the note beside the recording says it was: the mode,
+// the pitch and the speed, so that it listens as it did
+static void set_as_recorded(const char *raw_path) {
+	char path[RECORD_NAME_ROOM];
+	char line[NOTE_LINE_ROOM];
+	char value[NOTE_VALUE_ROOM];
+	char *at;
+	FILE *note;
+	size_t length = strlen(raw_path);
+
+	if (length < strlen(".raw") || length >= sizeof(path))
+		return;
+	snprintf(path, sizeof(path), "%.*s.txt", (int)(length - strlen(".raw")), raw_path);
+	note = fopen(path, "r");
+	if (note == NULL)
+		return;
+	while (fgets(line, sizeof(line), note) != NULL) {
+		at = strstr(line, "mode ");
+		if (at != NULL && sscanf(at + strlen("mode "), "%15[A-Z0-9]", value) == 1)
+			set_setting("MODE", value, ORIGIN_TERMINAL);
+		at = strstr(line, "pitch ");
+		if (at != NULL && sscanf(at + strlen("pitch "), "%15[0-9]", value) == 1)
+			set_setting("PITCH", value, ORIGIN_TERMINAL);
+		at = strstr(line, "wpm ");
+		if (at != NULL && sscanf(at + strlen("wpm "), "%15[0-9]", value) == 1)
+			set_setting("WPM", value, ORIGIN_TERMINAL);
+	}
+	fclose(note);
+}
+
+static void play_start(const char *path) {
+	if (play_file != NULL)
+		play_stop();
+	if (path[0] == 0 || !strcmp(path, "0"))
+		return;
+	play_file = fopen(path, "rb");
+	if (play_file == NULL) {
+		printf("play: %s cannot be read\n", path);
+		return;
+	}
+	set_as_recorded(path);
+	play_blocks = 0;
+	audio_play(1);
+	printf("play: %s, in place of what the sound card hears\n", path);
+	fflush(stdout);
+}
+
+static void play_fill(void) {
+	int32_t block[AUDIO_BLOCK_FRAMES * SNAPSHOT_CHANNELS];
+
+	if (play_file == NULL)
+		return;
+	while (audio_play_has_room()) {
+		if (fread(block, sizeof(int32_t), AUDIO_BLOCK_FRAMES * SNAPSHOT_CHANNELS, play_file)
+				!= AUDIO_BLOCK_FRAMES * SNAPSHOT_CHANNELS) {
+			if (audio_play_is_dry())
+				play_stop();
+			return;
+		}
+		audio_play_put(block);
+		play_blocks++;
+	}
+}
+
 static void snapshot_save(void) {
 	const int32_t *samples = audio_get_snapshot();
 	FILE *file;
@@ -804,6 +895,10 @@ static void handle_command(char *line) {
 	}
 	if (strcmp(line, "report") == 0) {
 		report();
+		return;
+	}
+	if (begins_with(line, PLAY_FOR)) {
+		play_start(line + strlen(PLAY_FOR));
 		return;
 	}
 	if (begins_with(line, RECORD_FOR)) {
@@ -1045,6 +1140,7 @@ static void main_loop(void) {
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();
+		play_fill();
 		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record, on_panel_bytes);
 		panel_controls_poll();
