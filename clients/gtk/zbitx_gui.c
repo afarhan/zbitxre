@@ -19,7 +19,9 @@
 // frequency's own controls, STEP, RIT, SPLIT and VFO; below them are the
 // spectrum and the waterfall. The frequency, and each of its controls, are
 // 50 pixels high. The spectrum is drawn with the passband shaded, the part
-// of it the receiver hears, and a line at the frequency that is tuned.
+// of it the receiver hears, and a line at the frequency that is tuned: in
+// CW the pitch, which is carried on down the waterfall, dotted, so that the
+// station tuned in, right under it, is not hidden.
 //
 // The list has a row to each control, its name and its value, and scrolls
 // when there are more than it can show. It is made from the radio's schema,
@@ -136,6 +138,9 @@
 #define COLOUR_MAX 255
 #define GRAPH_SHARE 3
 #define VOICE_LOW_HZ 300
+#define FT8_LOW_HZ 50
+#define FT8_HIGH_HZ 4000
+#define PITCH_DASH 3.0
 
 #define LOWEST_HZ 500000
 #define HIGHEST_HZ 30000000
@@ -843,6 +848,10 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 		*low_hz = -bw_voice;
 		*high_hz = bw_voice;
 	}
+	if (!strcmp(mode, "FT8")) {
+		*low_hz = FT8_LOW_HZ;
+		*high_hz = FT8_HIGH_HZ;
+	}
 	if (!strcmp(mode, "CW")) {
 		*tuned_hz = pitch;
 		*low_hz = pitch - bw_cw / 2;
@@ -900,7 +909,17 @@ static void draw_graph(cairo_t *cr, int width, int height) {
 	cairo_stroke(cr);
 }
 
+// in CW the pitch, where a station tuned in is heard, is carried down the
+// waterfall from the graph, dotted, so that the station right under it is
+// not hidden
 static void draw_waterfall(cairo_t *cr, int width, int height) {
+	const char *mode = value_of("MODE");
+	const double dashes[] = { PITCH_DASH, PITCH_DASH };
+	int low_hz;
+	int high_hz;
+	int tuned_hz;
+	double x;
+
 	cairo_set_source_rgb(cr, 0, 0, 0);
 	cairo_rectangle(cr, 0, 0, width, height);
 	cairo_fill(cr);
@@ -912,6 +931,18 @@ static void draw_waterfall(cairo_t *cr, int width, int height) {
 	cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_FAST);
 	cairo_rectangle(cr, 0, 0, point_count, FALL_ROWS);
 	cairo_fill(cr);
+	cairo_restore(cr);
+	if (span_hz == 0 || (strcmp(mode, "CW") && strcmp(mode, "CWR")))
+		return;
+	passband(&low_hz, &high_hz, &tuned_hz);
+	x = x_of_hz(tuned_hz, width);
+	cairo_save(cr);
+	cairo_set_source_rgb(cr, 1.0, 0.3, 0.3);
+	cairo_set_line_width(cr, 1.0);
+	cairo_set_dash(cr, dashes, 2, 0);
+	cairo_move_to(cr, x, 0);
+	cairo_line_to(cr, x, height);
+	cairo_stroke(cr);
 	cairo_restore(cr);
 }
 

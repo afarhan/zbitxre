@@ -59,6 +59,14 @@
 // is above what is left of the hash. WATERFALL_ALL_ROWS is that depth, and
 // it is not to be raised to fill the screen without listening again.
 //
+// The passband, the part of the spectrum the receiver hears, is shaded in
+// the graph, behind the spectrum's line, and in CW the pitch, where a
+// station tuned in is heard, is a red line in the graph and a dotted one
+// down the waterfall: dotted, since the station tuned in is right under it
+// and a solid line would hide it. main.cpp says where they are, as points
+// of the line, with waterfall_set_passband(); the graph is painted afresh
+// when they move.
+//
 // waterfall_set_painting(false) stops the painting and leaves everything
 // else going, so that what the painting puts in the receiver can be told by
 // ear from what the link puts there. waterfall_set_rows() paints the graph
@@ -95,6 +103,9 @@
 #define GRAPH_LINE 0xFFE0
 #define GRAPH_UNDER 0x0167
 #define TUNED_LINE 0x7BEF
+#define PASSBAND_FILL 0x18C6
+#define PITCH_LINE 0xC000
+#define PITCH_DOTS_EVERY 4
 
 #define NOTHING_TO_PAINT (-1)
 
@@ -110,6 +121,9 @@ static int next_row = NOTHING_TO_PAINT;
 static bool is_waiting = false;
 static bool is_painting = true;
 static int rows_to_paint = ALL_ROWS;
+static int passband_low = WATERFALL_NO_POINT;
+static int passband_high = WATERFALL_NO_POINT;
+static int pitch_at = WATERFALL_NO_POINT;
 static bool copy_to_serial = false;
 
 static unsigned long lines_taken;
@@ -202,10 +216,14 @@ static uint16_t graph_pixel(int point, int up){
 	}
 	if (up >= low && up <= high)
 		return GRAPH_LINE;
+	if (point == pitch_at)
+		return PITCH_LINE;
 	if (point == WATERFALL_POINTS / 2)
 		return TUNED_LINE;
 	if (up < here)
 		return GRAPH_UNDER;
+	if (point >= passband_low && point <= passband_high)
+		return PASSBAND_FILL;
 	return BLACK;
 }
 
@@ -224,6 +242,8 @@ static void make_a_row(int row){
 		else {
 			points = fall[(newest_row + row - GRAPH_ROWS) % FALL_ROWS];
 			pixel = colour_of[points[i]];
+			if (i == pitch_at && row % PITCH_DOTS_EVERY == 0)
+				pixel = PITCH_LINE;
 		}
 		for (p = 0; p < PIXELS_A_POINT; p++)
 			row_pixels[i * PIXELS_A_POINT + p] = pixel;
@@ -299,6 +319,17 @@ void waterfall_set_painting(bool on){
 	is_painting = on;
 	if (on)
 		waterfall_redraw();
+}
+
+//where the passband and the pitch are, as points of the line, or
+//WATERFALL_NO_POINT; the graph is painted again if they have moved
+void waterfall_set_passband(int low_point, int high_point, int pitch_point){
+	if (low_point == passband_low && high_point == passband_high && pitch_point == pitch_at)
+		return;
+	passband_low = low_point;
+	passband_high = high_point;
+	pitch_at = pitch_point;
+	waterfall_redraw();
 }
 
 bool waterfall_is_painting(void){

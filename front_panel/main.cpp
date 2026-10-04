@@ -180,6 +180,10 @@
 #define LIST_TOP 96
 #define LIST_WIDTH 144
 #define LIST_ROWS 3
+//the passbands, as the radio's modems have them
+#define VOICE_LOW_HZ 300
+#define FT8_LOW_HZ 50
+#define FT8_HIGH_HZ 4000
 #define SECONDS_A_MINUTE 60
 #define MINUTES_AN_HOUR 60
 #define SECONDS_AN_HOUR 3600
@@ -219,7 +223,12 @@
 #define NOWHERE (-1)
 
 //what is selected, and so what the knob does
-enum selection { ON_FREQUENCY, ON_A_CONTROL, ON_THE_LIST, ON_THE_MESSAGES };
+enum selection {
+	ON_FREQUENCY,
+	ON_A_CONTROL,
+	ON_THE_LIST,
+	ON_THE_MESSAGES,
+};
 
 //a place on the screen, and what LVGL has made there
 struct widget {
@@ -744,7 +753,10 @@ static void show_frequency(){
 	if (note_text[0] != 0 && !note_is_large)
 		snprintf(title, sizeof(title), "%s", note_text);
 	format_frequency(dial, sizeof(dial), receiver_hz());
-	snprintf(text, sizeof(text), "%c:%s", vfo_in_use == VFO_B ? 'B' : 'A', dial);
+	if (vfo_in_use == VFO_B)
+		snprintf(text, sizeof(text), "B:%s", dial);
+	else
+		snprintf(text, sizeof(text), "A:%s", dial);
 	if (note_is_large)
 		snprintf(text, sizeof(text), "%s", note_text);
 	label_show(freq_widget.title, title);
@@ -838,12 +850,82 @@ static void show_footer_buttons(){
 	}
 }
 
+//the passband and, in CW, the pitch, as the desktop's window works them
+//out, from the mode, the pitch and the bandwidth, as Hz from the middle of
+//the spectrum, where the radio's oscillator puts the tuned frequency; in
+//CW the oscillator is set off by the pitch, so a station on the tuned
+//frequency is the pitch from the middle. They are given to the waterfall
+//as points of its line
+static int value_of(const char *name){
+	struct panel_control *c = controls_find(name);
+
+	if (c == NULL)
+		return 0;
+	return (int)c->value;
+}
+
+static int point_of_hz(int hz, int span_hz){
+	int point = WATERFALL_POINTS / 2 + (int)((long)hz * WATERFALL_POINTS / span_hz);
+
+	if (point < 0)
+		return 0;
+	if (point > WATERFALL_POINTS - 1)
+		return WATERFALL_POINTS - 1;
+	return point;
+}
+
+static void show_passband(){
+	struct panel_control *span = controls_find("SPAN");
+	char text[CONTROL_TEXT_MAX];
+	char mode[CONTROL_TEXT_MAX];
+	int pitch = value_of("PITCH");
+	int bw_cw = value_of("BW_CW");
+	int bw_voice = value_of("BW_VOICE");
+	int low_hz = VOICE_LOW_HZ;
+	int high_hz = VOICE_LOW_HZ + bw_voice;
+	int pitch_point = WATERFALL_NO_POINT;
+	int span_hz;
+
+	if (span == NULL || controls_find("MODE") == NULL)
+		return;
+	controls_value_text(span, text, sizeof(text));
+	span_hz = (int)(atof(text) * HZ_PER_KHZ);
+	if (span_hz <= 0)
+		return;
+	controls_value_text(controls_find("MODE"), mode, sizeof(mode));
+	if (!strcmp(mode, "LSB")){
+		low_hz = -VOICE_LOW_HZ - bw_voice;
+		high_hz = -VOICE_LOW_HZ;
+	}
+	if (!strcmp(mode, "AM")){
+		low_hz = -bw_voice;
+		high_hz = bw_voice;
+	}
+	if (!strcmp(mode, "FT8")){
+		low_hz = FT8_LOW_HZ;
+		high_hz = FT8_HIGH_HZ;
+	}
+	if (!strcmp(mode, "CW") || !strcmp(mode, "CWR")){
+		low_hz = pitch - bw_cw / 2;
+		high_hz = pitch + bw_cw / 2;
+		if (!strcmp(mode, "CWR")){
+			low_hz = -pitch - bw_cw / 2;
+			high_hz = -pitch + bw_cw / 2;
+			pitch = -pitch;
+		}
+		pitch_point = point_of_hz(pitch, span_hz);
+	}
+	waterfall_set_passband(point_of_hz(low_hz, span_hz), point_of_hz(high_hz, span_hz),
+		pitch_point);
+}
+
 static void show(){
 	int i;
 
 	show_frequency();
 	show_bands();
 	show_span();
+	show_passband();
 	for (i = 0; i < PLACES; i++)
 		show_tile(&placed[i], places[i].label);
 	for (i = 0; i < FOOTER_TILES; i++){
@@ -916,10 +998,16 @@ static void change_to_the_choice(struct panel_control *c, const char *choice){
 	}
 }
 
+static int32_t step_of(const struct panel_control *c){
+	if (c->d.step > 0)
+		return c->d.step;
+	return 1;
+}
+
 //a number moves on by one step, and round from its greatest to its least
 static void change_to_the_next_number(struct panel_control *c){
 	if (c->value >= c->d.max)
-		change(c, -(int)((c->d.max - c->d.min) / (c->d.step > 0 ? c->d.step : 1)));
+		change(c, -(int)((c->d.max - c->d.min) / step_of(c)));
 	else
 		change(c, 1);
 }

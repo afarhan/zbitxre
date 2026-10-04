@@ -22,12 +22,14 @@
 #define WATERFALL_HEIGHT 160
 #define WATERFALL_CORNER_WIDTH 40
 #define WATERFALL_CORNER_ROWS 16
+#define WATERFALL_NO_POINT (-1)
 
 void waterfall_init(void);
 void waterfall_update(const uint8_t *points);
 void waterfall_slice(void);
 void waterfall_redraw(void);
 void waterfall_set_painting(bool on);
+void waterfall_set_passband(int low_point, int high_point, int pitch_point);
 bool waterfall_is_painting(void);
 void waterfall_set_rows(int fall_rows);
 void waterfall_to_serial(void);
