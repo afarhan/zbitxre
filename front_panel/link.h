@@ -77,6 +77,14 @@ extern "C" {
 // as any text is, with this for its control; panel_messages.c on the radio
 // says what is in it
 #define LINK_FT8_ANSWER 11
+// the contact under way, for the panel's status line, as a kept, counted
+// value as LINK_SAY is: the other station and what has passed between us,
+// "VU2XZ > -19 > R-14 > RR73"; empty when there is no contact
+#define LINK_QSO 12
+// the time by the radio's clock, as the seconds of the day in UTC, sent
+// each second; LINK_UTC_NOT_SET when the radio does not know the time
+#define LINK_UTC 13
+#define LINK_UTC_NOT_SET (-1)
 
 struct link_wifi_point {
 	int8_t signal_dbm;

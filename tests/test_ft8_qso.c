@@ -43,6 +43,7 @@ static time_t armed_slot;
 static int arms;
 static int is_cancelled;
 static char said[ROOM];
+static char qso_line[ROOM];
 static int checks_failed;
 
 static void expect(int ok, const char *what) {
@@ -79,6 +80,10 @@ void ft8_tx_cancel(void) {
 
 void ft8_callsign_remember(const char *callsign) {
 	(void)callsign;
+}
+
+void panel_show_qso(const char *text) {
+	snprintf(qso_line, sizeof(qso_line), "%s", text);
 }
 
 void panel_say(const char *text) {
@@ -151,6 +156,8 @@ static void afresh(const char *ops, const char *reply) {
 	fresh_logbook();
 	set("FT8_OPS", ops);
 	set("FT8_REPLY", reply);
+	set("FT8_REPEAT", "4");
+	set("FT8_AUTO", "OFF");
 	now = (double)T0 - SLOT;
 	set("FT8_DO", "HALT");
 	armed[0] = 0;
@@ -188,6 +195,8 @@ static void check_calling_cq(void) {
 	searched_slot(T0 + 5 * SLOT);
 	expect(is_armed("G0XYZ VU2ESE RR73", T0 + 6 * SLOT),
 		"the R and report come: RR73 is sent");
+	expect(!strcmp(qso_line, "G0XYZ > IO91 > -12 x2 > R-07 > RR73"),
+		"the status line has the exchange, theirs and ours in turn");
 	expect(logged(rows) == 1 && !strcmp(rows[0].callsign_recv, "G0XYZ")
 		&& !strcmp(rows[0].rst_sent, "-12") && !strcmp(rows[0].rst_recv, "-07")
 		&& !strcmp(rows[0].exch_recv, "IO91") && !strcmp(rows[0].exch_sent, "MK97")
@@ -198,12 +207,15 @@ static void check_calling_cq(void) {
 	searched_slot(T0 + 7 * SLOT);
 	expect(is_armed("G0XYZ VU2ESE RR73", T0 + 8 * SLOT) && logged(rows) == 1,
 		"the R and report again: RR73 is sent again, and it is not logged again");
+	expect(!strcmp(qso_line, "G0XYZ > IO91 > -12 x2 > R-07 x2 > RR73 x2"),
+		"and the words that passed again are counted, not written again");
 
 	hear(T0 + 9 * SLOT, -10, "VU2ESE G0XYZ 73");
 	arms_then = arms;
 	searched_slot(T0 + 9 * SLOT);
 	expect(arms == arms_then && logged(rows) == 1,
 		"the 73 ends it; in NORMAL nothing more is sent");
+	expect(qso_line[0] == 0, "and the status line no longer has a contact");
 }
 
 static void check_rrr(void) {
@@ -312,6 +324,8 @@ static void check_answering(void) {
 		&& !strcmp(rows[0].rst_recv, "-09") && !strcmp(rows[0].exch_recv, "IO91"),
 		"RR73 comes: it is logged then");
 	expect(is_armed("G0XYZ VU2ESE 73", T0 + 9 * SLOT), "and 73 is sent");
+	expect(!strcmp(qso_line, "G0XYZ > MK97 > -09 x2 > R-15 x2 > RR73 > 73"),
+		"the exchange, answering: our grid, the reports, RR73 and 73");
 
 	arms_then = arms;
 	searched_slot(T0 + 10 * SLOT);
@@ -372,6 +386,56 @@ static void check_waiting(void) {
 		"and when G0XYZ comes back to us, we go on");
 }
 
+static void check_repeat(void) {
+	struct logbook_row rows[ROWS];
+
+	printf("REPEAT:\n");
+	afresh("POUNCING", "RR73");
+	set("FT8_REPEAT", "2");
+	now = T0 + 2 * SLOT + 14.8;
+	ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91");
+	searched_slot(T0 + 4 * SLOT);
+	expect(arms == 2 && is_armed("G0XYZ VU2ESE MK97", T0 + 5 * SLOT),
+		"with REPEAT at 2, the call is sent a second time");
+	searched_slot(T0 + 6 * SLOT);
+	expect(arms == 2 && logged(rows) == 0 && strstr(said, "given up"),
+		"and then given up");
+}
+
+static void check_auto(void) {
+	struct logbook_row rows[ROWS];
+
+	printf("AUTO:\n");
+	afresh("NORMAL", "RR73");
+	hear(T0 + SLOT, -11, "VU2ESE W9XYZ EN37");
+	searched_slot(T0 + SLOT);
+	expect(arms == 0, "with AUTO off, a station that calls us is only shown");
+
+	afresh("POUNCING", "RR73");
+	set("FT8_AUTO", "ON");
+	hear(T0 + SLOT, -11, "VU2ESE W9XYZ EN37");
+	searched_slot(T0 + SLOT);
+	expect(is_armed("W9XYZ VU2ESE -11", T0 + 2 * SLOT),
+		"with AUTO on, it is answered with its report, even when pouncing");
+	hear(T0 + 3 * SLOT, -10, "VU2ESE W9XYZ R-04");
+	searched_slot(T0 + 3 * SLOT);
+	expect(is_armed("W9XYZ VU2ESE RR73", T0 + 4 * SLOT) && logged(rows) == 1,
+		"and the contact goes on as any other, and is logged");
+	hear(T0 + 5 * SLOT, -10, "VU2ESE W9XYZ 73");
+	searched_slot(T0 + 5 * SLOT);
+
+	hear(T0 + 7 * SLOT, -10, "VU2ESE W9XYZ R-04");
+	hear(T0 + 7 * SLOT, -10, "VU2ESE K1ABC RR73");
+	searched_slot(T0 + 7 * SLOT);
+	expect(logged(rows) == 1 && !strcmp(qso_line, ""),
+		"the last station's R and report again, and a late RR73, start nothing");
+
+	hear(T0 + 9 * SLOT, -16, "VU2ESE K1ABC -08");
+	searched_slot(T0 + 9 * SLOT);
+	expect(is_armed("K1ABC VU2ESE R-16", T0 + 10 * SLOT),
+		"another station that calls with a report is answered with the R and ours");
+}
+
 static void check_stops(void) {
 	printf("what stops a contact:\n");
 	afresh("NORMAL", "RR73");
@@ -400,6 +464,8 @@ int main(void) {
 	check_answering();
 	check_pouncing_rules();
 	check_waiting();
+	check_repeat();
+	check_auto();
 	check_stops();
 
 	logbook_close();

@@ -85,6 +85,8 @@ static bool is_sending;
 //a line for the status bar, kept until loop() shows it
 static char said_text[LINK_SAY_MAX + 1];
 static volatile bool is_text_said;
+static char qso_text[LINK_SAY_MAX + 1];
+static volatile bool is_qso_said;
 
 static volatile unsigned long times_read;
 static volatile unsigned long times_written;
@@ -155,6 +157,11 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;
 		is_text_said = true;
+	}
+	if (control == LINK_QSO && count <= LINK_SAY_MAX){
+		memcpy(qso_text, bytes, count);
+		qso_text[count] = 0;
+		is_qso_said = true;
 	}
 }
 
@@ -261,6 +268,13 @@ void i2c_link_slice(){
 		interrupts();
 		main_status(text);
 		screens_status(text);
+	}
+	if (is_qso_said){
+		noInterrupts();
+		memcpy(text, qso_text, sizeof(text));
+		is_qso_said = false;
+		interrupts();
+		main_qso(text);
 	}
 	if (said_count == 0)
 		return;

@@ -21,10 +21,26 @@
 //   FT8_REPLY  RR73 or RRR: what we send when the R and report have come,
 //              having called CQ. "FT8 Reply" in the settings.
 //   TX_PITCH   where in the passband we send, 200 to 3000 Hz.
+//   FT8_AUTO   OFF or ON, shown as AUTO. ON: while no contact is under way,
+//              a station that calls us is answered, in any of the three
+//              ways of working; that settles the question the design left
+//              open for POUNCING. OFF: such a call is only in the list.
+//              It starts OFF, so that the radio never transmits of itself
+//              until the operator has said it may.
+//   FT8_REPEAT 1 to 5, shown as REPEAT: how often a message is sent before
+//              a contact that is not answered is given up. It starts at 5,
+//              zbitxv2's. CQ in NORMAL is three times whatever it is.
 //   FT8_DO     an action: CQ starts calling CQ, HALT stops whatever is
 //              being sent and ends the contact, without logging it.
 //
-// The first three are kept with the other settings. FT8_DO's buttons are
+// All but FT8_DO are kept with the other settings.
+//
+// AUTO answers only a call: a message to us with a grid, a report or
+// nothing after our callsign. A sign-off to us, RR73, RRR or 73, comes
+// late from a contact already ended and is not a call; and the station of
+// the last contact is not answered of itself for two minutes, so that its
+// R and report sent again, our RR73 having been missed, cannot start the
+// contact again and log it twice. FT8_DO's buttons are
 // on the panel's bottom row in FT8.
 //
 // A message to be answered comes from the panel as the line the panel
@@ -45,6 +61,17 @@
 // What we send is added to messages.c as sent, and so is in the panel's
 // list among what is heard; and the state of the contact is put on the
 // panel's status bar and the terminal.
+//
+// THE EXCHANGE
+//
+// While a contact is under way, the panel's status line shows it, at the
+// author's asking, in a colour of its own: the other station, and each
+// word that has passed between us, theirs and ours, in the order they
+// passed, "VU2XZ > -19 > R-14 > RR73". A word sent or heard again is not
+// written again; it is counted, "RR73 x2". It is sent with
+// panel_show_qso(), and an empty line when the contact ends, whether
+// logged, given up or stopped. Calling CQ is not a contact yet; it begins
+// when a station is taken.
 
 #include <ctype.h>
 #include <stdio.h>
@@ -63,7 +90,9 @@
 #define SLOT_SECONDS 15
 #define DECIDED_BY_S 14.95
 #define LATE_START_S 1.5
-#define SENDS_MAX 4
+#define REPEAT_LOWEST 1
+#define REPEAT_HIGHEST 5
+#define AUTO_QUIET_FOR_S 120
 #define CQ_CALLS_NORMAL 3
 #define WAIT_SLOTS_MAX 8
 #define QUIET_SLOTS_AFTER_RRR 2
@@ -83,6 +112,8 @@
 #define TX_PITCH_STEP 10
 #define SECONDS_DIGITS 2
 #define NOTHING_YET 0
+#define EXCHANGE_WORDS_MAX 12
+#define EXCHANGE_ROOM 64
 
 enum state {
 	IDLE,
@@ -114,6 +145,7 @@ struct heard {
 	char to[CALL_ROOM];
 	char from[CALL_ROOM];
 	char grid[GRID_ROOM];
+	char extra[WORD_ROOM];
 	enum word word;
 	int report;
 };
@@ -136,7 +168,17 @@ static struct {
 	char freq[CONTROL_VALUE_MAX];
 } qso;
 
+// the words of the contact under way, each with how often it has passed
+static struct {
+	char word[WORD_ROOM];
+	int count;
+} exchange[EXCHANGE_WORDS_MAX];
+static int exchange_count;
+
 static struct heard heard[HEARD_MAX];
+static char last_worked[CALL_ROOM];
+static double last_worked_at;
+static time_t auto_slot;
 static int heard_count;
 static unsigned long last_read;
 
@@ -152,6 +194,10 @@ static void upper(char *to, int room, const char *from) {
 	for (i = 0; i < room - 1 && from[i] != 0; i++)
 		to[i] = (char)toupper((unsigned char)from[i]);
 	to[i] = 0;
+}
+
+static int sends_max(void) {
+	return control_get_int("FT8_REPEAT");
 }
 
 static void my_call(char *call) {
@@ -228,6 +274,7 @@ static void parse(struct heard *h, const char *text) {
 	memset(h->to, 0, sizeof(h->to));
 	memset(h->from, 0, sizeof(h->from));
 	h->grid[0] = 0;
+	h->extra[0] = 0;
 	h->is_cq = 0;
 	h->word = WORD_OTHER;
 	h->report = 0;
@@ -253,8 +300,10 @@ static void parse(struct heard *h, const char *text) {
 		return;
 	callsign_of(h->to, word[0]);
 	callsign_of(h->from, word[1]);
-	if (count == 3)
+	if (count == 3) {
 		h->word = word_of(word[2], &h->report);
+		snprintf(h->extra, sizeof(h->extra), "%s", word[2]);
+	}
 	else
 		h->word = WORD_NONE;
 	if (h->word == WORD_GRID)
@@ -277,6 +326,63 @@ static void read_messages(void) {
 		heard[heard_count].snr = m.snr_db;
 		heard_count++;
 	}
+}
+
+/* the exchange, on the panel's status line */
+
+static void exchange_show(void) {
+	char line[EXCHANGE_ROOM];
+	char count[WORD_ROOM];
+	char piece[3 * WORD_ROOM];
+	int i;
+
+	line[0] = 0;
+	if (qso.dx[0] == 0) {
+		panel_show_qso("");
+		return;
+	}
+	snprintf(line, sizeof(line), "%s", qso.dx);
+	for (i = 0; i < exchange_count; i++) {
+		count[0] = 0;
+		if (exchange[i].count > 1)
+			snprintf(count, sizeof(count), " x%d", exchange[i].count);
+		snprintf(piece, sizeof(piece), " > %.*s%.*s", WORD_ROOM - 1, exchange[i].word,
+			WORD_ROOM - 1, count);
+		strncat(line, piece, sizeof(line) - strlen(line) - 1);
+	}
+	panel_show_qso(line);
+}
+
+static void exchange_begin(void) {
+	exchange_count = 0;
+	exchange_show();
+}
+
+// a word that has passed, ours or theirs; one that has passed before is
+// counted again
+static void exchange_add(const char *word) {
+	int i;
+
+	if (word == NULL || word[0] == 0 || qso.dx[0] == 0)
+		return;
+	for (i = 0; i < exchange_count; i++) {
+		if (!strcmp(exchange[i].word, word)) {
+			exchange[i].count++;
+			exchange_show();
+			return;
+		}
+	}
+	if (exchange_count == EXCHANGE_WORDS_MAX)
+		return;
+	snprintf(exchange[exchange_count].word, sizeof(exchange[0].word), "%s", word);
+	exchange[exchange_count].count = 1;
+	exchange_count++;
+	exchange_show();
+}
+
+static void exchange_end(void) {
+	exchange_count = 0;
+	panel_show_qso("");
 }
 
 /* sending */
@@ -337,6 +443,8 @@ static void send(enum state state, const char *message) {
 		return;
 	}
 	message_add_sent("FT8", qso.next_slot, control_get_int("TX_PITCH"), message);
+	if (state != CALLING_CQ)
+		exchange_add(strrchr(message, ' ') + 1);
 	qso.decide_slot = qso.next_slot + SLOT_SECONDS;
 	qso.next_slot += 2 * SLOT_SECONDS;
 }
@@ -373,7 +481,7 @@ static void send_to_dx(enum state state, const char *word) {
 		word = grid;
 	snprintf(message, sizeof(message), "%s %s %s", qso.dx, call, word);
 	send(state, message);
-	snprintf(text, sizeof(text), "%s: %s, %d of %d", qso.dx, word, qso.sends, SENDS_MAX);
+	snprintf(text, sizeof(text), "%s: %s, %d of %d", qso.dx, word, qso.sends, sends_max());
 	say(text);
 }
 
@@ -434,10 +542,13 @@ static void end_contact(const char *why) {
 		snprintf(text, sizeof(text), "%s: %s", qso.dx, why);
 		say(text);
 	}
+	snprintf(last_worked, sizeof(last_worked), "%s", qso.dx);
+	last_worked_at = ft8_time_now();
 	qso.dx[0] = 0;
 	qso.dx_grid[0] = 0;
 	qso.has_report = 0;
 	qso.is_logged = 0;
+	exchange_end();
 	if (is_ops("RUNNING")) {
 		qso.cq_calls = 0;
 		send_cq();
@@ -450,6 +561,7 @@ static void stop(const char *why) {
 	ft8_tx_cancel();
 	qso.state = IDLE;
 	qso.dx[0] = 0;
+	exchange_end();
 	if (why != NULL)
 		say(why);
 }
@@ -459,11 +571,11 @@ static void send_again(void) {
 	char message[MESSAGE_ROOM];
 	char text[SAY_ROOM];
 
-	if (qso.sends >= SENDS_MAX && qso.is_logged) {
+	if (qso.sends >= sends_max() && qso.is_logged) {
 		end_contact("no answer, given up");
 		return;
 	}
-	if (qso.sends >= SENDS_MAX) {
+	if (qso.sends >= sends_max()) {
 		end_contact("no answer, given up, not logged");
 		return;
 	}
@@ -474,7 +586,7 @@ static void send_again(void) {
 	snprintf(message, sizeof(message), "%s", qso.message);
 	send(qso.state, message);
 	snprintf(text, sizeof(text), "%s: %s again, %d of %d", qso.dx,
-		strrchr(qso.message, ' ') + 1, qso.sends, SENDS_MAX);
+		strrchr(qso.message, ' ') + 1, qso.sends, sends_max());
 	say(text);
 }
 
@@ -492,6 +604,7 @@ static void take_the_station(const struct heard *h) {
 	qso.is_logged = 0;
 	qso.has_report = 0;
 	snprintf(qso.freq, sizeof(qso.freq), "%s", control_get("FREQ"));
+	exchange_begin();
 }
 
 static void take_the_report(const struct heard *h) {
@@ -572,12 +685,14 @@ static void decide(time_t slot) {
 
 	qso.next_slot = slot + SLOT_SECONDS;
 	qso.decide_slot = slot + 2 * SLOT_SECONDS;
+	if (h != NULL && qso.state == CALLING_CQ)
+		take_the_station(h);
+	if (h != NULL)
+		exchange_add(h->extra);
 	switch (qso.state) {
 	case CALLING_CQ:
-		if (h != NULL) {
-			take_the_station(h);
+		if (h != NULL)
 			answered(h);
-		}
 		else if (is_ops("NORMAL") && qso.cq_calls >= CQ_CALLS_NORMAL)
 			stop("no answer to CQ");
 		else
@@ -664,7 +779,7 @@ static void call_cq(void) {
 
 // the station of a message heard is answered: its CQ, the end of its last
 // contact, or its call to us
-static int answer(const struct heard *h, time_t slot) {
+static int answer(const struct heard *h, time_t slot, int is_auto) {
 	char call[CALL_ROOM];
 	int is_tail;
 	int is_to_us;
@@ -675,7 +790,7 @@ static int answer(const struct heard *h, time_t slot) {
 		&& (h->word == WORD_RR73 || h->word == WORD_73 || h->word == WORD_RRR);
 	if (h->from[0] == 0 || !strcmp(h->from, "...") || !strcmp(h->from, call))
 		return -1;
-	if (is_ops("POUNCING") && !h->is_cq) {
+	if (is_ops("POUNCING") && !h->is_cq && !is_auto) {
 		say("pouncing: only a CQ is answered");
 		return -1;
 	}
@@ -686,6 +801,8 @@ static int answer(const struct heard *h, time_t slot) {
 	ft8_tx_cancel();
 	memset(&qso, 0, sizeof(qso));
 	take_the_station(h);
+	if (is_to_us)
+		exchange_add(h->extra);
 	qso.next_slot = first_slot_of(1 - parity_of(slot));
 	if (is_to_us && h->word != WORD_GRID && h->word != WORD_NONE) {
 		answered(h);
@@ -722,7 +839,7 @@ int ft8_qso_answer(const char *line) {
 	if (parity_of(slot) != (seconds / SLOT_SECONDS) % 2)
 		slot -= SLOT_SECONDS;
 	h.slot = slot;
-	return answer(&h, slot);
+	return answer(&h, slot, 0);
 }
 
 // the newest message heard from the station that may be answered
@@ -734,10 +851,31 @@ int ft8_qso_answer_call(const char *callsign) {
 	read_messages();
 	for (i = heard_count - 1; i >= 0; i--) {
 		if (!strcmp(heard[i].from, call))
-			return answer(&heard[i], heard[i].slot);
+			return answer(&heard[i], heard[i].slot, 0);
 	}
 	say("nothing heard from that station");
 	return -1;
+}
+
+// with AUTO on and no contact under way: the first station in the slot
+// just searched that calls us is answered
+static void answer_a_call(time_t slot) {
+	char call[CALL_ROOM];
+	int i;
+
+	my_call(call);
+	for (i = 0; i < heard_count; i++) {
+		const struct heard *h = &heard[i];
+
+		if (h->slot != slot || h->is_cq || strcmp(h->to, call) != 0)
+			continue;
+		if (h->word != WORD_GRID && h->word != WORD_REPORT && h->word != WORD_NONE)
+			continue;
+		if (!strcmp(h->from, last_worked) && ft8_time_now() - last_worked_at < AUTO_QUIET_FOR_S)
+			continue;
+		if (answer(h, slot, 1) == 0)
+			return;
+	}
 }
 
 /* the controls */
@@ -769,6 +907,16 @@ static struct control tx_pitch = {
 	.value = "1500",
 };
 
+static struct control ft8_auto = {
+	.group = "FT8", .name = "FT8_AUTO", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON", .value = "OFF",
+};
+
+static struct control ft8_repeat = {
+	.group = "FT8", .name = "FT8_REPEAT", .kind = CONTROL_NUMBER,
+	.min = REPEAT_LOWEST, .max = REPEAT_HIGHEST, .step = 1, .value = "5",
+};
+
 static struct control ft8_do = {
 	.group = "FT8", .name = "FT8_DO", .kind = CONTROL_ACTION,
 	.choices = "CQ/HALT", .apply = apply_ft8_do,
@@ -778,6 +926,8 @@ void ft8_qso_open(void) {
 	control_register(&ft8_ops);
 	control_register(&ft8_reply);
 	control_register(&tx_pitch);
+	control_register(&ft8_auto);
+	control_register(&ft8_repeat);
 	control_register(&ft8_do);
 }
 
@@ -798,6 +948,12 @@ void ft8_qso_poll(void) {
 		ft8_callsign_remember(call);
 	}
 	read_messages();
+	searched = ft8_searched_slot();
+	if (qso.state == IDLE && searched != auto_slot) {
+		auto_slot = searched;
+		if (!strcmp(control_get("FT8_AUTO"), "ON") && !strcmp(control_get("MODE"), "FT8"))
+			answer_a_call(searched);
+	}
 	if (qso.state == IDLE)
 		return;
 	if (strcmp(control_get("MODE"), "FT8") != 0) {
@@ -808,7 +964,6 @@ void ft8_qso_poll(void) {
 		stop("the frequency was changed: stopped");
 		return;
 	}
-	searched = ft8_searched_slot();
 	if (searched != NOTHING_YET && searched >= qso.decide_slot) {
 		decide(qso.decide_slot);
 		return;

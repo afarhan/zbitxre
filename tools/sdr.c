@@ -69,7 +69,9 @@
 //
 // The radio's time is the kernel's when that can be trusted and what the
 // operator gave on the panel when it cannot; hw/radio_clock.c says how it
-// is judged, and the radio's control CLOCK says the time each minute.
+// is judged, and the radio's control CLOCK says the time each minute. The
+// panel is sent the time in UTC each second, which it shows under its list
+// of controls: the author wanted the time in sight, for FT8's slots.
 //
 // The panel has a status bar, a line of text. The radio puts there what it
 // found at the start check, and why it refused a change the panel asked
@@ -191,6 +193,7 @@
 #include "panel_controls.h"
 #include "panel_log.h"
 #include "panel_messages.h"
+#include "radio_clock.h"
 #include "ft8_qso.h"
 #include "messages.h"
 #include "panel_wifi.h"
@@ -212,6 +215,7 @@
 #define TERMINAL        0
 #define WAIT_ON_TERMINAL_MS 2
 #define MS_PER_SECOND   1000
+#define SECONDS_A_DAY   86400
 #define NS_PER_MS       1000000
 
 #define FREQ_IS         "r1:freq="
@@ -893,6 +897,29 @@ static void on_signal(int signal_number) {
 	is_done = 1;
 }
 
+// the panel is told the seconds of the day, in UTC, as each second begins.
+// The radio's clock is asked only when the kernel's second has changed,
+// since asking it reads a file
+static void utc_send(void) {
+	static time_t looked;
+	static time_t sent;
+	time_t now;
+
+	if (time(NULL) == looked)
+		return;
+	looked = time(NULL);
+	if (radio_clock_now(&now) == RADIO_CLOCK_NOT_SET) {
+		if (sent != 0)
+			panel_set(LINK_UTC, LINK_UTC_NOT_SET);
+		sent = 0;
+		return;
+	}
+	if (now == sent)
+		return;
+	sent = now;
+	panel_set(LINK_UTC, (int32_t)(now % SECONDS_A_DAY));
+}
+
 // what has been copied off the air since this was last called
 static void messages_print(void) {
 	static unsigned long last_printed;
@@ -931,6 +958,7 @@ static void main_loop(void) {
 		panel_wifi_poll(now_ms());
 		panel_log_poll();
 		messages_print();
+		utc_send();
 		ft8_qso_poll();
 		panel_messages_poll();
 		radio_poll(now_ms());

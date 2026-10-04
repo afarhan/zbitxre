@@ -77,6 +77,7 @@ void main_knob_clicked();
 void main_knob_held();
 void main_select(const char *name);
 void main_status(const char *text);
+void main_qso(const char *text);
 void main_hide();
 void main_radio_says_text(int number, const char *text);
 

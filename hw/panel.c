@@ -102,6 +102,19 @@ void panel_say(const char *text) {
 	link_offer_kept_bytes(&radio_end, LINK_SAY, line, (int)count);
 }
 
+// the contact under way, or an empty text when there is none; the panel
+// shows it on the status line, in a colour of its own, in place of what was
+// said
+void panel_show_qso(const char *text) {
+	static uint8_t line[LINK_SAY_MAX];
+	size_t count = strlen(text);
+
+	if (count > LINK_SAY_MAX)
+		count = LINK_SAY_MAX;
+	memcpy(line, text, count);
+	link_offer_kept_bytes(&radio_end, LINK_QSO, line, (int)count);
+}
+
 void panel_set_polling(int on) {
 	is_polling = on;
 }

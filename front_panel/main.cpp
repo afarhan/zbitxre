@@ -41,7 +41,11 @@
 //
 // In FT8 the bottom row is empty, so that the list of messages can run to
 // the foot of the screen, and the status line, which says how the contact
-// stands, is above the list instead of under it: the author's layout. The
+// stands, is above the list instead of under it: the author's layout.
+// While a contact is under way, the status line has the exchange the
+// radio sends for it, "VU2XZ > -19 > R-14 > RR73", white on red, as RIT and
+// SPLIT are red when they are on, so that a contact in progress is not
+// missed; when it ends, the line goes back to what was last said. The
 // radio's FT8_DO is two buttons in the left column, under LOG and SET: CQ,
 // which starts calling CQ, and HALT, which stops whatever is being sent and
 // ends the contact. TERM, which is not written yet, is not shown in FT8,
@@ -49,6 +53,10 @@
 // passband we send, is in the list on the right, and so is SIDETONE, how
 // loud our own transmission is; MENU is not shown in FT8, and the list has
 // a fourth row in its place, at the author's asking.
+//
+// The time in UTC is under the list on the right, in every mode, as the
+// radio sends it each second: the author wanted it in sight, for FT8's
+// slots. "--:--:--" is shown while the radio does not know the time.
 //
 // When the mode changes, its list is shown from the top: a list left
 // scrolled from another mode hid FT8's SIDETONE above its first row. A message is answered by
@@ -161,6 +169,13 @@
 #define LIST_TOP 96
 #define LIST_WIDTH 144
 #define LIST_ROWS 3
+//the time, under the list: as wide as is clear of MENU in every mode
+#define CLOCK_TOP 296
+#define CLOCK_WIDTH 96
+#define CLOCK_HEIGHT 20
+#define SECONDS_A_MINUTE 60
+#define MINUTES_AN_HOUR 60
+#define SECONDS_AN_HOUR 3600
 //in FT8 MENU is not shown, and the list has its place too
 #define LIST_ROWS_FT8 4
 #define LIST_ROWS_MAX 4
@@ -279,6 +294,10 @@ lv_obj_t *main_screen = NULL;
 
 static struct widget macro_widget[MACROS];
 static lv_obj_t *status_label;
+static lv_obj_t *clock_label;
+static char said_text[LINK_SAY_MAX + 1];
+static char qso_text[LINK_SAY_MAX + 1];
+static bool is_status_qso;
 static struct widget freq_widget;
 static struct widget placed[PLACES];
 static struct widget band_widget[BANDS];
@@ -457,6 +476,7 @@ static void take_radio_frequency(int hz){
 
 static void set_hidden(lv_obj_t *box, bool is_hidden);
 static void place_the_status(bool is_above);
+static void clock_show(int32_t seconds);
 
 //the group of the modem that has the mode in use
 static void mode_group(char *group, int room){
@@ -1201,10 +1221,20 @@ static void screen_create(){
 	//FT8's messages, in the same place, shown only in FT8
 	messages_create();
 
+	//the time, under the list on the right, clear of MENU
+	clock_label = text_create(main_screen, &lv_font_montserrat_14, COLOUR_VALUE);
+	lv_obj_set_size(clock_label, CLOCK_WIDTH, CLOCK_HEIGHT);
+	lv_label_set_long_mode(clock_label, LV_LABEL_LONG_CLIP);
+	lv_obj_set_style_text_align(clock_label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_align(clock_label, LV_ALIGN_TOP_LEFT, LIST_LEFT, CLOCK_TOP);
+	clock_show(LINK_UTC_NOT_SET);
+
 	//the status bar, between the waterfall and the bottom row
 	status_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_VALUE);
 	lv_obj_set_size(status_label, WATERFALL_WIDTH - 2 * TITLE_LEFT, STATUS_HEIGHT);
 	lv_label_set_long_mode(status_label, LV_LABEL_LONG_CLIP);
+	lv_obj_set_style_bg_color(status_label, lv_color_hex(COLOUR_SWITCHED_ON), 0);
+	lv_obj_set_style_bg_opa(status_label, LV_OPA_TRANSP, 0);
 	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
 		WATERFALL_TOP + WATERFALL_HEIGHT);
 }
@@ -1221,6 +1251,10 @@ void main_radio_says(int number, int32_t value){
 	struct panel_control *c = controls_of_number(number);
 	bool was_transmitting = is_transmitting;
 
+	if (number == LINK_UTC){
+		clock_show(value);
+		return;
+	}
 	if (c == NULL)
 		return;
 	if (number == LINK_FREQ){
@@ -1275,12 +1309,52 @@ void main_hide(){
 
 //a line of text in the status bar; of one that is too long, the end is
 //shown, since what is newest is at the end
-void main_status(const char *text){
-	size_t length = strlen(text);
+//the time in UTC, as the radio sends it each second, under the list
+static void clock_show(int32_t seconds){
+	char text[SHOWN_MAX];
 
+	if (clock_label == NULL)
+		return;
+	if (seconds == LINK_UTC_NOT_SET)
+		snprintf(text, sizeof(text), "--:--:-- UTC");
+	else
+		snprintf(text, sizeof(text), "%02d:%02d:%02d UTC", (int)(seconds / SECONDS_AN_HOUR),
+			(int)(seconds / SECONDS_A_MINUTE % MINUTES_AN_HOUR),
+			(int)(seconds % SECONDS_A_MINUTE));
+	label_show(clock_label, text);
+}
+
+//the status line shows the contact under way, if there is one, white on
+//red, in place of what was said; and what was said again when it ends
+static void status_show(){
+	const char *text = said_text;
+	bool is_qso = qso_text[0] != 0;
+	size_t length;
+
+	if (is_qso)
+		text = qso_text;
+	length = strlen(text);
 	if (length > STATUS_SHOWN_MAX)
 		text += length - STATUS_SHOWN_MAX;
-	lv_label_set_text(status_label, text);
+	label_show(status_label, text);
+	if (is_qso == is_status_qso)
+		return;
+	is_status_qso = is_qso;
+	if (is_qso)
+		lv_obj_set_style_bg_opa(status_label, LV_OPA_COVER, 0);
+	else
+		lv_obj_set_style_bg_opa(status_label, LV_OPA_TRANSP, 0);
+}
+
+void main_status(const char *text){
+	snprintf(said_text, sizeof(said_text), "%s", text);
+	status_show();
+}
+
+//the contact under way, from the radio; empty when there is none
+void main_qso(const char *text){
+	snprintf(qso_text, sizeof(qso_text), "%s", text);
+	status_show();
 }
 
 //a few words in the corner of the frequency's box, for whatever is being tried
