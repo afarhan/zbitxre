@@ -54,9 +54,13 @@
 // loud our own transmission is; MENU is not shown in FT8, and the list has
 // a fourth row in its place, at the author's asking.
 //
-// The time in UTC is under the list on the right, in every mode, as the
-// radio sends it each second: the author wanted it in sight, for FT8's
-// slots. "--:--:--" is shown while the radio does not know the time.
+// The time in UTC is in the top right corner of the frequency's box, small
+// as the box's title is, in every mode, as the radio sends it each second:
+// the author wanted it in sight, for FT8's slots, with a Z after it for
+// UTC, "01:15:22Z", and "--:--:--Z" while the radio does not know the time.
+// The font's digits are of different widths, and the panel has no fixed
+// width font this small; so that the time does not shift as it changes,
+// each character is in a cell of its own, of a fixed width.
 //
 // When the mode changes, its list is shown from the top: a list left
 // scrolled from another mode hid FT8's SIDETONE above its first row. A message is answered by
@@ -169,10 +173,6 @@
 #define LIST_TOP 96
 #define LIST_WIDTH 144
 #define LIST_ROWS 3
-//the time, under the list: as wide as is clear of MENU in every mode
-#define CLOCK_TOP 296
-#define CLOCK_WIDTH 96
-#define CLOCK_HEIGHT 20
 #define SECONDS_A_MINUTE 60
 #define MINUTES_AN_HOUR 60
 #define SECONDS_AN_HOUR 3600
@@ -294,7 +294,16 @@ lv_obj_t *main_screen = NULL;
 
 static struct widget macro_widget[MACROS];
 static lv_obj_t *status_label;
-static lv_obj_t *clock_label;
+//"01:15:22Z": eight characters of the time and the Z for UTC
+#define CLOCK_CELLS 9
+#define CLOCK_FIRST_COLON 2
+#define CLOCK_SECOND_COLON 5
+#define CLOCK_DIGIT_WIDTH 7
+#define CLOCK_COLON_WIDTH 4
+#define CLOCK_CELL_HEIGHT 14
+//clear of the box's edge when it is bright, which is wider
+#define CLOCK_CLEAR_OF_EDGE 2
+static lv_obj_t *clock_cells[CLOCK_CELLS];
 static char said_text[LINK_SAY_MAX + 1];
 static char qso_text[LINK_SAY_MAX + 1];
 static bool is_status_qso;
@@ -477,6 +486,7 @@ static void take_radio_frequency(int hz){
 static void set_hidden(lv_obj_t *box, bool is_hidden);
 static void place_the_status(bool is_above);
 static void clock_show(int32_t seconds);
+static void clock_create();
 
 //the group of the modem that has the mode in use
 static void mode_group(char *group, int room){
@@ -1221,13 +1231,9 @@ static void screen_create(){
 	//FT8's messages, in the same place, shown only in FT8
 	messages_create();
 
-	//the time, under the list on the right, clear of MENU
-	clock_label = text_create(main_screen, &lv_font_montserrat_14, COLOUR_VALUE);
-	lv_obj_set_size(clock_label, CLOCK_WIDTH, CLOCK_HEIGHT);
-	lv_label_set_long_mode(clock_label, LV_LABEL_LONG_CLIP);
-	lv_obj_set_style_text_align(clock_label, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_align(clock_label, LV_ALIGN_TOP_LEFT, LIST_LEFT, CLOCK_TOP);
-	clock_show(LINK_UTC_NOT_SET);
+	//the time, small, at the top right of the frequency's box, across from
+	//its title
+	clock_create();
 
 	//the status bar, between the waterfall and the bottom row
 	status_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_VALUE);
@@ -1309,19 +1315,46 @@ void main_hide(){
 
 //a line of text in the status bar; of one that is too long, the end is
 //shown, since what is newest is at the end
-//the time in UTC, as the radio sends it each second, under the list
+//the time in UTC, as the radio sends it each second, in the frequency's
+//box: each character in its own cell, so that it does not move
 static void clock_show(int32_t seconds){
 	char text[SHOWN_MAX];
+	char one[2];
+	int i;
 
-	if (clock_label == NULL)
+	if (clock_cells[0] == NULL)
 		return;
 	if (seconds == LINK_UTC_NOT_SET)
-		snprintf(text, sizeof(text), "--:--:-- UTC");
+		snprintf(text, sizeof(text), "--:--:--Z");
 	else
-		snprintf(text, sizeof(text), "%02d:%02d:%02d UTC", (int)(seconds / SECONDS_AN_HOUR),
+		snprintf(text, sizeof(text), "%02d:%02d:%02dZ", (int)(seconds / SECONDS_AN_HOUR),
 			(int)(seconds / SECONDS_A_MINUTE % MINUTES_AN_HOUR),
 			(int)(seconds % SECONDS_A_MINUTE));
-	label_show(clock_label, text);
+	one[1] = 0;
+	for (i = 0; i < CLOCK_CELLS; i++){
+		one[0] = text[i];
+		label_show(clock_cells[i], one);
+	}
+}
+
+//the clock's cells, right to left from the box's top right corner: a digit
+//or the Z in a cell as wide as the widest of them, a colon in a narrow one
+static void clock_create(){
+	int right = FREQ_WIDTH - TITLE_LEFT - CLOCK_CLEAR_OF_EDGE;
+	int width;
+	int i;
+
+	for (i = CLOCK_CELLS - 1; i >= 0; i--){
+		width = CLOCK_DIGIT_WIDTH;
+		if (i == CLOCK_FIRST_COLON || i == CLOCK_SECOND_COLON)
+			width = CLOCK_COLON_WIDTH;
+		right -= width;
+		clock_cells[i] = text_create(freq_widget.box, &lv_font_montserrat_12, COLOUR_TITLE);
+		lv_obj_set_size(clock_cells[i], width, CLOCK_CELL_HEIGHT);
+		lv_obj_set_style_text_align(clock_cells[i], LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_align(clock_cells[i], LV_ALIGN_TOP_LEFT, right, TITLE_TOP);
+	}
+	clock_show(LINK_UTC_NOT_SET);
 }
 
 //the status line shows the contact under way, if there is one, white on
