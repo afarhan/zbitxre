@@ -85,6 +85,9 @@ extern "C" {
 // each second; LINK_UTC_NOT_SET when the radio does not know the time
 #define LINK_UTC 13
 #define LINK_UTC_NOT_SET (-1)
+// what CW has read off the air since the last value, for the panel's
+// status line: a kept, counted value, its characters
+#define LINK_CW_TEXT 14
 
 struct link_wifi_point {
 	int8_t signal_dbm;

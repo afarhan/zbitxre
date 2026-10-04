@@ -197,4 +197,5 @@ void demod_ssb(complex float *bins, int32_t *baseband_output);
 void demod_am(complex float *bins, int32_t *baseband_output);
 void speaker_play(const int32_t *samples, int count);
 void set_passband(int low_hz, int high_hz);
+float bin_of_audio(int audio_hz);
 int tr_wait_to_tx_ms(void);

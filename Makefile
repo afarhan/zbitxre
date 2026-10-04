@@ -29,7 +29,7 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw
 	hw/radio_clock.h \
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h modems/cw_keyer.h \
-	modems/cw_text.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
+	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
 	modems/ft8_callsign_hash.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c \
@@ -54,7 +54,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
-	$(BUILD)/test_ft8_qso
+	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -89,6 +89,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_ft8
 	$(BUILD)/test_messages
 	$(BUILD)/test_ft8_qso
+	$(BUILD)/test_cw_decoder
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -120,11 +121,11 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
-		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h \
+		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h panel_cw.c panel_cw.h \
 		server.h control.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c logbook.c \
+		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c logbook.c \
 		settings.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
@@ -137,6 +138,10 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c hw/radio_clock.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lpthread -lm
+
+$(BUILD)/test_cw_decoder: tests/test_cw_decoder.c $(DSP) $(STAND_INS) $(DSP_HEADERS) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_cw_decoder.c $(DSP) $(STAND_INS) -lpthread -lm
 
 $(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c radio.h server.h \
 		settings.h control.h $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)

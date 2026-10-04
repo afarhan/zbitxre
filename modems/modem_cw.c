@@ -8,7 +8,84 @@
 // CW is received as one sideband, narrow, with the first oscillator set off
 // by the pitch so that the signal is heard at the pitch; core_sdr.c does
 // that with the pitch it is given, and its filter does the rest. The audio
-// goes to the speaker. Decoding the CW into text is to come here.
+// goes to the speaker, and is read into text, below.
+//
+// THE DECODER
+//
+// The decoder is zbitxv2's, with its names and its way, as its notes there
+// said: "entirely written from the scratch after a preliminary read of a
+// few Arduino decoders". All its state is in a struct cw_decoder; there is
+// one. cw_rx() is given each block of the receiver's audio, before the
+// sidetone takes its place in the speaker, and:
+//
+//   1. keeps every eighth sample, which makes 12000 a second, so that a
+//      block is N_BINS, 128 samples, one tick of the decoder, 10.7 ms;
+//   2. measures how strong the signal is at the pitch, with a Goertzel
+//      filter, cw_rx_bin_detect(), the struct bin;
+//   3. keeps a running high level and noise floor, and calls the signal a
+//      mark above six tenths of the high and a space below four tenths,
+//      cw_rx_update_levels();
+//   4. lets a mark or a space change only after four ticks of it, which
+//      takes out the short glitches, cw_rx_denoise();
+//   5. times each mark and space in ticks, cw_rx_detect_symbol(), and at a
+//      space as long as half a dash takes the marks so far for a letter,
+//      cw_rx_match_letter(): a mark longer than half a dash is a dash, and
+//      the dash's length follows the sender's speed as it goes. A space a
+//      dash and a half long is a space between words.
+//   6. looks the dots and dashes up in morse_rx_table, zbitxv2's, which has
+//      the prosigns, <AR>, <BT>, and a few that are run together, 5NN, UR.
+//      What is not in it is given as its dots and dashes.
+//
+// The speed it starts from is WPM's, and it is started again when WPM or
+// PITCH is changed.
+//
+// What it reads goes out of the audio thread through a ring of characters
+// that only it writes and only cw_rx_take() reads, in the thread that owns
+// the controls; panel_cw.c says where it goes. Where zbitxv2 wrote to its
+// console, cw_rx_say() puts the text in the ring.
+//
+// TWO DECODERS, SIDE BY SIDE
+//
+// The author can read CW off the waterfall, and asked whether the spectrum
+// itself could be decoded in place of the Goertzel filter. So, for now, two
+// decoders run side by side, each a struct cw_decoder with a ring of its
+// own, to be compared on the air:
+//
+//   decoder           zbitxv2's, as above: the Goertzel filter at the
+//                     pitch on the receiver's audio. Its text goes to the
+//                     panel, cw_rx_take().
+//   decoder_spectrum  the same, but how strong the signal is comes from the
+//                     receiver's own spectrum, the bins of the block: the
+//                     bin the pitch falls in, bin_of_audio(), and the one
+//                     each side, with the Hann window put on them as the
+//                     core puts it for the spectrum, half of a bin less a
+//                     quarter of each neighbour; the strongest of the three
+//                     is taken, so that a station a little off the pitch is
+//                     still read. The bins come before the receiver's
+//                     filter, so it is the window that keeps a neighbour
+//                     out, where for the first decoder it is BW_CW's
+//                     filter. Its text goes to the radio's terminal,
+//                     cw_rx_take_spectrum().
+//
+// Both see a block every 10.7 ms. The Goertzel filter is 128 samples of
+// 12000 a second, 10.7 ms long and about 94 Hz wide; a bin of the spectrum
+// is 2048 samples of 96000, 21.3 ms long, half of them new each block, and
+// 47 Hz apart, about 70 Hz wide with the window, with its sidelobes 31 dB
+// down where the Goertzel filter's are 13. The bins are brought back to
+// the sound card's units, shifted down 8 bits. The Goertzel filter is on
+// the receiver's audio, after its gain, so the two decoders' magnitudes
+// are not the same numbers; but each decoder's levels follow its own
+// signal, and only how a mark stands over the noise matters to it.
+//
+// The Goertzel filter is at a whole number of its 93.75 Hz bins, the one
+// nearest the pitch: with PITCH at 600 it listens at 562.5 Hz. That is
+// zbitxv2's, and is kept; the spectrum's decoder is at the pitch's own bin.
+//
+// In the test, tests/test_cw_decoder.c, both read a station on the pitch
+// at 20 and 25 words a minute alike, and noise as nothing. Only the
+// spectrum's read a station 60 Hz off the pitch, a station with another
+// four times as strong 200 Hz away, and a station at 35 words a minute
+// without a stray letter.
 //
 // THE KEYER
 //
@@ -173,6 +250,7 @@
 // numbers, the speed, the mode, the pitch and the sidetone's level, each
 // kept where the audio thread reads it whole.
 
+#include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -187,6 +265,7 @@
 #include "cw_keyer.h"
 #include "cw_text.h"
 #include "macros.h"
+#include "modem_cw.h"
 
 #define WPM_LOWEST 5
 #define WPM_HIGHEST 50
@@ -234,6 +313,7 @@
 static int32_t baseband_output[MAX_BINS/2];
 
 static atomic_int pitch_hz;
+static atomic_int decoder_wpm;
 static atomic_int sidetone_level;
 static atomic_int hang_samples;
 static atomic_int is_wanting_tx;
@@ -428,8 +508,449 @@ static void key_a_block(int32_t *speaker, double *tx) {
 	atomic_store(&is_wanting_tx, samples_to_send > 0 || samples_to_hang > 0);
 }
 
+/* the decoder, zbitxv2's */
+
+#define N_BINS 128
+#define SAMPLING_FREQ 12000
+#define DECIMATION (SOUND_CARD_RATE / SAMPLING_FREQ)
+#define SOUND_CARD_RATE 96000
+#define SAMPLE_SHIFT 8
+#define MAX_SYMBOLS 100
+#define HIGH_DECAY 100
+#define NOISE_DECAY 100
+#define LOWEST_LEVEL 100
+#define MARK_LEVEL 30000
+#define DECODED_ROOM 256
+#define HISTORY_LENGTH 0xf
+// the Hann window on the bins: half of a bin less a quarter of each
+// neighbour
+#define HANN_MIDDLE 0.5f
+#define HANN_SIDE 0.25f
+// the core divides the sound card's samples by CORE_SAMPLE_SCALE before its
+// FFT, and a steady tone of amplitude A is A * MAX_BINS / 4 in its windowed
+// bin; this brings the bin back to the sound card's units, shifted down by
+// 8 bits as the Goertzel filter's samples are
+#define CORE_SAMPLE_SCALE 20000000.0f
+#define SPECTRUM_GAIN (CORE_SAMPLE_SCALE / (MAX_BINS / 4) / 256.0f)
+
+struct morse_rx {
+	const char *c;
+	const char *code;
+};
+
+static const struct morse_rx morse_rx_table[] = {
+	{"~", " "}, //dummy, a null character
+	{" ", " "},
+	{"A", ".-"},
+	{"B", "-..."},
+	{"C", "-.-."},
+	{"D", "-.."},
+	{"E", "."},
+	{"F", "..-."},
+	{"G", "--."},
+	{"H", "...."},
+	{"I", ".."},
+	{"J", ".---"},
+	{"K", "-.-"},
+	{"L", ".-.."},
+	{"M", "--"},
+	{"N", "-."},
+	{"O", "---"},
+	{"P", ".--."},
+	{"Q", "--.-"},
+	{"R", ".-."},
+	{"S", "..."},
+	{"T", "-"},
+	{"U", "..-"},
+	{"V", "...-"},
+	{"W", ".--"},
+	{"X", "-..-"},
+	{"Y", "-.--"},
+	{"Z", "--.."},
+	{"1", ".----"},
+	{"2", "..---"},
+	{"3", "...--"},
+	{"4", "....-"},
+	{"5", "....."},
+	{"6", "-...."},
+	{"7", "--..."},
+	{"8", "---.."},
+	{"9", "----."},
+	{"0", "-----"},
+	{"<STOP>", ".-.-.-"},
+	{"<COMMA>", "--..--"},
+	{"?", "..--.."},
+	{"/", "-..-."},
+	{ "'", ".----."},
+	{"!", "-.-.--"},
+	{":", "---..."},
+	{"-", "-....-"},
+	{"_", "..--.-"},
+	{"@", ".--.-."},
+	{"<AR>", ".-.-."},
+	{"<AS>", ".-..."},
+	{"<STOP>", ".-.-."},
+	{"<BT>", "-...-"},
+	{"vu2", "...-..-..---"},
+	{"vu3", "...-..-...--"},
+	{"5nn", ".....-.-."},
+	{"ur", "..-.-."},
+};
+
+struct bin {
+	float coeff;
+	float sine;
+	float cosine;
+	float omega;
+	int k;
+	double scalingFactor;
+	int	freq;
+	int n;
+};
+
+struct symbol {
+	char is_mark;
+	int	magnitude;
+	int	ticks;
+};
+
+// what a decoder has read, on its way out of the audio thread; only the
+// audio thread writes it, and only the thread that owns the controls reads
+struct decoded {
+	char text[DECODED_ROOM];
+	atomic_uint head;
+	atomic_uint tail;
+};
+
+struct cw_decoder{
+	struct decoded *out;
+	int dash_len;
+	int mark;
+	int prev_mark;
+	int	n_bins;
+	int ticker;
+	int high_level;
+	int noise_floor;
+	int sig_state;
+	int magnitude;
+	int symbol_magnitude; // track the magnitude of the current symbol
+	int wpm; // as set by the user
+	struct bin signal;
+	// this is a shift register of the states encountered
+	int32_t history_sig;
+	struct symbol symbol_str[MAX_SYMBOLS];
+	int next_symbol;
+};
+
+static struct decoded decoded_by_tone;
+static struct decoded decoded_by_spectrum;
+static struct cw_decoder decoder = { .out = &decoded_by_tone };
+static struct cw_decoder decoder_spectrum = { .out = &decoded_by_spectrum };
+
+// the text read is put in the decoder's ring; what does not fit is lost
+static void cw_rx_say(struct cw_decoder *p, const char *text) {
+	struct decoded *d = p->out;
+	unsigned head = atomic_load(&d->head);
+
+	while (*text != 0) {
+		if (head - atomic_load(&d->tail) >= DECODED_ROOM)
+			break;
+		d->text[head % DECODED_ROOM] = *text++;
+		head++;
+	}
+	atomic_store(&d->head, head);
+}
+
+static int take_from(struct decoded *d, char *text, int room) {
+	unsigned tail = atomic_load(&d->tail);
+	unsigned head = atomic_load(&d->head);
+	int count = 0;
+
+	while (tail != head && count < room - 1) {
+		text[count++] = d->text[tail % DECODED_ROOM];
+		tail++;
+	}
+	text[count] = 0;
+	atomic_store(&d->tail, tail);
+	return count;
+}
+
+// what each decoder has read since the last call, for the thread that owns
+// the controls; says how many characters
+int cw_rx_take(char *text, int room) {
+	return take_from(&decoded_by_tone, text, room);
+}
+
+int cw_rx_take_spectrum(char *text, int room) {
+	return take_from(&decoded_by_spectrum, text, room);
+}
+
+static void cw_rx_bin_init(struct bin *p, float freq, int n,
+	float sampling_freq){
+
+	p->k = (int) (0.5 + ((n * freq) / sampling_freq));
+	p->omega = (2.0 * M_PI * p->k) / n;
+	p->sine = sin(p->omega);
+	p->cosine = cos(p->omega);
+	p->coeff = 2.0 * p->cosine;
+	p->n = n;
+	p->freq = freq;
+	p->scalingFactor = n / 2.0;
+}
+
+static int cw_rx_bin_detect(struct bin *p, int32_t *data){
+	float Q2 = 0;
+	float Q1 = 0;
+	for (int index = 0; index < p->n; index++){
+		float Q0;
+		Q0 = p->coeff * Q1 - Q2 + (float) (*data);
+		Q2 = Q1;
+		Q1 = Q0;
+		data++;
+	}
+	double real = (Q1 * p->cosine - Q2) / p->scalingFactor;
+	double imag = (Q1 * p->sine) / p->scalingFactor;
+
+	int  magnitude = sqrt(real*real + imag*imag);
+	return magnitude;
+}
+
+static void cw_rx_match_letter(struct cw_decoder *p){
+	char code[MAX_SYMBOLS];
+
+	if (p->next_symbol == 0){
+		return;
+	}
+
+	int in_mark = 0;
+	int total_ticks = 0;
+	int min_dot = (p->dash_len / 6);
+	code[0] = 0;
+	int i = 0;
+
+	while(i < p->next_symbol){
+		if (p->symbol_str[i].is_mark){
+			if(!in_mark && p->symbol_str[i].ticks > min_dot){
+				in_mark = 1;
+				total_ticks = 0;
+			}
+		}
+		else {
+			if(in_mark && p->symbol_str[i].ticks > min_dot){
+				in_mark = 0;
+				if (total_ticks > p->dash_len / 2){
+					strcat(code, "-");
+					//track the dashes
+					int new_dash = ((p->dash_len * 3) + total_ticks)/4;
+					int init_dash_len = (18 * SAMPLING_FREQ) / (5 * N_BINS* p->wpm);
+					if (init_dash_len/2 <  new_dash && new_dash < init_dash_len * 2)
+						p->dash_len = new_dash;
+				}
+				else if (min_dot <= total_ticks && total_ticks <= p->dash_len/2)
+					strcat(code, ".");
+			}
+		}
+		total_ticks += p->symbol_str[i].ticks;
+		i++;
+	}
+
+	p->next_symbol = 0;
+	for (size_t j = 0; j < sizeof(morse_rx_table)/sizeof(struct morse_rx); j++)
+		if (!strcmp(code, morse_rx_table[j].code)){
+			cw_rx_say(p, morse_rx_table[j].c);
+			return;
+		}
+	//un-decoded phrases
+	cw_rx_say(p, code);
+}
+
+static void cw_rx_add_symbol(struct cw_decoder *p, char symbol){
+	if (p->next_symbol == MAX_SYMBOLS)
+		p->next_symbol = 0;
+	p->symbol_str[p->next_symbol].is_mark = 1;
+	if (symbol == ' ')
+		p->symbol_str[p->next_symbol].is_mark = 0;
+	p->symbol_str[p->next_symbol].ticks = p->ticker;
+	p->symbol_str[p->next_symbol].magnitude =
+		((p->symbol_str[p->next_symbol].magnitude *10) + p->magnitude)/11;
+	p->next_symbol++;
+}
+
+/*
+The highs maybe due to noise (that usually lasts very short durations,
+Using large n_bins usually does away with that.
+*/
+static void cw_rx_update_levels(struct cw_decoder *p){
+	int new_high = p->magnitude;
+
+	if (p->high_level < p->magnitude)
+		p->high_level = new_high;
+	else
+		p->high_level = (p->magnitude + ((HIGH_DECAY -1)
+			* p->high_level))/HIGH_DECAY;
+
+	if (p->magnitude <  (p->high_level * 4)/10 ){
+		// clamp the lows to prevent inf
+		if (p->magnitude < LOWEST_LEVEL)
+			p->magnitude = LOWEST_LEVEL;
+		p->noise_floor = (p->magnitude + ((NOISE_DECAY -1)
+			* p->noise_floor))/NOISE_DECAY;
+		p->symbol_magnitude += p->magnitude;
+	}
+}
+
+//we skip the smaller glitches
+static void cw_rx_denoise(struct cw_decoder *p){
+
+	p->history_sig <<= 1;
+	if (p->sig_state)
+		p->history_sig |= 1;
+
+	p->prev_mark = p->mark;
+	switch(p->history_sig & HISTORY_LENGTH){
+	case 0:
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+	case 8:
+		p->mark = 0;
+		break;
+	default:
+		p->mark = MARK_LEVEL;
+		break;
+	}
+}
+
+static void cw_rx_detect_symbol(struct cw_decoder *p){
+
+	if (p->mark == 0 && p->prev_mark > 0){ //end of mark
+		cw_rx_add_symbol(p, 'm');
+		p->ticker = 0;
+	}
+	else if (p->mark > 1 && p->prev_mark == 0){ //start of mark
+		cw_rx_add_symbol(p, ' ');
+		p->ticker = 0;//reset the timer to measure the length of the mark
+	}
+	else if (p->mark == 0 && p->prev_mark == 0){ //continuing space
+		if (p->next_symbol == 0){
+			if(p->ticker > (p->dash_len * 3)/2){
+				cw_rx_say(p, " ");
+				p->ticker = 0;
+			}
+		}
+		else if (p->ticker >  p->dash_len/2){
+			cw_rx_add_symbol(p, ' ');
+			cw_rx_match_letter(p);
+			if (p->ticker > (p->dash_len * 3)/2){
+				cw_rx_say(p, " ");
+			}
+			p->ticker = 0;
+		}
+	}
+	else if (p->mark > 0  && p->prev_mark > 0){	// skip unusually long dashes
+		if (p->ticker > p->dash_len * 3)
+			p->ticker = p->dash_len;
+	}
+}
+
+// a tick of the decoder, given how strong the signal is
+static void cw_rx_level(struct cw_decoder *p, int sig_now){
+
+	p->magnitude = sig_now;
+
+	if (p->magnitude > (p->high_level * 6)/10){
+		p->sig_state = MARK_LEVEL;
+	}
+	else if (p->magnitude <  (p->high_level * 4)/10 ){
+		p->sig_state = 0;
+	}
+
+	cw_rx_update_levels(p);
+	cw_rx_denoise(p); //this also updates the mark member of struct cw_decode
+	cw_rx_detect_symbol(p);
+	p->ticker++;
+}
+
+static void cw_rx_bin(struct cw_decoder *p, int32_t *samples){
+	cw_rx_level(p, cw_rx_bin_detect(&p->signal, samples));
+}
+
+// the decoder is started from the speed and the pitch set: its dash is as
+// long as the speed's, and it follows the sender's from there
+static void cw_rx_init(struct cw_decoder *p, int wpm, int pitch){
+	p->ticker = 0;
+	p->n_bins = N_BINS;
+	p->next_symbol = 0;
+	p->sig_state = 0;
+	p->magnitude= 0;
+	p->prev_mark = 0;
+	p->history_sig = 0;
+	p->symbol_magnitude = 0;
+	p->wpm = wpm;
+
+	// dot len (in msec)) = 1200/wpm; dash len = 3600/wpm
+	// each block of nbins = n_bins/sampling seconds;
+	// dash len is (3600 / wpm)/ ((nbins * 1000)/samping_freq)
+	p->dash_len = (18 * SAMPLING_FREQ) / (5 * N_BINS* wpm);
+
+	cw_rx_bin_init(&p->signal, pitch, N_BINS, SAMPLING_FREQ);
+}
+
+// a block of the receiver's audio, MAX_BINS/2 samples at 96000 a second,
+// is one tick of the decoder at 12000
+static void cw_rx(int32_t *samples, int count){
+	int32_t s[N_BINS];
+	int wpm = atomic_load(&decoder_wpm);
+	int pitch = atomic_load(&pitch_hz);
+
+	if (count != N_BINS * DECIMATION || wpm <= 0)
+		return;
+	if (wpm != decoder.wpm || pitch != decoder.signal.freq)
+		cw_rx_init(&decoder, wpm, pitch);
+
+	//we decimate the samples from 96000 to 12000
+	for (int i = 0; i < decoder.n_bins; i++){
+		s[i] = samples[i * DECIMATION] >> SAMPLE_SHIFT;
+	}
+	cw_rx_bin(&decoder, s);
+}
+
+// the windowed bin at a place among the block's bins
+static float hann_bin(complex float *bins, int k){
+	complex float below = bins[(k + MAX_BINS - 1) % MAX_BINS];
+	complex float above = bins[(k + 1) % MAX_BINS];
+
+	return cabsf(HANN_MIDDLE * bins[k % MAX_BINS] - HANN_SIDE * (below + above));
+}
+
+// the second decoder's tick: the strongest of the three windowed bins
+// around the pitch, scaled to what the Goertzel filter gives
+static void cw_rx_spectrum(complex float *bins){
+	int wpm = atomic_load(&decoder_wpm);
+	int pitch = atomic_load(&pitch_hz);
+	int middle;
+	float strongest = 0;
+	float level;
+	int k;
+
+	if (wpm <= 0)
+		return;
+	if (wpm != decoder_spectrum.wpm || pitch != decoder_spectrum.signal.freq)
+		cw_rx_init(&decoder_spectrum, wpm, pitch);
+	middle = (int)lroundf(bin_of_audio(pitch)) + MAX_BINS;
+	for (k = middle - 1; k <= middle + 1; k++){
+		level = hann_bin(bins, k);
+		if (level > strongest)
+			strongest = level;
+	}
+	cw_rx_level(&decoder_spectrum, (int)(strongest * SPECTRUM_GAIN));
+}
+
 static void rx_cw(complex float *bins) {
 	demod_ssb(bins, baseband_output);
+	cw_rx(baseband_output, MAX_BINS/2);
+	cw_rx_spectrum(bins);
 	key_a_block(baseband_output, NULL);
 	speaker_play(baseband_output, MAX_BINS/2);
 }
@@ -521,6 +1042,7 @@ static int apply_wpm(struct control *c, const char *value, char *why, int room) 
 	(void)room;
 	cw_keyer_set_wpm(atoi(value));
 	cw_text_set_wpm(atoi(value));
+	atomic_store(&decoder_wpm, atoi(value));
 	return 0;
 }
 
@@ -645,6 +1167,7 @@ static void cw_start(void) {
 	cw_keyer_reset();
 	cw_keyer_set_wpm(atoi(wpm.value));
 	cw_text_set_wpm(atoi(wpm.value));
+	atomic_store(&decoder_wpm, atoi(wpm.value));
 	apply_cw_input(&cw_input, cw_input.value, NULL, 0);
 	load_the_macros();
 	if (key_open(board_in_use()) < 0)

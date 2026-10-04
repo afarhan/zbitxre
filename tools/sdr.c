@@ -63,6 +63,10 @@
 // G0XYZ, as marking it on the panel and clicking the knob does; ft8_qso.c
 // says what follows.
 //
+// In CW what is read off the air runs through the panel's status line,
+// and what the second decoder, from the spectrum, reads is printed a line
+// at a time, "cw spectrum: CQ CQ DE VU2ESE"; panel_cw.c says how.
+//
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
@@ -193,6 +197,7 @@
 #include "panel_controls.h"
 #include "panel_log.h"
 #include "panel_messages.h"
+#include "panel_cw.h"
 #include "radio_clock.h"
 #include "ft8_qso.h"
 #include "messages.h"
@@ -959,6 +964,7 @@ static void main_loop(void) {
 		panel_log_poll();
 		messages_print();
 		utc_send();
+		panel_cw_poll(now_ms());
 		ft8_qso_poll();
 		panel_messages_poll();
 		radio_poll(now_ms());

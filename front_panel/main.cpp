@@ -12,11 +12,13 @@
 //   y 0     STEP | FREQ 144 | RIT, SPLIT, DRIVE, AGC, IF, VOL
 //   y 48    a button for each band, 10M to 80M, and MODE
 //   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
-//           beside it, 288 wide: the graph, 64 rows, and the waterfall,
-//           96; waterfall.cpp paints them. The span is shown in their top
-//           left corner. Under them a line of text, 16 high: the status
-//           bar, for what the radio has to say, and for what CW is read
-//           when there is a decoder
+//           beside it, 288 wide: a line of text, 16 high, the status
+//           line, for what the radio has to say, and in CW for what is
+//           read off the air; under it, from y 112, the graph, 64 rows,
+//           and the waterfall, 96; waterfall.cpp paints them. The span
+//           is shown in their top left corner. The author moved the
+//           status line from under the waterfall to above it, where in
+//           FT8 it is above the list of messages
 //           on the right, 144 wide: the list, three rows of 48
 //   y 272   six buttons under the waterfall, the mode's own: its macros in
 //           CW; and MENU at the right end
@@ -30,6 +32,11 @@
 // each with its macro's label, and a touch sends that macro; modem_cw.c
 // says where the macros come from.
 //
+// In CW the status line has what the radio's decoder reads off the air, as
+// it reads it, run through from right to left, at the author's asking:
+// each letter comes in at the right end and what came before moves left
+// and off. What the radio says takes the line until the next letter comes.
+//
 // In USB, LSB and AM the bottom row has MIC, and two buttons, TX and RX:
 // a touch on TX starts transmitting and a touch on RX stops it. The
 // author wants the two apart, a button to start a voice transmission and
@@ -40,8 +47,8 @@
 // two buttons.
 //
 // In FT8 the bottom row is empty, so that the list of messages can run to
-// the foot of the screen, and the status line, which says how the contact
-// stands, is above the list instead of under it: the author's layout.
+// the foot of the screen, under the status line, which says how the
+// contact stands: the author's layout.
 // While a contact is under way, the status line has the exchange the
 // radio sends for it, "VU2XZ > -19 > R-14 > RR73", white on red, as RIT and
 // SPLIT are red when they are on, so that a contact in progress is not
@@ -307,6 +314,13 @@ static lv_obj_t *clock_cells[CLOCK_CELLS];
 static char said_text[LINK_SAY_MAX + 1];
 static char qso_text[LINK_SAY_MAX + 1];
 static bool is_status_qso;
+//the CW read, the newest at the end: no more than fits in the line in
+//capitals, since a line too long for it is cut at its right end, where
+//the newest letters are
+#define CW_SHOWN_MAX 30
+static char cw_read[CW_SHOWN_MAX + 1];
+static bool is_cw_newest;
+static bool is_status_right;
 static struct widget freq_widget;
 static struct widget placed[PLACES];
 static struct widget band_widget[BANDS];
@@ -321,7 +335,7 @@ static lv_obj_t *cq_button;
 static lv_obj_t *halt_button;
 static lv_obj_t *menu_button;
 static bool is_showing_messages;
-static bool is_status_above;
+
 
 //the controls in the list, the row at the top of what is in view, and the
 //row that is marked
@@ -484,9 +498,9 @@ static void take_radio_frequency(int hz){
 /* what is where */
 
 static void set_hidden(lv_obj_t *box, bool is_hidden);
-static void place_the_status(bool is_above);
 static void clock_show(int32_t seconds);
 static void clock_create();
+static void status_show();
 
 //the group of the modem that has the mode in use
 static void mode_group(char *group, int room){
@@ -564,7 +578,6 @@ static void lay_out(){
 		set_hidden(cq_button, !is_showing_messages);
 		set_hidden(halt_button, !is_showing_messages);
 		set_hidden(menu_button, is_showing_messages);
-		place_the_status(is_showing_messages);
 	}
 	list_rows = LIST_ROWS;
 	if (is_showing_messages)
@@ -573,6 +586,12 @@ static void lay_out(){
 		waterfall_set_painting(!is_showing_messages);
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
+
+	//what CW read is not shown in another mode
+	if (strcmp(group, MACRO_GROUP) != 0 && is_cw_newest){
+		is_cw_newest = false;
+		status_show();
+	}
 
 	//another mode's list is shown from its top, so that none of its controls
 	//is out of sight above it
@@ -1084,20 +1103,6 @@ static void row_create(struct widget *w, int x, int y, int width){
 }
 
 //a button for something that is not written yet
-//the status line: under the graph and the waterfall, or in FT8 above the
-//list of messages. It is moved only when its place changes
-static void place_the_status(bool is_above){
-	if (status_label == NULL || is_above == is_status_above)
-		return;
-	is_status_above = is_above;
-	if (is_above)
-		lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
-			WATERFALL_TOP);
-	else
-		lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
-			WATERFALL_TOP + WATERFALL_HEIGHT);
-}
-
 static lv_obj_t *dim_button_create(int x, int y, const char *label){
 	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
 	lv_obj_t *text = text_create(box, &lv_font_montserrat_12, COLOUR_DIM);
@@ -1162,17 +1167,17 @@ static void screen_create(){
 	//what these are for is not written yet, so they are dim and do nothing
 	for (i = 0; i < COLUMN_BUTTONS; i++){
 		if (!strcmp(column_names[i], "SET"))
-			live_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, "SET", on_set_touched);
+			live_button_create(0, STATUS_TOP + i * ROW_HEIGHT, "SET", on_set_touched);
 		else if (!strcmp(column_names[i], "LOG"))
-			live_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
+			live_button_create(0, STATUS_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
 		else
-			term_button = dim_button_create(0, WATERFALL_TOP + i * ROW_HEIGHT,
+			term_button = dim_button_create(0, STATUS_TOP + i * ROW_HEIGHT,
 				column_names[i]);
 	}
 	//in FT8, CQ where TERM is and HALT under it; shown by lay_out()
-	cq_button = live_button_create(0, WATERFALL_TOP + FT8_CQ_ROW * ROW_HEIGHT, "CQ",
+	cq_button = live_button_create(0, STATUS_TOP + FT8_CQ_ROW * ROW_HEIGHT, "CQ",
 		on_cq_touched);
-	halt_button = live_button_create(0, WATERFALL_TOP + FT8_HALT_ROW * ROW_HEIGHT, "HALT",
+	halt_button = live_button_create(0, STATUS_TOP + FT8_HALT_ROW * ROW_HEIGHT, "HALT",
 		on_halt_touched);
 	lv_obj_add_flag(cq_button, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_flag(halt_button, LV_OBJ_FLAG_HIDDEN);
@@ -1235,14 +1240,13 @@ static void screen_create(){
 	//its title
 	clock_create();
 
-	//the status bar, between the waterfall and the bottom row
+	//the status line, above the graph and the waterfall, or FT8's list
 	status_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_VALUE);
 	lv_obj_set_size(status_label, WATERFALL_WIDTH - 2 * TITLE_LEFT, STATUS_HEIGHT);
 	lv_label_set_long_mode(status_label, LV_LABEL_LONG_CLIP);
 	lv_obj_set_style_bg_color(status_label, lv_color_hex(COLOUR_SWITCHED_ON), 0);
 	lv_obj_set_style_bg_opa(status_label, LV_OPA_TRANSP, 0);
-	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT,
-		WATERFALL_TOP + WATERFALL_HEIGHT);
+	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT, STATUS_TOP);
 }
 
 /* what the rest of the panel calls */
@@ -1358,18 +1362,33 @@ static void clock_create(){
 }
 
 //the status line shows the contact under way, if there is one, white on
-//red, in place of what was said; and what was said again when it ends
+//red, in place of what was said; and what was said again when it ends.
+//In CW it shows what is read off the air, against the right end, so that
+//each letter comes in at the right and the line moves to the left; what
+//the radio says is shown in its place until the next letter comes
 static void status_show(){
 	const char *text = said_text;
 	bool is_qso = qso_text[0] != 0;
+	bool is_right = false;
 	size_t length;
 
+	if (!is_qso && is_cw_newest){
+		text = cw_read;
+		is_right = true;
+	}
 	if (is_qso)
 		text = qso_text;
 	length = strlen(text);
 	if (length > STATUS_SHOWN_MAX)
 		text += length - STATUS_SHOWN_MAX;
 	label_show(status_label, text);
+	if (is_right != is_status_right){
+		is_status_right = is_right;
+		if (is_right)
+			lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_RIGHT, 0);
+		else
+			lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_LEFT, 0);
+	}
 	if (is_qso == is_status_qso)
 		return;
 	is_status_qso = is_qso;
@@ -1381,6 +1400,27 @@ static void status_show(){
 
 void main_status(const char *text){
 	snprintf(said_text, sizeof(said_text), "%s", text);
+	is_cw_newest = false;
+	status_show();
+}
+
+//letters CW has read, to be added at the end of what the line shows
+void main_cw_text(const char *text){
+	size_t have = strlen(cw_read);
+	size_t more = strlen(text);
+	size_t room = sizeof(cw_read) - 1;
+
+	if (more >= room){
+		text += more - room;
+		more = room;
+	}
+	if (have + more > room){
+		memmove(cw_read, cw_read + (have + more - room), room - more);
+		have = room - more;
+	}
+	memcpy(cw_read + have, text, more);
+	cw_read[have + more] = 0;
+	is_cw_newest = true;
 	status_show();
 }
 

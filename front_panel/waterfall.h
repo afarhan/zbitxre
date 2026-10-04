@@ -11,9 +11,13 @@
 #define WATERFALL_ALL_ROWS 96
 
 // where the graph and the waterfall are, and the corner at their top left
-// that is left unpainted, for main.cpp to show the span in
+// that is left unpainted, for main.cpp to show the span in. Above them is
+// the status line, STATUS_TOP, 16 high, which in CW has the decoded text
+// running through it; and under them the bottom row
+#define STATUS_TOP 96
+#define STATUS_LINE_HEIGHT 16
 #define WATERFALL_LEFT 48
-#define WATERFALL_TOP 96
+#define WATERFALL_TOP (STATUS_TOP + STATUS_LINE_HEIGHT)
 #define WATERFALL_WIDTH 288
 #define WATERFALL_HEIGHT 160
 #define WATERFALL_CORNER_WIDTH 40

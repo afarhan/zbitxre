@@ -78,12 +78,12 @@ void main_knob_held();
 void main_select(const char *name);
 void main_status(const char *text);
 void main_qso(const char *text);
+void main_cw_text(const char *text);
 void main_hide();
 void main_radio_says_text(int number, const char *text);
 
 // the list of copied messages, in FT8
-// the status line is above the list, and the list runs to the screen's foot
-#define MESSAGES_STATUS_HEIGHT 16
+// the list runs from where the graph begins to the screen's foot
 #define SCREEN_BOTTOM 320
 void messages_create();
 void messages_part(const uint8_t *bytes, int count);

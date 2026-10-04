@@ -778,6 +778,22 @@ void demod_am(complex float *bins, int32_t *baseband_output){
 }
 
 /*
+	which of the block's bins a tone heard at audio_hz comes from: the
+	tuned bin and so many bins above it in the upper sideband, below it
+	in the lower. for a modem that reads the spectrum itself, as CW's
+	second decoder does. it may be a fraction; the bins are 46.875 Hz
+	apart
+*/
+float bin_of_audio(int audio_hz){
+	struct rx *r = rx_list;
+	float bins_away = audio_hz / 46.875f;
+
+	if (r->mode == MODE_LSB || r->mode == MODE_CWR)
+		return r->tuned_bin - bins_away;
+	return r->tuned_bin + bins_away;
+}
+
+/*
 	the passband a modem wants, as the core's r1:low and r1:high,
 	with zbitxv2's limits: the low edge no lower than 50 Hz and the
 	high edge no higher than 5 kHz

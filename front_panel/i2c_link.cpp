@@ -87,6 +87,10 @@ static char said_text[LINK_SAY_MAX + 1];
 static volatile bool is_text_said;
 static char qso_text[LINK_SAY_MAX + 1];
 static volatile bool is_qso_said;
+//the CW read since the screen last had it; what comes faster than the
+//screen takes it is added on, and what does not fit is lost
+static char cw_text[LINK_SAY_MAX + 1];
+static volatile int cw_count;
 
 static volatile unsigned long times_read;
 static volatile unsigned long times_written;
@@ -157,6 +161,12 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;
 		is_text_said = true;
+	}
+	if (control == LINK_CW_TEXT){
+		for (int i = 0; i < count && cw_count < LINK_SAY_MAX; i++){
+			cw_text[cw_count] = (char)bytes[i];
+			cw_count = cw_count + 1;
+		}
 	}
 	if (control == LINK_QSO && count <= LINK_SAY_MAX){
 		memcpy(qso_text, bytes, count);
@@ -268,6 +278,14 @@ void i2c_link_slice(){
 		interrupts();
 		main_status(text);
 		screens_status(text);
+	}
+	if (cw_count > 0){
+		noInterrupts();
+		memcpy(text, cw_text, cw_count);
+		text[cw_count] = 0;
+		cw_count = 0;
+		interrupts();
+		main_cw_text(text);
 	}
 	if (is_qso_said){
 		noInterrupts();
