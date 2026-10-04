@@ -168,6 +168,11 @@ static atomic_int snapshot_blocks_to_take;
 static atomic_int snapshot_is_ready;
 
 static int32_t captured[SAMPLES_PER_BLOCK];
+static int32_t recorded[AUDIO_RECORD_RING_BLOCKS * SAMPLES_PER_BLOCK];
+static atomic_int is_recording;
+static atomic_uint record_head;
+static atomic_uint record_tail;
+static atomic_long record_dropped;
 static int32_t to_play[SAMPLES_PER_BLOCK];
 static int32_t from_receiver[AUDIO_BLOCK_FRAMES];
 static int32_t from_microphone[AUDIO_BLOCK_FRAMES];
@@ -513,6 +518,22 @@ static void copy_to_snapshot(void) {
 		atomic_store(&snapshot_is_ready, 1);
 }
 
+// while recording, each block goes into the ring; one that finds the ring
+// full, the writer having fallen behind, is counted and lost
+static void copy_to_recording(void) {
+	unsigned head = atomic_load(&record_head);
+
+	if (!atomic_load(&is_recording))
+		return;
+	if (head - atomic_load(&record_tail) >= AUDIO_RECORD_RING_BLOCKS) {
+		atomic_fetch_add(&record_dropped, 1);
+		return;
+	}
+	memcpy(recorded + (head % AUDIO_RECORD_RING_BLOCKS) * SAMPLES_PER_BLOCK,
+		captured, sizeof(captured));
+	atomic_store(&record_head, head + 1);
+}
+
 static int gather(void) {
 	int frame;
 
@@ -523,6 +544,7 @@ static int gather(void) {
 			return -1;
 	}
 	copy_to_snapshot();
+	copy_to_recording();
 	for (frame = 0; frame < AUDIO_BLOCK_FRAMES; frame++) {
 		from_receiver[frame] = captured[frame * CHANNELS];
 		from_microphone[frame] = captured[frame * CHANNELS + 1];
@@ -707,6 +729,34 @@ void audio_get_report(struct audio_report *report) {
 	report->queued_frames = atomic_load(&queued_frames);
 	report->is_realtime = atomic_load(&is_realtime);
 	report->is_running = atomic_load(&running);
+}
+
+// recording starts and stops; what is in the ring when it stops can still
+// be taken
+void audio_record(int on) {
+	if (on) {
+		atomic_store(&record_dropped, 0);
+		atomic_store(&record_tail, atomic_load(&record_head));
+	}
+	atomic_store(&is_recording, on);
+}
+
+// the oldest block recorded and not yet taken, both channels as the card
+// gave them, or NULL; audio_record_taken() lets it go
+const int32_t *audio_record_next(void) {
+	unsigned tail = atomic_load(&record_tail);
+
+	if (tail == atomic_load(&record_head))
+		return NULL;
+	return recorded + (tail % AUDIO_RECORD_RING_BLOCKS) * SAMPLES_PER_BLOCK;
+}
+
+void audio_record_taken(void) {
+	atomic_fetch_add(&record_tail, 1);
+}
+
+long audio_record_dropped(void) {
+	return atomic_load(&record_dropped);
 }
 
 void audio_take_snapshot(void) {

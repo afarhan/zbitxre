@@ -143,6 +143,12 @@ $(BUILD)/test_cw_decoder: tests/test_cw_decoder.c $(DSP) $(STAND_INS) $(DSP_HEAD
 		$(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_cw_decoder.c $(DSP) $(STAND_INS) -lpthread -lm
 
+# a recording made on the radio with "record=", played through the
+# receiver and both CW decoders; not a test, a tool for working on them
+$(BUILD)/play_cw_record: tests/play_cw_record.c $(DSP) $(STAND_INS) $(DSP_HEADERS) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/play_cw_record.c $(DSP) $(STAND_INS) -lpthread -lm
+
 $(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c radio.h server.h \
 		settings.h control.h $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c $(DSP) \

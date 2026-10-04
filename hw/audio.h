@@ -59,3 +59,13 @@ void audio_get_report(struct audio_report *report);
 
 void audio_take_snapshot(void);
 const int32_t *audio_get_snapshot(void);
+
+// a recording is every block as the card gave it, as a snapshot is, for as
+// long as it is wanted; the blocks wait in a ring for the thread that
+// writes them out
+#define AUDIO_RECORD_RING_BLOCKS 1024
+
+void audio_record(int on);
+const int32_t *audio_record_next(void);
+void audio_record_taken(void);
+long audio_record_dropped(void);

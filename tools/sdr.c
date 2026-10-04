@@ -121,6 +121,13 @@
 // oscillator is off, tuning switches it on again, since tuning sets it.
 // Switching one on resets the chip's PLLs, as the radio does when it starts.
 //
+// "record=600" writes everything the sound card gives, both channels as
+// they come, for 600 seconds, into data/record_<UTC time>.raw, with a note
+// of how the radio was set beside it in a .txt; "record=0" stops it. It is
+// for working on the decoders with signals heard off the air, played back
+// through the receiver as tests/hw_stand_ins.c plays a test's. Ten minutes
+// is about 460 MB.
+//
 // "snapshot" is for the times the sound and the spectrum go wrong and a
 // restart puts them right. It saves the samples of the next sixteen blocks
 // just as the sound card gave them, both channels, in data/snapshot.raw,
@@ -231,6 +238,10 @@
 #define SETTINGS_FILE "data/user_settings.ini"
 #define LOGBOOK_FILE "data/sbitx.db"
 #define LOG_FOR "log="
+#define RECORD_FOR "record="
+#define RECORD_NAME_ROOM 96
+#define RECORD_STAMP_ROOM 20
+#define SAMPLE_RATE_HZ 96000
 #define ANSWER "answer="
 
 #define START_CHECK_AFTER_MS 3000
@@ -575,6 +586,79 @@ static void start_check_poll(long now) {
 	audio_take_snapshot();
 }
 
+// a recording: every block from the sound card for so many seconds, both
+// channels as they came, written out from the ring audio.c keeps them in
+static FILE *record_file;
+static long record_blocks_left;
+static long record_blocks_written;
+
+static void record_stop(void) {
+	audio_record(0);
+	fclose(record_file);
+	record_file = NULL;
+	printf("record: done, %ld blocks written, %ld lost\n", record_blocks_written,
+		audio_record_dropped());
+	fflush(stdout);
+}
+
+// the file is named by the time it began, in UTC, and beside it is a note of
+// how the radio was set, to read it back by
+static void record_start(int seconds) {
+	char name[RECORD_NAME_ROOM];
+	char stamp[RECORD_STAMP_ROOM];
+	FILE *note;
+	time_t now = time(NULL);
+	struct tm utc;
+
+	if (record_file != NULL)
+		record_stop();
+	if (seconds <= 0)
+		return;
+	gmtime_r(&now, &utc);
+	strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &utc);
+	snprintf(name, sizeof(name), "data/record_%s.raw", stamp);
+	record_file = fopen(name, "wb");
+	if (record_file == NULL) {
+		printf("record: could not write %s\n", name);
+		return;
+	}
+	snprintf(name, sizeof(name), "data/record_%s.txt", stamp);
+	note = fopen(name, "w");
+	if (note != NULL) {
+		fprintf(note, "began %s UTC, for %d seconds\n", stamp, seconds);
+		fprintf(note, "frequency %s Hz, mode %s, pitch %s Hz, wpm %s, bw_cw %s Hz\n",
+			control_get("FREQ"), control_get("MODE"), control_get("PITCH"),
+			control_get("WPM"), control_get("BW_CW"));
+		fprintf(note, "board %s, centre bin %d\n", board_in_use()->name,
+			board_in_use()->centre_bin);
+		fprintf(note, "samples: %d a second, int32, little endian, two channels, "
+			"the receiver's then the microphone's, %d frames to a block\n",
+			SAMPLE_RATE_HZ, AUDIO_BLOCK_FRAMES);
+		fclose(note);
+	}
+	record_blocks_left = ((long)seconds * SAMPLE_RATE_HZ + AUDIO_BLOCK_FRAMES - 1)
+		/ AUDIO_BLOCK_FRAMES;
+	record_blocks_written = 0;
+	audio_record(1);
+	printf("record: %d seconds into data/record_%s.raw\n", seconds, stamp);
+	fflush(stdout);
+}
+
+static void record_save(void) {
+	const int32_t *block;
+
+	if (record_file == NULL)
+		return;
+	while (record_blocks_left > 0 && (block = audio_record_next()) != NULL) {
+		fwrite(block, sizeof(int32_t), AUDIO_BLOCK_FRAMES * SNAPSHOT_CHANNELS, record_file);
+		audio_record_taken();
+		record_blocks_left--;
+		record_blocks_written++;
+	}
+	if (record_blocks_left == 0)
+		record_stop();
+}
+
 static void snapshot_save(void) {
 	const int32_t *samples = audio_get_snapshot();
 	FILE *file;
@@ -720,6 +804,10 @@ static void handle_command(char *line) {
 	}
 	if (strcmp(line, "report") == 0) {
 		report();
+		return;
+	}
+	if (begins_with(line, RECORD_FOR)) {
+		record_start(atoi(line + strlen(RECORD_FOR)));
 		return;
 	}
 	if (strcmp(line, "snapshot") == 0) {
@@ -956,6 +1044,7 @@ static void main_loop(void) {
 		measure_update(now_ms());
 		start_check_poll(now_ms());
 		snapshot_save();
+		record_save();
 		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record, on_panel_bytes);
 		panel_controls_poll();
