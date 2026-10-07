@@ -71,7 +71,12 @@
 //
 // A band's button goes to that band. The button of the band in use goes
 // to the next place in that band's stack, and from the last to the first.
-// A click on the graph or the waterfall goes to the next span.
+// A tap on the graph or the waterfall goes to the next span, and from the
+// narrowest back to the widest: 25K, 10K, 6K, 2.5K, the radio's control
+// SPAN, which the panel shares. The radio sends a client the whole of what
+// its receiver's bins cover, some 25 kHz, at their full resolution, and
+// the window shows the middle of it that the span calls for, so a
+// narrower span is the same spectrum drawn larger.
 //
 // On the bottom row, in USB, LSB and AM there is MIC, and two buttons, TX
 // and RX: TX starts transmitting and RX stops it, two buttons apart as the
@@ -133,10 +138,13 @@
 //
 // A control has its name over its value, in cyan, in the middle of its
 // tile with a little room above it: the author found the names too small
-// and too faint in grey at the tiles' corners. The small line of the
-// frequency's box is the same size and colour, and the time beside it the
-// same size in white; nothing in the window is in small grey letters but
-// the span in the graph's corner.
+// and too faint in grey at the tiles' corners. The frequency's two lines
+// are both in the fixed-width letters, bold, in which the stops between
+// the MHz, the kHz and the Hz are plain to see, the small line in cyan;
+// the two are one column in the middle of the box and begin at the same
+// place, the small line right over the large one and not in the box's
+// corner. The time is in white. Nothing in the window is in small grey
+// letters but the span in the graph's corner.
 //
 // A control is selected by a click on it, or a touch, and has a bright edge
 // while it is. The mouse wheel over a control moves its value a step; over
@@ -281,6 +289,8 @@
 #define ROW_MARGIN_SIDE 6
 #define TITLE_SIZE 11
 #define CORNER_SIZE 9
+#define CLOCK_SIZE 10
+#define WAITING_SIZE 12
 #define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
 #define FREQUENCY_SIZE 17
@@ -1692,19 +1702,21 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 	return TRUE;
 }
 
-// a click on the graph or the waterfall: the next span
-static gboolean on_spectrum_click(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
+// a tap on the graph or the waterfall: the next span
+static void on_spectrum_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer unused) {
 	struct known *span = find_known("SPAN");
 
-	(void)widget;
-	(void)event;
+	(void)gesture;
+	(void)presses;
+	(void)x;
+	(void)y;
 	(void)unused;
 	if (span == NULL || !span->is_choice)
-		return TRUE;
+		return;
 	next_choice_round(span);
 	send_line(span->name, span->value);
 	show_values();
-	return TRUE;
 }
 
 // the list is scrolled, if it must be, to show the row with the focus
@@ -1906,8 +1918,32 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 	}
 }
 
+// how many Hz across the graph and the waterfall show: the span chosen,
+// "10K" or "2.5K", or all the radio sends if that is less
+static int shown_hz(void) {
+	const char *span = value_of("SPAN");
+	int chosen = (int)(atof(span) * HZ_PER_K);
+
+	if (chosen <= 0 || chosen > span_hz)
+		return span_hz;
+	return chosen;
+}
+
+// the points of the radio's line that are in the span shown: how many, and
+// the first of them
+static int shown_points(int *first) {
+	int count = (int)((double)point_count * shown_hz() / span_hz);
+
+	if (count < 2)
+		count = 2;
+	if (count > point_count)
+		count = point_count;
+	*first = (point_count - count) / 2;
+	return count;
+}
+
 static double x_of_hz(int hz, int width) {
-	return width / 2.0 + (double)hz * width / span_hz;
+	return width / 2.0 + (double)hz * width / shown_hz();
 }
 
 static void draw_graph(cairo_t *cr, int width, int height) {
@@ -1916,6 +1952,8 @@ static void draw_graph(cairo_t *cr, int width, int height) {
 	int tuned_hz;
 	double x;
 	double y;
+	int first;
+	int count;
 	int i;
 
 	cairo_set_source_rgb(cr, 0.0, 0.05, 0.1);
@@ -1932,9 +1970,10 @@ static void draw_graph(cairo_t *cr, int width, int height) {
 
 	cairo_set_source_rgb(cr, 1.0, 0.9, 0.0);
 	cairo_set_line_width(cr, 1.0);
-	for (i = 0; i < point_count; i++) {
-		x = (double)i * width / (point_count - 1);
-		y = height - (double)points[i] * height / FULL_SCALE_DB;
+	count = shown_points(&first);
+	for (i = 0; i < count; i++) {
+		x = (double)i * width / (count - 1);
+		y = height - (double)points[first + i] * height / FULL_SCALE_DB;
 		if (y < 0)
 			y = 0;
 		if (i == 0)
@@ -1960,18 +1999,21 @@ static void draw_waterfall(cairo_t *cr, int width, int height) {
 	int low_hz;
 	int high_hz;
 	int tuned_hz;
+	int first;
+	int count;
 	double x;
 
 	cairo_set_source_rgb(cr, 0, 0, 0);
 	cairo_rectangle(cr, 0, 0, width, height);
 	cairo_fill(cr);
-	if (point_count == 0)
+	if (point_count < 2 || span_hz == 0)
 		return;
+	count = shown_points(&first);
 	cairo_save(cr);
-	cairo_scale(cr, (double)width / point_count, (double)height / FALL_ROWS);
-	cairo_set_source_surface(cr, fall, 0, 0);
+	cairo_scale(cr, (double)width / count, (double)height / FALL_ROWS);
+	cairo_set_source_surface(cr, fall, -first, 0);
 	cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_FAST);
-	cairo_rectangle(cr, 0, 0, point_count, FALL_ROWS);
+	cairo_rectangle(cr, 0, 0, count, FALL_ROWS);
 	cairo_fill(cr);
 	cairo_restore(cr);
 	if (span_hz == 0 || (strcmp(mode, "CW") && strcmp(mode, "CWR")))
@@ -2207,6 +2249,8 @@ static void load_style(void) {
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
 		".tile-title { font-size: %dpx; color: #00FFFF; }"
 		".clock { font-size: %dpx; color: #FFFFFF; }"
+		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
+		" color: #00FFFF; }"
 		".status.qso { color: #FFFFFF; background-color: #B02020; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"
@@ -2226,7 +2270,8 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), px(TITLE_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE),
+		px(1), px(TITLE_SIZE), px(CLOCK_SIZE), px(WAITING_SIZE), px(VALUE_SIZE),
+		px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
@@ -2275,25 +2320,35 @@ static void on_screen_sized(GtkWidget *widget, GdkRectangle *size, gpointer unus
 
 // the frequency's box: the VFO and the time over the figures
 static void create_frequency(void) {
-	GtkWidget *inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	GtkWidget *over = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	GtkWidget *layers = gtk_overlay_new();
+	GtkWidget *lines = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
+	// the two lines are one column in the middle of the box, as wide as
+	// the large line, and both begin at its left edge, so that what the
+	// small line is, "B:", stands right over what the large one is, "A:"
 	vfo_label = gtk_label_new("");
-	clock_label = gtk_label_new("");
 	frequency_label = gtk_label_new("");
 	gtk_label_set_xalign(GTK_LABEL(vfo_label), 0);
-	gtk_label_set_xalign(GTK_LABEL(clock_label), 1);
-	add_label_class(vfo_label, "tile-title");
-	add_label_class(clock_label, "clock");
-	gtk_widget_set_margin_top(over, px(TITLE_ROOM_ABOVE));
+	gtk_label_set_xalign(GTK_LABEL(frequency_label), 0);
+	add_label_class(vfo_label, "dial-waiting");
 	add_label_class(frequency_label, "frequency");
-	gtk_widget_set_margin_start(over, px(SPAN_LEFT));
-	gtk_widget_set_margin_end(over, px(SPAN_LEFT));
-	gtk_box_pack_start(GTK_BOX(over), vfo_label, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(over), clock_label, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(inside), over, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(inside), frequency_label, TRUE, TRUE, 0);
-	frequency_box = tile_new(inside);
+	gtk_box_pack_start(GTK_BOX(lines), vfo_label, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(lines), frequency_label, FALSE, FALSE, 0);
+	gtk_widget_set_halign(lines, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(lines, GTK_ALIGN_CENTER);
+
+	// the time is laid over the box's top right corner
+	clock_label = gtk_label_new("");
+	add_label_class(clock_label, "clock");
+	gtk_widget_set_halign(clock_label, GTK_ALIGN_END);
+	gtk_widget_set_valign(clock_label, GTK_ALIGN_START);
+	gtk_widget_set_margin_top(clock_label, px(TITLE_ROOM_ABOVE));
+	gtk_widget_set_margin_end(clock_label, px(SPAN_LEFT));
+
+	gtk_container_add(GTK_CONTAINER(layers), lines);
+	gtk_overlay_add_overlay(GTK_OVERLAY(layers), clock_label);
+	gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(layers), clock_label, TRUE);
+	frequency_box = tile_new(layers);
 	g_signal_connect(frequency_box, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
 	g_signal_connect(frequency_box, "button-press-event",
 		G_CALLBACK(on_frequency_click), NULL);
@@ -2344,11 +2399,10 @@ static void create_middle(void) {
 		STATUS_HEIGHT);
 
 	spectrum_area = gtk_drawing_area_new();
-	gtk_widget_add_events(spectrum_area, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
+	gtk_widget_add_events(spectrum_area, GDK_SCROLL_MASK);
 	g_signal_connect(spectrum_area, "draw", G_CALLBACK(on_draw_spectrum), NULL);
 	g_signal_connect(spectrum_area, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
-	g_signal_connect(spectrum_area, "button-press-event",
-		G_CALLBACK(on_spectrum_click), NULL);
+	tell_taps(spectrum_area, G_CALLBACK(on_spectrum_tap), NULL);
 	put(spectrum_area, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
 		GRAPH_HEIGHT + FALL_HEIGHT);
 
