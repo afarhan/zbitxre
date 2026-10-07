@@ -90,11 +90,25 @@ int panel_is_waiting(int control) {
 	return link_is_waiting(&radio_end, control);
 }
 
+// whoever else is to be told what the panel is told for its status line:
+// the radio's clients over the network, which have a status line too.
+// tools/sdr.c names them
+static void (*also_said)(const char *text);
+static void (*also_qso)(const char *text);
+
+void panel_also_tell(void (*said)(const char *text), void (*qso)(const char *text)) {
+	also_said = said;
+	also_qso = qso;
+}
+
 // a line of text for the panel's status bar; a newer one replaces one that
 // has not gone yet
 void panel_say(const char *text) {
 	static uint8_t line[LINK_SAY_MAX];
 	size_t count = strlen(text);
+
+	if (also_said != NULL)
+		also_said(text);
 
 	if (count > LINK_SAY_MAX)
 		count = LINK_SAY_MAX;
@@ -108,6 +122,9 @@ void panel_say(const char *text) {
 void panel_show_qso(const char *text) {
 	static uint8_t line[LINK_SAY_MAX];
 	size_t count = strlen(text);
+
+	if (also_qso != NULL)
+		also_qso(text);
 
 	if (count > LINK_SAY_MAX)
 		count = LINK_SAY_MAX;

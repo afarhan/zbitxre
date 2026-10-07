@@ -971,7 +971,15 @@ int main(void) {
 	expect(!has(heard, "SPECTRUM") && !server_wants_spectrum(),
 		"and not after it says spectrum off");
 
-say(one, "time\n");
+server_say("that message cannot be answered");
+	server_show_qso("VU2XZ > -19 > R-14 > RR73");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(has(heard, "SAY that message cannot be answered\n")
+			&& has(other_heard, "QSO VU2XZ > -19 > R-14 > RR73\n"),
+		"what the radio says, and how a contact stands, go to every client");
+
+	say(one, "time\n");
 	hear(one, heard);
 	hear(other, other_heard);
 	expect(has(heard, "TIME ") && !has(other_heard, "TIME"),

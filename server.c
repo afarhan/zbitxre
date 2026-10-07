@@ -87,6 +87,17 @@
 // What is done with it is not the server's business; whoever opened the
 // server says, with server_on_answer().
 //
+// What the radio has to say, that the front panel shows on its status
+// line, goes to every client as well, as it is said:
+//
+//     SAY that message cannot be answered
+//     QSO VU2XZ > -19 > R-14 > RR73
+//
+// SAY is a remark: why something asked for was not done, how a thing
+// went. QSO is how the FT8 contact under way stands, and comes empty when
+// it ends. Neither is a control and neither is kept: a client that
+// connects later is not told what was said before.
+//
 // A client that sends time is answered with the radio's time, in UTC, as
 // seconds since 1970, or 0 while the radio does not know the time:
 //
@@ -398,6 +409,27 @@ void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
 			continue;
 		client_queue_line(&clients[i], line);
 	}
+}
+
+static void tell_everyone(const char *word, const char *text) {
+	char line[LINE_MAX_LENGTH + LABEL_ROOM];
+	struct client *c;
+
+	if (listener == NOBODY)
+		return;
+	snprintf(line, sizeof(line), "%s %.*s\n", word, LINE_MAX_LENGTH - 1, text);
+	for (c = clients; c < clients + SERVER_CLIENTS_MAX; c++) {
+		if (c->fd != NOBODY && c->out_count + (int)sizeof(line) <= OUT_MAX)
+			client_queue_line(c, line);
+	}
+}
+
+void server_say(const char *text) {
+	tell_everyone("SAY", text);
+}
+
+void server_show_qso(const char *text) {
+	tell_everyone("QSO", text);
 }
 
 void server_on_answer(void (*answer)(const char *line)) {

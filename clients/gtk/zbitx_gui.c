@@ -24,8 +24,11 @@
 //   y 48    a button for each band, 10M to 80M, and MODE
 //   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
 //           beside it, 288 wide: the status line, 16 high, for what the
-//           window and the radio have to say, with the power and the SWR
-//           at its right end while there is power; under it the graph, 64
+//           window and the radio have to say: the radio's remarks, such
+//           as why a message could not be answered, and while an FT8
+//           contact is under way how it stands, white on red, as on the
+//           panel; with the power and the SWR at its right end while
+//           there is power; under it the graph, 64
 //           high, and the waterfall, 96. The span is in the graph's top
 //           left corner
 //           on the right, 144 wide: the list, down to the foot of the
@@ -114,6 +117,10 @@
 // What the panel has and the window has not yet: the logbook and the
 // keyboard behind LOG and TERM, which are shown dim and do nothing; and
 // what CW reads off the air. The window has no MENU button.
+//
+// A control has its name over its value, in cyan, in the middle of its
+// tile with a little room above it: the author found the names too small
+// and too faint in grey at the tiles' corners.
 //
 // A control is selected by a click on it, or a touch, and has a bright edge
 // while it is. The mouse wheel over a control moves its value a step; over
@@ -256,7 +263,9 @@
 #define FOOTER_TILES 6
 #define BANDS 9
 #define ROW_MARGIN_SIDE 6
-#define TITLE_SIZE 9
+#define TITLE_SIZE 11
+#define CORNER_SIZE 9
+#define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
 #define FREQUENCY_SIZE 19
 #define STATUS_SIZE 10
@@ -1294,6 +1303,16 @@ static void handle_line(const char *name, char *value) {
 		take_time_line(value);
 		return;
 	}
+	if (!strcmp(name, "SAY")) {
+		set_class(status_label, "qso", 0);
+		show_status(value);
+		return;
+	}
+	if (!strcmp(name, "QSO")) {
+		set_class(status_label, "qso", value[0] != 0);
+		show_status(value);
+		return;
+	}
 	if (!strcmp(name, "CLOCK") && value_of("CLOCK")[0] != 0
 			&& strcmp(value_of("CLOCK"), value))
 		take_start_of_minute();
@@ -1937,7 +1956,7 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 	(void)unused;
 	draw_graph(cr, width, graph_height);
 	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
-	cairo_set_font_size(cr, px(TITLE_SIZE));
+	cairo_set_font_size(cr, px(CORNER_SIZE));
 	cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
 	cairo_show_text(cr, value_of("SPAN"));
 	cairo_translate(cr, 0, graph_height);
@@ -2019,8 +2038,7 @@ static GtkWidget *control_tile_new(const char *name, GtkWidget **value) {
 	GtkWidget *title = gtk_label_new(name);
 
 	*value = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(title), 0);
-	gtk_widget_set_margin_start(title, px(SPAN_LEFT));
+	gtk_widget_set_margin_top(title, px(TITLE_ROOM_ABOVE));
 	add_label_class(title, "tile-title");
 	add_label_class(*value, "tile-value");
 	gtk_box_pack_start(GTK_BOX(inside), title, FALSE, FALSE, 0);
@@ -2147,7 +2165,9 @@ static void load_style(void) {
 		".tile.in-use { background-color: #604800; }"
 		".tile.on { background-color: #B02020; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
-		".tile-title { font-size: %dpx; color: #90A0B0; }"
+		".tile-title { font-size: %dpx; color: #00FFFF; }"
+		".corner { font-size: %dpx; color: #90A0B0; }"
+		".status.qso { color: #FFFFFF; background-color: #B02020; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"
 		".frequency { font-family: monospace; font-size: %dpx; font-weight: bold;"
@@ -2166,7 +2186,8 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE), px(STATUS_SIZE),
+		px(1), px(TITLE_SIZE), px(CORNER_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE),
+		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
 }
@@ -2222,8 +2243,8 @@ static void create_frequency(void) {
 	frequency_label = gtk_label_new("");
 	gtk_label_set_xalign(GTK_LABEL(vfo_label), 0);
 	gtk_label_set_xalign(GTK_LABEL(clock_label), 1);
-	add_label_class(vfo_label, "tile-title");
-	add_label_class(clock_label, "tile-title");
+	add_label_class(vfo_label, "corner");
+	add_label_class(clock_label, "corner");
 	add_label_class(frequency_label, "frequency");
 	gtk_widget_set_margin_start(over, px(SPAN_LEFT));
 	gtk_widget_set_margin_end(over, px(SPAN_LEFT));
