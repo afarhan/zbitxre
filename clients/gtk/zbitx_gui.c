@@ -58,8 +58,13 @@
 //                        transmits, so that the large line is always
 //                        where the radio is working
 //
-// A VFO not yet used is shown where the other is, which is where it would
-// open. In the box's top right corner is the time in UTC, to the
+// Each VFO has a dial of its own, and the one in waiting stays where it
+// was left while the other is tuned. The radio keeps the two dials for
+// its clients, as its controls VFO_A and VFO_B, which the front panel
+// uses too: the window takes the waiting VFO's from there, and tells the
+// radio both when the VFOs are changed over. A VFO that has never been
+// used is put, once, where the radio was when the window first heard
+// from it. In the box's top right corner is the time in UTC, to the
 // second, with a Z after it, as on the panel, "01:15:22Z", and "--:--:--Z"
 // while the radio does not know the time. It is the radio's time and not
 // this computer's: the window asks the radio the time once, on connecting,
@@ -713,6 +718,14 @@ static int choice_at(const char *choices, int n, char *choice, int room) {
 	return 0;
 }
 
+static const char *const vfo_dial_names[VFOS] = { "VFO_A", "VFO_B" };
+
+static int vfo_in_waiting(void) {
+	if (vfo_in_use == VFO_B)
+		return VFO_A;
+	return VFO_B;
+}
+
 // one line of the frequency's box: what the frequency is, and the frequency
 static void format_dial_line(char *text, int room, const char *what, int hz) {
 	char figures[TEXT_MAX / 2];
@@ -727,15 +740,13 @@ static void show_frequency(void) {
 	int receive_hz = receiver_hz();
 	int transmit_hz = transmitter_hz();
 	int is_transmitting = is_on("TX");
-	int other = VFO_B;
+	int other = vfo_in_waiting();
 	const char *other_name = "B";
 	char small_line[TEXT_MAX];
 	char large_line[TEXT_MAX];
 
-	if (vfo_in_use == VFO_B) {
-		other = VFO_A;
+	if (other == VFO_A)
 		other_name = "A";
-	}
 	if (receive_hz != transmit_hz && is_transmitting) {
 		format_dial_line(small_line, sizeof(small_line), "RX", receive_hz);
 		format_dial_line(large_line, sizeof(large_line), "TX", transmit_hz);
@@ -949,8 +960,12 @@ static void tune(int steps) {
 	show_values();
 }
 
-// a VFO chosen: the dial of the one left is kept, and the other's taken up
+// a VFO chosen: the dial of the one left is kept, and the other's taken
+// up; the radio is told both dials, to keep
 static void choose_vfo(int vfo) {
+	char text[CONTROL_VALUE_MAX];
+	int i;
+
 	if (vfo == vfo_in_use)
 		return;
 	vfo_dial_hz[vfo_in_use] = dial_hz;
@@ -958,6 +973,10 @@ static void choose_vfo(int vfo) {
 		vfo_dial_hz[vfo] = dial_hz;
 	vfo_in_use = vfo;
 	dial_hz = vfo_dial_hz[vfo];
+	for (i = 0; i < VFOS; i++) {
+		snprintf(text, sizeof(text), "%d", vfo_dial_hz[i]);
+		send_line(vfo_dial_names[i], text);
+	}
 }
 
 // one of the window's own controls has changed
@@ -1329,6 +1348,15 @@ static void take_radio_frequency(int hz) {
 	dial_hz = hz;
 	if (is_on("RIT"))
 		dial_hz -= atoi(value_of("RIT_DELTA"));
+	// a VFO never used is put here once, and does not follow after
+	if (vfo_dial_hz[vfo_in_waiting()] == 0)
+		vfo_dial_hz[vfo_in_waiting()] = dial_hz;
+}
+
+// the dial the radio has kept for the VFO in waiting is taken up
+static void take_kept_dial(const char *name, int hz) {
+	if (hz > 0 && !strcmp(name, vfo_dial_names[vfo_in_waiting()]))
+		vfo_dial_hz[vfo_in_waiting()] = hz;
 }
 
 static void handle_line(const char *name, char *value) {
@@ -1376,6 +1404,7 @@ static void handle_line(const char *name, char *value) {
 	snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
 	if (!strcmp(name, "FREQ"))
 		take_radio_frequency(atoi(value));
+	take_kept_dial(name, atoi(value));
 	show_values();
 }
 
