@@ -26,6 +26,14 @@
 // behind than what is kept is given the oldest that is still here, and so
 // misses those between: a list on a screen is no worse for it.
 //
+// message_line() writes a message as the line of text it is sent to a
+// screen as, the front panel's or a client's, its fields with a | between
+// them: the time it was sent at, in UTC, as hours, minutes and seconds; how
+// strong it was, or TX for one the radio sent itself; its pitch; its text.
+//
+//     043015|-12|1797|CQ VU2ESE MK97
+//     043030|TX|1500|VU2ESE G0XYZ R-07
+//
 // A modem adds from a thread of its own while another thread reads, so a
 // lock is held for each call, for as long as it takes to copy one message.
 
@@ -80,4 +88,15 @@ int message_next(unsigned long *last_read, struct message *m) {
 	}
 	pthread_mutex_unlock(&lock);
 	return is_there;
+}
+
+int message_line(const struct message *m, char *line, int room) {
+	struct tm utc;
+
+	gmtime_r(&m->at, &utc);
+	if (m->is_sent)
+		return snprintf(line, room, "%02d%02d%02d|TX|%d|%s", utc.tm_hour, utc.tm_min,
+			utc.tm_sec, m->pitch_hz, m->text);
+	return snprintf(line, room, "%02d%02d%02d|%d|%d|%s", utc.tm_hour, utc.tm_min,
+		utc.tm_sec, m->snr_db, m->pitch_hz, m->text);
 }

@@ -22,3 +22,5 @@ void server_handle_events(const struct pollfd *polls, int count);
 void server_broadcast(const struct control *c, int origin);
 int server_wants_spectrum(void);
 void server_send_spectrum(int span_hz, const uint8_t *points, int count);
+void server_send_messages(void);
+void server_on_answer(void (*answer)(const char *line));

@@ -11,46 +11,118 @@
 //
 // THE WINDOW
 //
-// It fits an 800 by 600 screen with the desktop's taskbar still showing,
-// maximised or not. It is in two: a main area on the left, and a list of
-// the controls down the right side, where the radio's knob is.
+// It is laid out as the zbitx's front panel is, place for place, so that
+// whoever knows one knows the other; front_panel/main.cpp has the panel's
+// plan, and the places here are its places, in its pixels: the panel is
+// 480 by 320, and every widget is 48 high. The window opens maximised, to
+// fill the radio's screen, and the plan is stretched to whatever size the
+// window is, across and down each by its own measure, the letters sized to
+// go with it; restored from maximised it is 800 by 480, the size zbitxv2's
+// window opened at, and at any size everything keeps its place in the plan.
 //
-// The main area has the frequency in large figures, and under it the
-// frequency's own controls, STEP, RIT, SPLIT and VFO; below them are the
-// spectrum and the waterfall. The frequency, and each of its controls, are
-// 50 pixels high. The spectrum is drawn with the passband shaded, the part
-// of it the receiver hears, and a line at the frequency that is tuned: in
-// CW the pitch, which is carried on down the waterfall, dotted, so that the
-// station tuned in, right under it, is not hidden.
+//   y 0     STEP | the frequency, 144 wide | RIT, SPLIT, DRIVE, AGC, IF, VOL
+//   y 48    a button for each band, 10M to 80M, and MODE
+//   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
+//           beside it, 288 wide: the status line, 16 high, for what the
+//           window and the radio have to say, with the power and the SWR
+//           at its right end while there is power; under it the graph, 64
+//           high, and the waterfall, 96. The span is in the graph's top
+//           left corner
+//           on the right, 144 wide: the list, down to the foot of the
+//           window
+//   y 272   six places under the waterfall for the mode's own
 //
-// The list has a row to each control, its name and its value, and scrolls
-// when there are more than it can show. It is made from the radio's schema,
-// so a control that a modem adds comes into the list without this program
-// knowing of it beforehand. The rows are in this order:
+// The top row is the frequency and the radio's core controls. Whatever
+// else the radio has, that belongs to the radio as a whole or to the mode
+// in use, is in the list, a row to each, which scrolls. The list is made
+// from the radio's schema, so a control that a modem adds comes into it
+// without this program knowing of it beforehand. BW is BW_VOICE in the
+// voice modes and BW_CW in CW: the radio keeps one for each, as zbitxv2
+// did. A modem's own controls are shown only in its modes: a control in
+// the group CW in CW and CWR, one in VOICE in USB, LSB and AM.
 //
-//   VOL, BAND, IF, DRIVE    the radio's core controls, and any other of the
-//                           radio's own
-//   MODE
-//     the mode's own        under the mode, set in: BW, and then PITCH and
-//                           WPM in CW, and so on
+// The frequency's box has the VFO in use in its top left corner, and
+// beside it where the transmitter is to be when that is elsewhere, as with
+// RIT or SPLIT on; in its top right corner is the time in UTC, to the
+// second, with a Z after it, as on the panel, "01:15:22Z", and "--:--:--Z"
+// while the radio does not know the time. It is the radio's time and not
+// this computer's: the window asks the radio the time once, on connecting,
+// and counts the seconds on from the answer by its own clock; the radio's
+// CLOCK changes as each minute begins, and the count is set right by that.
+// RIT and SPLIT are red while they are on, as on the
+// panel, where the author's reason is given: they are switched on and
+// then forgotten.
 //
-// The rows, and the frequency's readout, are each 50 pixels high.
+// A band's button goes to that band. The button of the band in use goes
+// to the next place in that band's stack, and from the last to the first.
+// A click on the graph or the waterfall goes to the next span.
 //
-// VOL is the radio's AUDIO. BW is BW_VOICE in the voice modes and BW_CW in
-// CW: the radio keeps one for each, as zbitxv2 did. For voice the
-// passband's low edge stays at 300 Hz and BW moves the high edge; for CW
-// the passband is centred on PITCH. A modem's own controls are shown only
-// in its modes: a control in the group CW in CW and CWR, one in VOICE in
-// USB, LSB and AM.
+// On the bottom row, in USB, LSB and AM there is MIC, and two buttons, TX
+// and RX: TX starts transmitting and RX stops it, two buttons apart as the
+// author wanted on the panel. TX is red while the radio transmits and RX
+// has the bright edge while it receives. 2TONE has the same two. In CW the
+// places are the first six of the radio's macros, each sent at a click. In
+// FT8 the row is empty, and the column's third and fourth buttons are CQ
+// and HALT.
 //
-// Every control is worked as the radio's knob would work it. The mouse
-// wheel over a row moves its value a step, a number by its step and a
-// choice to the next one; the wheel over the frequency, the spectrum or
-// the waterfall tunes. On the keyboard, Tab and Shift-Tab move the focus
-// along the frequency's controls and down the list, from the frequency and
-// back to it, and the up and down keys move whatever has the focus. A
-// click on a row gives it the focus; Escape, or a click on the frequency,
-// gives it back to the frequency.
+// In FT8 the graph and the waterfall are not shown. In their place, and
+// down to the foot of the window, is the list of the messages the radio
+// has copied, coloured as the panel's is: the time each was sent at, how
+// strong it was, its pitch and its text, the newest at the bottom and kept
+// in view. The rows of one slot are told from those of the next by their
+// ground, a little lighter for every other slot; a station calling CQ is
+// in green; and what the radio itself sent is in red, with TX where the
+// strength would be. A tap on a message marks it, and the list then stays
+// where it is as more come, so that the marked one does not run off under
+// the finger, and the status line says how it is answered: by a tap on it
+// again, or by a press of the knob that works the selected control, as a
+// click of the panel's knob does. Its line then goes back to the radio,
+// which begins the contact. A mark not touched for thirty seconds is taken
+// off, as on the panel. BW is not shown in FT8: its
+// passband is the modem's own, 50 to 4000 Hz, and is not the voice modes'
+// bandwidth.
+//
+// The two lists scroll, by the wheel, their bars, or a finger drawn up or
+// down them. A row's tap is a press and a release in one place: a finger
+// that moves is scrolling, and selects nothing.
+//
+// TX, the radio's own switch between receive and transmit, is on the
+// bottom row as the two buttons in the modes that have them, and in the
+// other modes it is a row of the list, so that there is always a way to
+// put the radio on the air and take it off.
+//
+// SET opens the settings, a screen of their own in the window, as on the
+// panel: a row to each of the radio's controls in its group STATION, the
+// callsign and the grid, and how FT8 is worked. A tap on a choice moves it
+// to its next. A tap on a text opens the screen it is typed on. The arrow
+// at the top left of each screen goes back. Without a callsign the radio
+// cannot call CQ in FT8 or answer anyone.
+//
+// TYPING
+//
+// Wherever a text is to be typed, the window's own keyboard comes up, on a
+// screen with the text in a box in its upper part and the keyboard in its
+// lower part, as the author's rule for the panel has it, so that the
+// keyboard never covers what is typed. The radio has no other keyboard to
+// count on. It has only the keys a callsign, a grid or a short message
+// needs: the figures, the capital letters, the stroke, the stop, the
+// question mark and the dash, a space, and one to rub out. SAVE gives the
+// text to the radio and CANCEL drops it. A keyboard plugged into the
+// radio works too: what it types goes into the box, in capitals, Enter
+// saves and Escape cancels.
+//
+// What the panel has and the window has not yet: the logbook and the
+// keyboard behind LOG and TERM, which are shown dim and do nothing; and
+// what CW reads off the air. The window has no MENU button.
+//
+// A control is selected by a click on it, or a touch, and has a bright edge
+// while it is. The mouse wheel over a control moves its value a step; over
+// the frequency, the graph or the waterfall it tunes. A click on a choice
+// that is already selected moves it to its next choice, and round from the
+// last to the first, so RIT is switched with two clicks; a click on the
+// frequency when it is selected goes to the other VFO. On the keyboard, Tab
+// and Shift-Tab move the selection, the up and down keys move what is
+// selected, and Escape goes back to the frequency.
 //
 // TUNING
 //
@@ -82,6 +154,44 @@
 // When the radio tells a new FREQ, from a band chosen or the front panel,
 // that is where the receiver listens, and the dial is worked back from it.
 //
+// THE KNOBS
+//
+// The sbitx has two knobs on its front, wired to the Pi it runs this window
+// on, and the window reads them, as zbitxv2's window did. One tunes and
+// does nothing else: a notch is a turn of the wheel on the frequency,
+// whatever is selected. The other changes the value of the control that is
+// selected, the row that has the focus, a notch for a step; with no row
+// selected it works VOL. A press of its button answers the FT8 message
+// that is marked, if one is; with none marked it selects the next control
+// down the list, so the radio can be worked with no touch of the screen.
+// The tuning knob's button does nothing yet.
+//
+// The knobs are the window's alone. The radio program, which runs with no
+// screen, knows nothing of them and has none of this in it. All the window
+// takes from the radio's side is the radio's name, to know whether it is on
+// one that has knobs: it reads data/hw_settings.ini in the folder it is
+// started in, the file the radio program reads. On a desktop there is no
+// such file and no knobs are looked for. A zbitx has none on the Pi: its
+// one knob is on the front panel.
+//
+// The sbitx's, from sbitx_gtk.c, whose numbers for the pins are wiringPi's;
+// here they are the Pi's own. A knob's two contacts are in the order
+// sbitx_gtk.c gave them to its enc_init(), which is what makes clockwise
+// count upward.
+//
+//     pin  header  name in sbitx_gtk.c
+//      17    11    ENC2_A            the tuning knob
+//      27    13    ENC2_B
+//      22    15    ENC2_SW           its button
+//      10    19    ENC1_B            the knob for the selected control
+//       9    21    ENC1_A
+//      11    23    ENC1_SW           its button
+//
+// A knob has to be looked at more often than a window is woken, or notches
+// are lost when it is spun, so a thread of its own looks at both, twice a
+// millisecond, and counts; the window takes the counts up to act on them
+// every few milliseconds. knob.c says how a knob is read.
+//
 // THE RADIO
 //
 // It speaks the radio's control protocol, which server.c on the radio
@@ -101,9 +211,16 @@
 // It is built on the desktop with "make gui", which needs GTK 3.
 
 #include <gtk/gtk.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+#include "board.h"
+#include "gpio.h"
+#include "knob.h"
 
 #define DEFAULT_RADIO "sbitx.local"
 #define DEFAULT_PORT 8081
@@ -114,13 +231,59 @@
 #define TEXT_MAX 64
 #define GAP 6
 
-#define WINDOW_WIDTH 780
-#define WINDOW_HEIGHT 520
-#define SPECTRUM_MIN_HEIGHT 240
-#define SIDEBAR_WIDTH 210
-#define ROW_HEIGHT 50
-#define ROW_MARGIN_SIDE 12
-#define UNDER_MODE_MARGIN 28
+// the panel's plan, in the panel's pixels
+#define PANEL_WIDTH 480
+#define PANEL_HEIGHT 320
+#define ROW_HEIGHT 48
+#define TILE_WIDTH 48
+#define FREQ_LEFT 48
+#define FREQ_WIDTH 144
+#define BANDS_TOP 48
+#define MIDDLE_TOP 96
+#define COLUMN_BUTTONS 4
+#define FT8_CQ_ROW 2
+#define FT8_HALT_ROW 3
+#define GRAPH_LEFT 48
+#define GRAPH_WIDTH 288
+#define STATUS_HEIGHT 16
+#define GRAPH_HEIGHT 64
+#define FALL_HEIGHT 96
+#define METER_WIDTH 112
+#define LIST_LEFT 336
+#define LIST_WIDTH 144
+#define LIST_HEIGHT (PANEL_HEIGHT - MIDDLE_TOP)
+#define FOOTER_TOP 272
+#define FOOTER_TILES 6
+#define BANDS 9
+#define ROW_MARGIN_SIDE 6
+#define TITLE_SIZE 9
+#define VALUE_SIZE 13
+#define FREQUENCY_SIZE 19
+#define STATUS_SIZE 10
+#define SPAN_LEFT 3
+#define SPAN_BASELINE 11
+
+// the size zbitxv2's window opened at
+#define WINDOW_WIDTH 800
+#define WINDOW_HEIGHT 480
+#define PLACED_MAX 128
+#define CSS_MAX 2048
+#define MESSAGES_SHOWN_MAX 200
+#define MESSAGE_FIELDS 4
+#define MESSAGE_SIZE 10
+#define MARK_KEPT_FOR_S 30
+#define SLOT_SECONDS 15
+#define SECONDS_A_MINUTE 60
+#define TIME_DIGITS 6
+#define TIME_MINUTE_AT 2
+#define TIME_SECOND_AT 4
+#define DIGITS_OF_TWO 100
+#define CLOCK_SHOWN_EVERY_MS 250
+#define SECONDS_AN_HOUR 3600
+#define SECONDS_A_DAY 86400
+#define HALF_A_MINUTE 30
+#define MICROS_A_SECOND 1000000
+#define TENTHS 10
 
 #define KNOWN_MAX 64
 #define CONTROL_NAME_MAX 16
@@ -142,6 +305,12 @@
 #define FT8_HIGH_HZ 4000
 #define PITCH_DASH 3.0
 
+#define HW_SETTINGS_FILE "data/hw_settings.ini"
+#define KNOBS_LOOKED_AT_EVERY_US 500
+#define KNOBS_TAKEN_UP_EVERY_MS 10
+#define BUTTON_DOWN_LOOKS 40
+#define VOLUME_CONTROL "AUDIO"
+
 #define LOWEST_HZ 500000
 #define HIGHEST_HZ 30000000
 #define RIT_MAX_HZ 25000
@@ -158,6 +327,8 @@ struct known {
 	char value[CONTROL_VALUE_MAX];
 	int is_own;
 	int is_choice;
+	int is_text;
+	int is_listed;
 	int min;
 	int max;
 	int step;
@@ -166,12 +337,29 @@ struct known {
 
 // a row of the list: the control it works, or BW, which works BW_VOICE or
 // BW_CW with the mode
-// where a row is put: in the list, set in under the mode, or under the
-// frequency with its own controls
+// where a row is put: at a place of its own in the top two rows, at one on
+// the bottom row, or in the list
 enum place {
+	ON_TOP,
+	IN_FOOTER,
 	IN_LIST,
-	UNDER_MODE,
-	UNDER_FREQUENCY,
+};
+
+// a control that has a place of its own, as the panel has it
+struct top_place {
+	const char *control;
+	int x;
+	int y;
+};
+
+// what a mode has on the bottom row besides its controls: a button that
+// puts a control at a choice
+struct footer_button {
+	const char *group;
+	int slot;
+	const char *label;
+	const char *control;
+	const char *choice;
 };
 
 struct row {
@@ -181,8 +369,53 @@ struct row {
 	GtkWidget *value_label;
 };
 
-static const char *core_rows[] = { "AUDIO", "BAND", "IF", "DRIVE", NULL };
-static const char *tuning_rows[] = { "STEP", "RIT", "SPLIT", "VFO", NULL };
+static const struct top_place top_places[] = {
+	{"STEP", 0, 0},
+	{"RIT", 192, 0},
+	{"SPLIT", 240, 0},
+	{"DRIVE", 288, 0},
+	{"AGC", 336, 0},
+	{"IF", 384, 0},
+	{"AUDIO", 432, 0},
+	{"MODE", 432, BANDS_TOP},
+	{NULL, 0, 0},
+};
+
+// the controls on the bottom row, each in the mode of its group
+static const struct top_place footer_places[] = {
+	{"MIC", 0, FOOTER_TOP},
+	{NULL, 0, 0},
+};
+
+static const struct footer_button footer_buttons[] = {
+	{"VOICE", 1, "TX", "TX", "ON"},
+	{"VOICE", 2, "RX", "TX", "OFF"},
+	{"2TONE", 0, "TX", "TX", "ON"},
+	{"2TONE", 1, "RX", "TX", "OFF"},
+	{NULL, 0, NULL, NULL, NULL},
+};
+
+static const char *const band_names[BANDS] = {
+	"10M", "12M", "15M", "17M", "20M", "30M", "40M", "60M", "80M",
+};
+
+static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", "" };
+#define MACRO_GROUP "CW"
+#define MACRO_CONTROL "MACRO"
+#define MESSAGES_GROUP "FT8"
+#define FT8_DO_CONTROL "FT8_DO"
+#define SET_ROW 1
+#define STATION_GROUP "STATION"
+#define PAGE_MAIN "main"
+#define PAGE_SETTINGS "settings"
+#define PAGE_TEXT "text"
+#define KEY_ROWS 4
+#define KEYS_A_ROW 10
+#define CANCEL_KEYS 3
+#define SPACE_KEYS 3
+#define RUB_OUT_KEYS 2
+#define SAVE_KEYS 2
+#define TYPED_SIZE 16
 
 static const char *radio_name = DEFAULT_RADIO;
 static int radio_port = DEFAULT_PORT;
@@ -192,13 +425,54 @@ static GSocketConnection *connection;
 static GDataInputStream *reader;
 static GOutputStream *writer;
 
+// what has been put on the screen, and where in the panel's plan, so that
+// it can be put again when the window's size changes
+struct placed {
+	GtkWidget *widget;
+	int x;
+	int y;
+	int width;
+	int height;
+};
+
+static struct placed placed[PLACED_MAX];
+static double scale_across = (double)WINDOW_WIDTH / PANEL_WIDTH;
+static double scale_down = (double)WINDOW_HEIGHT / PANEL_HEIGHT;
+static double scale = (double)WINDOW_HEIGHT / PANEL_HEIGHT;
+static int laid_out_width;
+static int laid_out_height;
+static int is_lay_out_due;
+static GtkCssProvider *css;
+static GtkWidget *screen;
 static GtkWidget *frequency_box;
 static GtkWidget *frequency_label;
-static GtkWidget *tuning_bar;
+static GtkWidget *vfo_label;
+static GtkWidget *clock_label;
 static GtkWidget *spectrum_area;
 static GtkWidget *status_label;
+static GtkWidget *meter_label;
 static GtkWidget *list;
 static GtkWidget *list_scroller;
+static GtkWidget *messages;
+static GtkWidget *messages_scroller;
+static GtkWidget *marked_message;
+static GtkWidget *pages;
+static GtkWidget *settings_list;
+static GtkWidget *text_title;
+static GtkWidget *typed_label;
+static struct known *typed_for;
+// how far the radio's time is ahead of this computer's steady clock, in
+// seconds, once the radio has said the time
+static gint64 radio_ahead_s;
+static int is_time_known;
+static char typed[CONTROL_VALUE_MAX];
+static guint mark_timer;
+static int messages_shown;
+static GtkWidget *band_box[BANDS];
+static GtkWidget *column_box[COLUMN_BUTTONS];
+static GtkWidget *column_label[COLUMN_BUTTONS];
+static GtkWidget *footer_box[FOOTER_TILES];
+static GtkWidget *footer_label[FOOTER_TILES];
 
 static struct known known[KNOWN_MAX];
 static int known_count;
@@ -215,8 +489,40 @@ static int point_count;
 static uint8_t points[POINTS_MAX];
 static cairo_surface_t *fall;
 
+// a radio's two knobs: each one's two contacts and its button
+struct knob_pins {
+	int a_pin;
+	int b_pin;
+	int button_pin;
+};
+
+struct radio_knobs {
+	const char *radio;
+	struct knob_pins tuning;
+	struct knob_pins control;
+};
+
+static const struct radio_knobs radios_with_knobs[] = {
+	{
+		.radio = "sbitxv3",
+		.tuning = { 17, 27, 22 },
+		.control = { 10, 9, 11 },
+	},
+	{ .radio = NULL },
+};
+
+static struct knob tuning_knob;
+static struct knob control_knob;
+static int control_button_pin;
+static atomic_int tuning_notches;
+static atomic_int control_notches;
+static atomic_int control_presses;
+
 static void try_to_connect(void);
 static void make_list(void);
+static void add_label_class(GtkWidget *label, const char *name);
+static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data);
+static GtkWidget *list_row_new(const char *name, GtkWidget **value);
 
 static void show_status(const char *text) {
 	gtk_label_set_text(GTK_LABEL(status_label), text);
@@ -276,13 +582,28 @@ static const char *mode_group(void) {
 	return mode;
 }
 
+// whether the mode in use has a button on the bottom row that works the
+// control
+static int has_footer_button(const char *control) {
+	const struct footer_button *b;
+
+	for (b = footer_buttons; b->group != NULL; b++) {
+		if (!strcmp(b->control, control) && !strcmp(b->group, mode_group()))
+			return 1;
+	}
+	return 0;
+}
+
 static int is_row_shown(const struct row *r) {
 	struct known *k = find_known(row_control(r));
 
 	if (k == NULL)
 		return 0;
-	if (!strcmp(r->control, "BW") || !strcmp(k->group, "RADIO")
-			|| r->place == UNDER_FREQUENCY)
+	if (r->place == IN_LIST && has_footer_button(r->control))
+		return 0;
+	if (!strcmp(r->control, "BW"))
+		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
+	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
 		return 1;
 	return !strcmp(k->group, mode_group());
 }
@@ -317,36 +638,179 @@ static void format_frequency(char *text, int room, int hz) {
 		(hz % HZ_PER_MHZ) / HZ_PER_KHZ, hz % HZ_PER_KHZ);
 }
 
-// the frequency in large figures, where the receiver listens, and beside
-// it, smaller, where the transmitter is to be, when that is elsewhere
+// the panel's pixels in the window's: across, down, and for what has no
+// direction, the letters and the margins, by the smaller of the two
+static int px(double panel_pixels) {
+	return (int)(panel_pixels * scale + 0.5);
+}
+
+static int px_across(double panel_pixels) {
+	return (int)(panel_pixels * scale_across + 0.5);
+}
+
+static int px_down(double panel_pixels) {
+	return (int)(panel_pixels * scale_down + 0.5);
+}
+
+static void set_class(GtkWidget *widget, const char *name, int is_wanted) {
+	GtkStyleContext *style = gtk_widget_get_style_context(widget);
+
+	if (is_wanted)
+		gtk_style_context_add_class(style, name);
+	else
+		gtk_style_context_remove_class(style, name);
+}
+
+// the nth of a control's choices, from 0, "USB/LSB/CW"; 0 if there are not
+// so many
+static int choice_at(const char *choices, int n, char *choice, int room) {
+	char list[CHOICES_MAX];
+	char *name;
+
+	snprintf(list, sizeof(list), "%s", choices);
+	for (name = strtok(list, "/"); name != NULL; name = strtok(NULL, "/")) {
+		if (n == 0) {
+			snprintf(choice, room, "%s", name);
+			return 1;
+		}
+		n--;
+	}
+	return 0;
+}
+
+// the frequency where the receiver listens, in large figures; over it the
+// VFO in use and, when the transmitter is to be elsewhere, where; and the
+// time in UTC
 static void show_frequency(void) {
 	int receive_hz = receiver_hz();
 	int transmit_hz = transmitter_hz();
-	char markup[TEXT_MAX * 4];
 	char receive[TEXT_MAX];
 	char transmit[TEXT_MAX];
-	const char *colour = "#d0d0d0";
+	char over[TEXT_MAX * 2];
 
-	if (focus == ON_FREQUENCY)
-		colour = "#ffd040";
 	format_frequency(receive, sizeof(receive), receive_hz);
-	if (transmit_hz == receive_hz) {
-		snprintf(markup, sizeof(markup),
-			"<span font_desc='Monospace Bold 28' foreground='%s'>%s</span>",
-			colour, receive);
-	}
-	else {
+	gtk_label_set_text(GTK_LABEL(frequency_label), receive);
+	snprintf(over, sizeof(over), "%s:", value_of("VFO"));
+	if (transmit_hz != receive_hz) {
 		format_frequency(transmit, sizeof(transmit), transmit_hz);
-		snprintf(markup, sizeof(markup),
-			"<span font_desc='Monospace Bold 28' foreground='%s'>%s</span>"
-			"<span font_desc='Monospace 11' foreground='#8090a0'>  TX %s</span>",
-			colour, receive, transmit);
+		snprintf(over, sizeof(over), "%s: TX %s", value_of("VFO"), transmit);
 	}
-	gtk_label_set_markup(GTK_LABEL(frequency_label), markup);
+	gtk_label_set_text(GTK_LABEL(vfo_label), over);
+	set_class(frequency_box, "focused", focus == ON_FREQUENCY);
+}
+
+static gint64 steady_s(void) {
+	return g_get_monotonic_time() / MICROS_A_SECOND;
+}
+
+// the time in UTC, to the second, in the frequency's box
+static gboolean show_clock(gpointer unused) {
+	gint64 now = steady_s() + radio_ahead_s;
+	int second_of_day = (int)(now % SECONDS_A_DAY);
+	char time[TEXT_MAX];
+
+	(void)unused;
+	snprintf(time, sizeof(time), "--:--:--Z");
+	if (is_time_known)
+		snprintf(time, sizeof(time), "%02d:%02d:%02dZ", second_of_day / SECONDS_AN_HOUR,
+			(second_of_day % SECONDS_AN_HOUR) / SECONDS_A_MINUTE,
+			second_of_day % SECONDS_A_MINUTE);
+	gtk_label_set_text(GTK_LABEL(clock_label), time);
+	return G_SOURCE_CONTINUE;
+}
+
+// TIME 1791397105: the radio's time, or 0 if it does not know it
+static void take_time_line(const char *value) {
+	gint64 radio_s = g_ascii_strtoll(value, NULL, 10);
+
+	is_time_known = radio_s > 0;
+	radio_ahead_s = radio_s - steady_s();
+}
+
+// the radio's CLOCK has changed, which it does as a minute begins: the
+// count of seconds is moved to the nearest minute
+static void take_start_of_minute(void) {
+	gint64 now = steady_s() + radio_ahead_s;
+	gint64 minute = ((now + HALF_A_MINUTE) / SECONDS_A_MINUTE) * SECONDS_A_MINUTE;
+
+	if (is_time_known)
+		radio_ahead_s += minute - now;
+}
+
+// what is at a place on the bottom row in the mode in use: the button's
+// label and what a click on it sends, or nothing
+static int footer_button_at(int slot, char *label, char *control, char *choice, int room) {
+	const struct footer_button *b;
+	struct known *macros = find_known(MACRO_CONTROL);
+	const char *group = mode_group();
+
+	for (b = footer_buttons; b->group != NULL; b++) {
+		if (b->slot == slot && !strcmp(b->group, group)) {
+			snprintf(label, room, "%s", b->label);
+			snprintf(control, room, "%s", b->control);
+			snprintf(choice, room, "%s", b->choice);
+			return 1;
+		}
+	}
+	if (strcmp(group, MACRO_GROUP) || macros == NULL)
+		return 0;
+	if (!choice_at(macros->choices, slot, choice, room))
+		return 0;
+	snprintf(label, room, "%s", choice);
+	snprintf(control, room, "%s", MACRO_CONTROL);
+	return 1;
+}
+
+static void show_buttons(void) {
+	char label[CONTROL_VALUE_MAX];
+	char control[CONTROL_VALUE_MAX];
+	char choice[CONTROL_VALUE_MAX];
+	int is_ft8 = !strcmp(mode_group(), MESSAGES_GROUP);
+	int is_a_button;
+	int is_in_force;
+	int i;
+
+	for (i = 0; i < BANDS; i++)
+		set_class(band_box[i], "in-use", !strcmp(value_of("BAND"), band_names[i]));
+	for (i = 0; i < FOOTER_TILES; i++) {
+		is_a_button = footer_button_at(i, label, control, choice, sizeof(label));
+		gtk_widget_set_visible(footer_box[i], is_a_button);
+		if (!is_a_button)
+			continue;
+		gtk_label_set_text(GTK_LABEL(footer_label[i]), label);
+		is_in_force = !strcmp(control, "TX") && !strcmp(value_of("TX"), choice);
+		set_class(footer_box[i], "on", is_in_force && !strcmp(choice, "ON"));
+		set_class(footer_box[i], "focused", is_in_force && !strcmp(choice, "OFF"));
+	}
+	for (i = 0; i < COLUMN_BUTTONS; i++) {
+		gtk_label_set_text(GTK_LABEL(column_label[i]), column_names[i]);
+		set_class(column_box[i], "dim", i != SET_ROW);
+		gtk_widget_set_visible(column_box[i], column_names[i][0] != 0);
+	}
+	if (!is_ft8)
+		return;
+	gtk_label_set_text(GTK_LABEL(column_label[FT8_CQ_ROW]), "CQ");
+	gtk_label_set_text(GTK_LABEL(column_label[FT8_HALT_ROW]), "HALT");
+	set_class(column_box[FT8_CQ_ROW], "dim", 0);
+	set_class(column_box[FT8_HALT_ROW], "dim", 0);
+	gtk_widget_set_visible(column_box[FT8_HALT_ROW], TRUE);
+}
+
+// the power and the SWR, at the right end of the status line while the
+// radio says there is power
+static void show_meter(void) {
+	int power = atoi(value_of("POWER"));
+	int swr = atoi(value_of("SWR"));
+	char text[TEXT_MAX];
+
+	text[0] = 0;
+	if (power > 0)
+		snprintf(text, sizeof(text), "%d.%d W  SWR %d.%d", power / TENTHS,
+			power % TENTHS, swr / TENTHS, swr % TENTHS);
+	gtk_label_set_text(GTK_LABEL(meter_label), text);
 }
 
 static void show_values(void) {
-	GtkStyleContext *style;
 	int i;
 
 	if (focus != ON_FREQUENCY && !is_row_shown(&rows[focus]))
@@ -355,13 +819,16 @@ static void show_values(void) {
 		gtk_label_set_text(GTK_LABEL(rows[i].value_label),
 			value_of(row_control(&rows[i])));
 		gtk_widget_set_visible(rows[i].box, is_row_shown(&rows[i]));
-		style = gtk_widget_get_style_context(rows[i].box);
-		if (i == focus)
-			gtk_style_context_add_class(style, "focused");
-		else
-			gtk_style_context_remove_class(style, "focused");
+		set_class(rows[i].box, "focused", i == focus);
+		set_class(rows[i].box, "on", (!strcmp(rows[i].control, "RIT")
+			|| !strcmp(rows[i].control, "SPLIT")) && is_on(rows[i].control));
 	}
 	show_frequency();
+	show_buttons();
+	show_meter();
+	// in FT8 the list of messages is where the graph and the waterfall are
+	gtk_widget_set_visible(messages_scroller, !strcmp(mode_group(), MESSAGES_GROUP));
+	gtk_widget_set_visible(spectrum_area, strcmp(mode_group(), MESSAGES_GROUP) != 0);
 	gtk_widget_queue_draw(spectrum_area);
 }
 
@@ -370,7 +837,8 @@ static void send_line(const char *name, const char *value) {
 
 	if (writer == NULL)
 		return;
-	snprintf(line, sizeof(line), "%s %s\n", name, value);
+	snprintf(line, sizeof(line), "%.*s %.*s\n", CONTROL_NAME_MAX - 1, name,
+		CONTROL_VALUE_MAX - 1, value);
 	g_output_stream_write_all(writer, line, strlen(line), NULL, NULL, NULL);
 }
 
@@ -496,6 +964,22 @@ static void step_choice(struct known *k, int steps) {
 	snprintf(k->value, CONTROL_VALUE_MAX, "%s", names[now]);
 }
 
+// the next of a control's choices, and round from the last to the first
+static void next_choice_round(struct known *k) {
+	char choice[CONTROL_VALUE_MAX];
+	int now = 0;
+	int i;
+
+	for (i = 0; choice_at(k->choices, i, choice, sizeof(choice)); i++) {
+		if (!strcmp(choice, k->value))
+			now = i;
+	}
+	if (!choice_at(k->choices, now + 1, choice, sizeof(choice))
+			&& !choice_at(k->choices, 0, choice, sizeof(choice)))
+		return;
+	snprintf(k->value, CONTROL_VALUE_MAX, "%s", choice);
+}
+
 static void step_number(struct known *k, int steps) {
 	int value = atoi(k->value) + steps * k->step;
 
@@ -565,6 +1049,12 @@ static void take_schema_line(char *rest) {
 		k->is_choice = 1;
 		snprintf(k->choices, CHOICES_MAX, "%s", choices);
 	}
+	// an action has things it can do and no value: they are kept for the
+	// buttons that do them, and it is not a row
+	if (!strcmp(kind, "action") && sscanf(rest, "%*s %*s %*s %127s", choices) == 1)
+		snprintf(k->choices, CHOICES_MAX, "%s", choices);
+	k->is_text = !strcmp(kind, "text");
+	k->is_listed = !strcmp(kind, "number") || !strcmp(kind, "choice");
 }
 
 static int hex_digit(char c) {
@@ -626,6 +1116,156 @@ static void take_spectrum_line(const char *rest) {
 
 // the radio tells where the receiver listens; the dial is that, less
 // RIT_DELTA while RIT is on
+static void mark_message(GtkWidget *row);
+
+static gboolean on_mark_kept_long_enough(gpointer unused) {
+	(void)unused;
+	mark_timer = 0;
+	mark_message(NULL);
+	return G_SOURCE_REMOVE;
+}
+
+// the mark is put on a message, or with NULL taken off; with none marked
+// the list goes back to the newest
+static void mark_message(GtkWidget *row) {
+	GtkAdjustment *scroll = gtk_scrolled_window_get_vadjustment(
+		GTK_SCROLLED_WINDOW(messages_scroller));
+
+	if (marked_message != NULL)
+		set_class(marked_message, "marked", 0);
+	if (mark_timer != 0)
+		g_source_remove(mark_timer);
+	mark_timer = 0;
+	marked_message = row;
+	if (row == NULL) {
+		gtk_adjustment_set_value(scroll, gtk_adjustment_get_upper(scroll));
+		show_status("");
+		return;
+	}
+	set_class(row, "marked", 1);
+	show_status("tap it again, or press the knob, to answer");
+	mark_timer = g_timeout_add_seconds(MARK_KEPT_FOR_S, on_mark_kept_long_enough, NULL);
+}
+
+// the marked message is answered: its line goes back to the radio, and
+// the mark comes off
+static void answer_marked(void) {
+	const char *line;
+	char text[LINE_MAX_LENGTH];
+
+	if (marked_message == NULL)
+		return;
+	line = g_object_get_data(G_OBJECT(marked_message), "line");
+	if (line != NULL && writer != NULL) {
+		snprintf(text, sizeof(text), "answer %s\n", line);
+		g_output_stream_write_all(writer, text, strlen(text), NULL, NULL, NULL);
+	}
+	mark_message(NULL);
+}
+
+// a tap on a message marks it; on the marked one, answers it
+static void on_message_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer unused) {
+	GtkWidget *row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+
+	(void)presses;
+	(void)x;
+	(void)y;
+	(void)unused;
+	if (row != marked_message)
+		mark_message(row);
+	else
+		answer_marked();
+}
+
+static void on_message_destroyed(GtkWidget *row, gpointer unused) {
+	(void)unused;
+	if (row == marked_message)
+		mark_message(NULL);
+}
+
+// the list is kept at its foot, where the newest message is
+static void on_messages_sized(GtkWidget *widget, GdkRectangle *size, gpointer unused) {
+	GtkAdjustment *scroll = gtk_scrolled_window_get_vadjustment(
+		GTK_SCROLLED_WINDOW(messages_scroller));
+
+	(void)widget;
+	(void)size;
+	(void)unused;
+	if (marked_message == NULL)
+		gtk_adjustment_set_value(scroll, gtk_adjustment_get_upper(scroll));
+}
+
+// on connecting the radio sends what it has kept, so the list starts empty
+static void drop_all_messages(void) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(messages));
+	GList *child;
+
+	mark_message(NULL);
+	for (child = children; child != NULL; child = child->next)
+		gtk_widget_destroy(GTK_WIDGET(child->data));
+	g_list_free(children);
+	messages_shown = 0;
+}
+
+static void drop_oldest_message(void) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(messages));
+
+	if (children != NULL) {
+		gtk_widget_destroy(GTK_WIDGET(children->data));
+		messages_shown--;
+	}
+	g_list_free(children);
+}
+
+// MESSAGE 043015|-12|1797|CQ VU2ESE MK97: a row is added to the list
+static void take_message_line(const char *line) {
+	char copy[LINE_MAX_LENGTH];
+	char shown[LINE_MAX_LENGTH];
+	char *field[MESSAGE_FIELDS];
+	char *saved = NULL;
+	GtkWidget *box;
+	GtkWidget *label;
+	int minute;
+	int second;
+	int i;
+
+	snprintf(copy, sizeof(copy), "%s", line);
+	field[0] = strtok_r(copy, "|", &saved);
+	for (i = 1; i < MESSAGE_FIELDS - 1; i++)
+		field[i] = strtok_r(NULL, "|", &saved);
+	field[MESSAGE_FIELDS - 1] = strtok_r(NULL, "", &saved);
+	if (field[MESSAGE_FIELDS - 1] == NULL)
+		return;
+	snprintf(shown, sizeof(shown), "%s %3s %4s %s", field[0], field[1], field[2],
+		field[3]);
+	label = gtk_label_new(shown);
+	gtk_label_set_xalign(GTK_LABEL(label), 0);
+	add_label_class(label, "message");
+	if (!strcmp(field[1], "TX"))
+		add_label_class(label, "sent");
+	else if (!strncmp(field[3], "CQ ", strlen("CQ ")))
+		add_label_class(label, "calling");
+	box = gtk_event_box_new();
+	gtk_style_context_add_class(gtk_widget_get_style_context(box), "message-row");
+	// the slots are told apart by their ground: every other one is lighter
+	if (strlen(field[0]) == TIME_DIGITS) {
+		minute = atoi(field[0] + TIME_MINUTE_AT) / DIGITS_OF_TWO;
+		second = atoi(field[0] + TIME_SECOND_AT);
+		set_class(box, "other-slot",
+			((minute * SECONDS_A_MINUTE + second) / SLOT_SECONDS) % 2);
+	}
+	gtk_container_add(GTK_CONTAINER(box), label);
+	g_object_set_data_full(G_OBJECT(box), "line", g_strdup(line), g_free);
+	tell_taps(box, G_CALLBACK(on_message_tap), NULL);
+	g_signal_connect(box, "destroy", G_CALLBACK(on_message_destroyed), NULL);
+	gtk_box_pack_start(GTK_BOX(messages), box, FALSE, FALSE, 0);
+	gtk_widget_show_all(box);
+	messages_shown++;
+	if (messages_shown > MESSAGES_SHOWN_MAX)
+		drop_oldest_message();
+}
+
 static void take_radio_frequency(int hz) {
 	dial_hz = hz;
 	if (is_on("RIT"))
@@ -646,6 +1286,17 @@ static void handle_line(const char *name, char *value) {
 			make_list();
 		return;
 	}
+	if (!strcmp(name, "MESSAGE")) {
+		take_message_line(value);
+		return;
+	}
+	if (!strcmp(name, "TIME")) {
+		take_time_line(value);
+		return;
+	}
+	if (!strcmp(name, "CLOCK") && value_of("CLOCK")[0] != 0
+			&& strcmp(value_of("CLOCK"), value))
+		take_start_of_minute();
 	if (!strcmp(name, "ERROR")) {
 		show_status(value);
 		return;
@@ -697,7 +1348,7 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 static void on_connected(GObject *source, GAsyncResult *result, gpointer unused) {
 	GError *error = NULL;
 	char text[LINE_MAX_LENGTH];
-	const char *asks = "schema\nspectrum on\n";
+	const char *asks = "schema\nspectrum on\nmessages on\ntime\n";
 
 	(void)unused;
 	connection = g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(source),
@@ -710,6 +1361,7 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 	reader = g_data_input_stream_new(
 		g_io_stream_get_input_stream(G_IO_STREAM(connection)));
 	writer = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	drop_all_messages();
 	g_output_stream_write_all(writer, asks, strlen(asks), NULL, NULL, NULL);
 	snprintf(text, sizeof(text), "connected to %s", radio_name);
 	show_status(text);
@@ -741,10 +1393,18 @@ static gboolean on_frequency_wheel(GtkWidget *widget, GdkEventScroll *event, gpo
 	return TRUE;
 }
 
+// a click on the frequency selects it; on it when it is selected, goes to
+// the other VFO
 static gboolean on_frequency_click(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
+	struct known *vfo = find_known("VFO");
+
 	(void)widget;
 	(void)event;
 	(void)unused;
+	if (focus == ON_FREQUENCY && vfo != NULL) {
+		next_choice_round(vfo);
+		apply_own(vfo);
+	}
 	focus = ON_FREQUENCY;
 	show_values();
 	return TRUE;
@@ -756,10 +1416,234 @@ static gboolean on_row_wheel(GtkWidget *widget, GdkEventScroll *event, gpointer 
 	return TRUE;
 }
 
-static gboolean on_row_click(GtkWidget *widget, GdkEventButton *event, gpointer row) {
+// a tap on a row selects it; on a choice that is selected, moves it on
+static void on_row_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x, gdouble y,
+		gpointer row) {
+	int tapped = GPOINTER_TO_INT(row);
+	struct known *k = find_known(row_control(&rows[tapped]));
+
+	(void)gesture;
+	(void)presses;
+	(void)x;
+	(void)y;
+	if (focus == tapped && k != NULL && k->is_choice) {
+		next_choice_round(k);
+		if (k->is_own)
+			apply_own(k);
+		else
+			send_line(k->name, k->value);
+	}
+	focus = tapped;
+	show_values();
+}
+
+// a widget is made to tell a tap: a press and a release in one place, by
+// the mouse or a finger. In a list that scrolls, a finger that moves is
+// taken by the list for scrolling, and no tap is told
+static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data) {
+	GtkGesture *gesture = gtk_gesture_multi_press_new(widget);
+
+	gtk_widget_add_events(widget, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK
+		| GDK_TOUCH_MASK);
+	g_signal_connect(gesture, "released", tapped, data);
+	g_object_set_data_full(G_OBJECT(widget), "tap", gesture, g_object_unref);
+}
+
+// the control is put at the value, here and on the radio
+static void set_and_send(const char *control, const char *value) {
+	struct known *k = find_known(control);
+
+	if (k != NULL && k->is_listed)
+		snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
+	send_line(control, value);
+	show_values();
+}
+
+// a band's button: to the band, or on the band in use, to the next place
+// in its stack
+static gboolean on_band_click(GtkWidget *widget, GdkEventButton *event, gpointer band) {
+	const char *name = band_names[GPOINTER_TO_INT(band)];
+	struct known *stack = find_known("STACK");
+	char place[CONTROL_VALUE_MAX];
+
 	(void)widget;
 	(void)event;
-	focus = GPOINTER_TO_INT(row);
+	if (strcmp(value_of("BAND"), name) || stack == NULL) {
+		set_and_send("BAND", name);
+		return TRUE;
+	}
+	snprintf(place, sizeof(place), "%d", stack->min);
+	if (atoi(stack->value) < stack->max)
+		snprintf(place, sizeof(place), "%d", atoi(stack->value) + 1);
+	set_and_send("STACK", place);
+	return TRUE;
+}
+
+static gboolean on_footer_click(GtkWidget *widget, GdkEventButton *event, gpointer slot) {
+	char label[CONTROL_VALUE_MAX];
+	char control[CONTROL_VALUE_MAX];
+	char choice[CONTROL_VALUE_MAX];
+
+	(void)widget;
+	(void)event;
+	if (footer_button_at(GPOINTER_TO_INT(slot), label, control, choice, sizeof(label)))
+		set_and_send(control, choice);
+	return TRUE;
+}
+
+static void fill_settings(void);
+
+static void show_page(const char *name) {
+	gtk_stack_set_visible_child_name(GTK_STACK(pages), name);
+}
+
+static int is_page_shown(const char *name) {
+	const char *shown = gtk_stack_get_visible_child_name(GTK_STACK(pages));
+
+	return shown != NULL && !strcmp(shown, name);
+}
+
+static void show_typed(void) {
+	char with_mark[CONTROL_VALUE_MAX + 2];
+
+	snprintf(with_mark, sizeof(with_mark), "%s_", typed);
+	gtk_label_set_text(GTK_LABEL(typed_label), with_mark);
+}
+
+// the screen a text is typed on, for a control, beginning with what it has
+static void open_text(struct known *k) {
+	typed_for = k;
+	snprintf(typed, sizeof(typed), "%s", k->value);
+	gtk_label_set_text(GTK_LABEL(text_title), k->name);
+	show_typed();
+	show_page(PAGE_TEXT);
+}
+
+static void type_a_character(char c) {
+	size_t length = strlen(typed);
+
+	if (length + 1 >= sizeof(typed))
+		return;
+	typed[length] = c;
+	typed[length + 1] = 0;
+	show_typed();
+}
+
+static void rub_out(void) {
+	size_t length = strlen(typed);
+
+	if (length > 0)
+		typed[length - 1] = 0;
+	show_typed();
+}
+
+// what was typed goes to the radio, if it is something and is new, and the
+// settings come back
+static void save_typed(void) {
+	if (typed_for != NULL && typed[0] != 0 && strcmp(typed, typed_for->value)) {
+		snprintf(typed_for->value, CONTROL_VALUE_MAX, "%s", typed);
+		send_line(typed_for->name, typed_for->value);
+	}
+	fill_settings();
+	show_page(PAGE_SETTINGS);
+}
+
+static void on_key_pressed(GtkButton *button, gpointer character) {
+	(void)button;
+	type_a_character((char)GPOINTER_TO_INT(character));
+}
+
+static void on_rub_out_pressed(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	rub_out();
+}
+
+static void on_save_pressed(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	save_typed();
+}
+
+static void on_back_pressed(GtkButton *button, gpointer page) {
+	(void)button;
+	show_page(page);
+}
+
+// a tap on a setting: a text is typed, a choice goes to its next
+static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer setting) {
+	struct known *k = setting;
+
+	(void)gesture;
+	(void)presses;
+	(void)x;
+	(void)y;
+	if (k->is_text) {
+		open_text(k);
+		return;
+	}
+	next_choice_round(k);
+	send_line(k->name, k->value);
+	fill_settings();
+}
+
+// the settings' rows, made afresh each time they are shown: the radio's
+// texts and choices in the group STATION
+static void fill_settings(void) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(settings_list));
+	GList *child;
+	GtkWidget *row;
+	GtkWidget *value;
+	int i;
+
+	for (child = children; child != NULL; child = child->next)
+		gtk_widget_destroy(GTK_WIDGET(child->data));
+	g_list_free(children);
+	for (i = 0; i < known_count; i++) {
+		if (strcmp(known[i].group, STATION_GROUP)
+				|| (!known[i].is_text && !known[i].is_choice))
+			continue;
+		row = list_row_new(known[i].name, &value);
+		gtk_label_set_text(GTK_LABEL(value), known[i].value);
+		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
+		tell_taps(row, G_CALLBACK(on_setting_tap), &known[i]);
+		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
+	}
+	gtk_widget_show_all(settings_list);
+}
+
+// the column's buttons: SET, and in FT8 its two; the others do nothing yet
+static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpointer row) {
+	int clicked = GPOINTER_TO_INT(row);
+
+	(void)widget;
+	(void)event;
+	if (clicked == SET_ROW) {
+		fill_settings();
+		show_page(PAGE_SETTINGS);
+		return TRUE;
+	}
+	if (strcmp(mode_group(), MESSAGES_GROUP))
+		return TRUE;
+	if (clicked == FT8_CQ_ROW)
+		send_line(FT8_DO_CONTROL, "CQ");
+	if (clicked == FT8_HALT_ROW)
+		send_line(FT8_DO_CONTROL, "HALT");
+	return TRUE;
+}
+
+// a click on the graph or the waterfall: the next span
+static gboolean on_spectrum_click(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
+	struct known *span = find_known("SPAN");
+
+	(void)widget;
+	(void)event;
+	(void)unused;
+	if (span == NULL || !span->is_choice)
+		return TRUE;
+	next_choice_round(span);
+	send_line(span->name, span->value);
 	show_values();
 	return TRUE;
 }
@@ -771,7 +1655,7 @@ static void scroll_to_focus(void) {
 	double top;
 	double page;
 
-	if (focus == ON_FREQUENCY || rows[focus].place == UNDER_FREQUENCY)
+	if (focus == ON_FREQUENCY || rows[focus].place != IN_LIST)
 		return;
 	scroll = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(list_scroller));
 	gtk_widget_get_allocation(rows[focus].box, &where);
@@ -800,9 +1684,28 @@ static void move_focus(int direction) {
 	scroll_to_focus();
 }
 
+// a key of a keyboard plugged into the radio, while a text is being typed
+static gboolean on_key_while_typing(const GdkEventKey *event) {
+	guint32 character = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
+
+	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
+		save_typed();
+	else if (event->keyval == GDK_KEY_Escape)
+		show_page(PAGE_SETTINGS);
+	else if (event->keyval == GDK_KEY_BackSpace)
+		rub_out();
+	else if (character >= ' ' && character <= '~')
+		type_a_character((char)character);
+	return TRUE;
+}
+
 static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	(void)widget;
 	(void)unused;
+	if (is_page_shown(PAGE_TEXT))
+		return on_key_while_typing(event);
+	if (!is_page_shown(PAGE_MAIN))
+		return FALSE;
 	if (event->keyval == GDK_KEY_Up) {
 		step_focused(1);
 		return TRUE;
@@ -825,6 +1728,86 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 		return TRUE;
 	}
 	return FALSE;
+}
+
+static int row_of(const char *control) {
+	int i;
+
+	for (i = 0; i < row_count; i++) {
+		if (!strcmp(rows[i].control, control))
+			return i;
+	}
+	return NOT_FOUND;
+}
+
+// the knobs' thread: both knobs looked at, and the button, which counts as
+// pressed once when it has been down for BUTTON_DOWN_LOOKS looks running
+static void *look_at_knobs(void *unused) {
+	int down_for = 0;
+
+	(void)unused;
+	while (1) {
+		atomic_fetch_add(&tuning_notches, knob_read(&tuning_knob));
+		atomic_fetch_add(&control_notches, knob_read(&control_knob));
+		if (gpio_read(control_button_pin) == 0)
+			down_for++;
+		else
+			down_for = 0;
+		if (down_for == BUTTON_DOWN_LOOKS)
+			atomic_fetch_add(&control_presses, 1);
+		usleep(KNOBS_LOOKED_AT_EVERY_US);
+	}
+	return NULL;
+}
+
+// what the knobs have counted since the last time is acted on
+static gboolean take_up_knobs(gpointer unused) {
+	int tuned = atomic_exchange(&tuning_notches, 0);
+	int turned = atomic_exchange(&control_notches, 0);
+	int pressed = atomic_exchange(&control_presses, 0);
+	int row = focus;
+
+	(void)unused;
+	if (tuned != 0)
+		tune(tuned);
+	if (row == ON_FREQUENCY)
+		row = row_of(VOLUME_CONTROL);
+	if (turned != 0 && row != NOT_FOUND)
+		step_row(row, turned);
+	while (pressed > 0) {
+		if (marked_message != NULL)
+			answer_marked();
+		else
+			move_focus(1);
+		pressed--;
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+// the knobs of the radio the window is on, if it is on one that has them
+static void open_knobs(void) {
+	const struct board *board = board_named_in(HW_SETTINGS_FILE);
+	const struct radio_knobs *knobs = radios_with_knobs;
+	pthread_t thread;
+
+	if (board == NULL)
+		return;
+	while (knobs->radio != NULL && strcmp(knobs->radio, board->radio))
+		knobs++;
+	if (knobs->radio == NULL)
+		return;
+	if (gpio_open() < 0)
+		return;
+	if (knob_open(&tuning_knob, knobs->tuning.a_pin, knobs->tuning.b_pin) < 0)
+		return;
+	if (knob_open(&control_knob, knobs->control.a_pin, knobs->control.b_pin) < 0)
+		return;
+	control_button_pin = knobs->control.button_pin;
+	if (gpio_make_input(control_button_pin, GPIO_PULL_UP) < 0)
+		return;
+	if (pthread_create(&thread, NULL, look_at_knobs, NULL) != 0)
+		return;
+	g_timeout_add(KNOBS_TAKEN_UP_EVERY_MS, take_up_knobs, NULL);
 }
 
 // where the receiver listens, in Hz from the middle of the spectrum, which
@@ -949,10 +1932,14 @@ static void draw_waterfall(cairo_t *cr, int width, int height) {
 static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 	int width = gtk_widget_get_allocated_width(widget);
 	int height = gtk_widget_get_allocated_height(widget);
-	int graph_height = height / GRAPH_SHARE;
+	int graph_height = px_down(GRAPH_HEIGHT);
 
 	(void)unused;
 	draw_graph(cr, width, graph_height);
+	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
+	cairo_set_font_size(cr, px(TITLE_SIZE));
+	cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
+	cairo_show_text(cr, value_of("SPAN"));
 	cairo_translate(cr, 0, graph_height);
 	draw_waterfall(cr, width, height - graph_height);
 	return TRUE;
@@ -968,42 +1955,130 @@ static int has_row(const char *control) {
 	return 0;
 }
 
+static void place(const struct placed *it) {
+	gtk_widget_set_size_request(it->widget,
+		px_across(it->x + it->width) - px_across(it->x),
+		px_down(it->y + it->height) - px_down(it->y));
+	gtk_layout_move(GTK_LAYOUT(screen), it->widget, px_across(it->x), px_down(it->y));
+}
+
+// a widget that has gone is forgotten
+static void on_placed_destroyed(GtkWidget *widget, gpointer unused) {
+	int i;
+
+	(void)unused;
+	for (i = 0; i < PLACED_MAX; i++) {
+		if (placed[i].widget == widget)
+			placed[i].widget = NULL;
+	}
+}
+
+// a widget is put on the screen at a place in the panel's plan
+static void put(GtkWidget *widget, int x, int y, int width, int height) {
+	struct placed *it = placed;
+
+	while (it < placed + PLACED_MAX && it->widget != NULL)
+		it++;
+	gtk_layout_put(GTK_LAYOUT(screen), widget, 0, 0);
+	if (it == placed + PLACED_MAX)
+		return;
+	it->widget = widget;
+	it->x = x;
+	it->y = y;
+	it->width = width;
+	it->height = height;
+	g_signal_connect(widget, "destroy", G_CALLBACK(on_placed_destroyed), NULL);
+	place(it);
+}
+
+static void add_label_class(GtkWidget *label, const char *name) {
+	gtk_style_context_add_class(gtk_widget_get_style_context(label), name);
+}
+
+// a tile: a box with something in it, that takes clicks and the wheel
+static GtkWidget *tile_new(GtkWidget *inside) {
+	GtkWidget *box = gtk_event_box_new();
+
+	gtk_style_context_add_class(gtk_widget_get_style_context(box), "tile");
+	gtk_container_add(GTK_CONTAINER(box), inside);
+	gtk_widget_add_events(box, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
+	return box;
+}
+
+// a button: a tile with a label alone
+static GtkWidget *button_new(const char *text, GtkWidget **label) {
+	*label = gtk_label_new(text);
+	add_label_class(*label, "tile-value");
+	return tile_new(*label);
+}
+
+// a control's tile, as on the panel: its name small in the top left corner
+// and its value under it
+static GtkWidget *control_tile_new(const char *name, GtkWidget **value) {
+	GtkWidget *inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	GtkWidget *title = gtk_label_new(name);
+
+	*value = gtk_label_new("");
+	gtk_label_set_xalign(GTK_LABEL(title), 0);
+	gtk_widget_set_margin_start(title, px(SPAN_LEFT));
+	add_label_class(title, "tile-title");
+	add_label_class(*value, "tile-value");
+	gtk_box_pack_start(GTK_BOX(inside), title, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(inside), *value, TRUE, TRUE, 0);
+	return tile_new(inside);
+}
+
+// a row of the list: the control's name at the left and its value at the
+// right
+static GtkWidget *list_row_new(const char *name, GtkWidget **value) {
+	GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	GtkWidget *title = gtk_label_new(name);
+
+	*value = gtk_label_new("");
+	gtk_label_set_xalign(GTK_LABEL(title), 0);
+	gtk_label_set_xalign(GTK_LABEL(*value), 1);
+	add_label_class(title, "tile-title");
+	add_label_class(*value, "tile-value");
+	gtk_widget_set_margin_start(line, px(ROW_MARGIN_SIDE));
+	gtk_widget_set_margin_end(line, px(ROW_MARGIN_SIDE));
+	gtk_box_pack_start(GTK_BOX(line), title, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(line), *value, FALSE, FALSE, 0);
+	return tile_new(line);
+}
+
+static const struct top_place *place_of(const struct top_place *places, const char *control) {
+	const struct top_place *p;
+
+	for (p = places; p->control != NULL; p++) {
+		if (!strcmp(p->control, control))
+			return p;
+	}
+	return NULL;
+}
+
 static void add_row(const char *control, enum place place) {
+	const struct top_place *where = place_of(top_places, control);
 	GtkWidget *box;
-	GtkWidget *line;
-	GtkWidget *label;
 	GtkWidget *value;
 	int index = row_count;
 
 	if (row_count == KNOWN_MAX || has_row(control))
 		return;
-	box = gtk_event_box_new();
-	line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, GAP);
-	label = gtk_label_new(label_of(control));
-	value = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(label), 0);
-	gtk_label_set_xalign(GTK_LABEL(value), 1);
-	gtk_style_context_add_class(gtk_widget_get_style_context(box), "row");
-	gtk_style_context_add_class(gtk_widget_get_style_context(label), "row-label");
-	gtk_style_context_add_class(gtk_widget_get_style_context(value), "row-value");
-	gtk_box_pack_start(GTK_BOX(line), label, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(line), value, FALSE, FALSE, 0);
-	gtk_widget_set_margin_start(line, ROW_MARGIN_SIDE);
-	if (place == UNDER_MODE)
-		gtk_widget_set_margin_start(line, UNDER_MODE_MARGIN);
-	gtk_widget_set_margin_end(line, ROW_MARGIN_SIDE);
-	gtk_widget_set_size_request(box, -1, ROW_HEIGHT);
-	gtk_container_add(GTK_CONTAINER(box), line);
-	gtk_widget_set_no_show_all(box, TRUE);
-	gtk_widget_show_all(line);
-	gtk_widget_add_events(box, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
-	g_signal_connect(box, "scroll-event", G_CALLBACK(on_row_wheel), GINT_TO_POINTER(index));
-	g_signal_connect(box, "button-press-event", G_CALLBACK(on_row_click),
-		GINT_TO_POINTER(index));
-	if (place == UNDER_FREQUENCY)
-		gtk_box_pack_start(GTK_BOX(tuning_bar), box, TRUE, TRUE, 0);
-	else
+	if (place == IN_FOOTER)
+		where = place_of(footer_places, control);
+	if (place == IN_LIST) {
+		box = list_row_new(label_of(control), &value);
+		gtk_widget_set_size_request(box, -1, px_down(ROW_HEIGHT));
 		gtk_box_pack_start(GTK_BOX(list), box, FALSE, FALSE, 0);
+	}
+	else {
+		box = control_tile_new(label_of(control), &value);
+		put(box, where->x, where->y, TILE_WIDTH, ROW_HEIGHT);
+	}
+	gtk_widget_set_no_show_all(box, TRUE);
+	gtk_widget_show_all(gtk_bin_get_child(GTK_BIN(box)));
+	g_signal_connect(box, "scroll-event", G_CALLBACK(on_row_wheel), GINT_TO_POINTER(index));
+	tell_taps(box, G_CALLBACK(on_row_tap), GINT_TO_POINTER(index));
 	snprintf(rows[index].control, CONTROL_NAME_MAX, "%s", control);
 	rows[index].place = place;
 	rows[index].box = box;
@@ -1011,116 +2086,344 @@ static void add_row(const char *control, enum place place) {
 	row_count++;
 }
 
-static int is_in_list(const char *control) {
-	return strcmp(control, "FREQ") && strcmp(control, "BW_VOICE")
-		&& strcmp(control, "BW_CW");
+// what is never a row of the list: what has a place or a button of its own,
+// and the two bandwidths, which BW stands for
+static int is_in_list(const struct known *k) {
+	static const char *const elsewhere[] = {
+		"FREQ", "BAND", "BW_VOICE", "BW_CW", NULL,
+	};
+	int i;
+
+	if (!k->is_listed && !k->is_own)
+		return 0;
+	for (i = 0; elsewhere[i] != NULL; i++) {
+		if (!strcmp(k->name, elsewhere[i]))
+			return 0;
+	}
+	return 1;
 }
 
-// the rows, made again each time the radio sends its schema: under the
-// frequency, its own controls; in the list, the core controls, the rest of
-// the radio's own, the mode, and under it BW and the modems' own, of which
-// only the mode in use's are shown
+// the rows, made again each time the radio sends its schema: those with a
+// place of their own, at their places; and in the list, the rest of the
+// radio's own, then BW and the modems' own, of which only the mode in
+// use's are shown
 static void make_list(void) {
+	const struct top_place *p;
 	int i;
 
 	for (i = 0; i < row_count; i++)
 		gtk_widget_destroy(rows[i].box);
 	row_count = 0;
 	focus = ON_FREQUENCY;
-	for (i = 0; tuning_rows[i] != NULL; i++)
-		add_row(tuning_rows[i], UNDER_FREQUENCY);
-	for (i = 0; core_rows[i] != NULL; i++)
-		add_row(core_rows[i], IN_LIST);
+	for (p = top_places; p->control != NULL; p++)
+		add_row(p->control, ON_TOP);
+	for (p = footer_places; p->control != NULL; p++)
+		add_row(p->control, IN_FOOTER);
 	for (i = 0; i < known_count; i++) {
-		if (!strcmp(known[i].group, "RADIO") && strcmp(known[i].name, "MODE")
-				&& is_in_list(known[i].name))
+		if (!strcmp(known[i].group, "RADIO") && is_in_list(&known[i]))
 			add_row(known[i].name, IN_LIST);
 	}
-	add_row("MODE", IN_LIST);
-	add_row("BW", UNDER_MODE);
+	add_row("BW", IN_LIST);
 	for (i = 0; i < known_count; i++) {
 		if (known[i].group[0] != 0 && strcmp(known[i].group, "RADIO")
-				&& strcmp(known[i].group, "WINDOW") && is_in_list(known[i].name))
-			add_row(known[i].name, UNDER_MODE);
+				&& strcmp(known[i].group, "WINDOW") && is_in_list(&known[i]))
+			add_row(known[i].name, IN_LIST);
 	}
 	show_values();
 }
 
+// the panel's colours; the sizes of the letters go with the scale
 static void load_style(void) {
-	GtkCssProvider *css = gtk_css_provider_new();
-	const char *rules =
-		"window { background-color: #101418; color: #d0d0d0; }"
-		".sidebar { background-color: #161c22; }"
-		".row { border-bottom: 1px solid #283038; border-left: 3px solid transparent; }"
-		".row.focused { background-color: #283038; border-left-color: #ffd040; }"
-		".row-label { font-size: 11pt; color: #8090a0; }"
-		".row-value { font-size: 14pt; font-weight: bold; }";
+	char rules[CSS_MAX];
 
+	if (css == NULL) {
+		css = gtk_css_provider_new();
+		gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+			GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+	}
+	snprintf(rules, sizeof(rules),
+		"window { background-color: #000000; color: #FFFFFF; }"
+		".tile { background-color: #101820; box-shadow: inset 0 0 0 1px #405060; }"
+		".tile.in-use { background-color: #604800; }"
+		".tile.on { background-color: #B02020; }"
+		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
+		".tile-title { font-size: %dpx; color: #90A0B0; }"
+		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
+		".dim .tile-value { color: #506070; }"
+		".frequency { font-family: monospace; font-size: %dpx; font-weight: bold;"
+		" color: #FFFFFF; }"
+		".status { font-size: %dpx; color: #90A0B0; }"
+		".message { font-family: monospace; font-size: %dpx; color: #FFFFFF; }"
+		".message.sent { color: #FF6060; }"
+		".message.calling { color: #60E060; }"
+		".message-row { background-color: #101820; }"
+		".message-row.other-slot { background-color: #1C2834; }"
+		".message-row.marked { background-color: #604800; }"
+		".key { font-size: %dpx; font-weight: bold; color: #FFFFFF;"
+		" background-image: none; background-color: #101820;"
+		" border: 1px solid #405060; border-radius: 0; box-shadow: none; }"
+		".key:active { background-color: #604800; }"
+		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
+		" color: #FFFFFF; background-color: #101820;"
+		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
+		px(1), px(TITLE_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE), px(STATUS_SIZE),
+		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
-	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
-		GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-	g_object_unref(css);
 }
 
-static GtkWidget *create_main_area(void) {
-	GtkWidget *column = gtk_box_new(GTK_ORIENTATION_VERTICAL, GAP);
-	GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, GAP);
+// the plan is stretched to the size the window has now: everything is put
+// again and the letters sized again. It is done when the window is next
+// idle and not while GTK is giving out the new size, when a widget moved
+// or sized is not seen to until the size changes once more: the buttons
+// then stayed as they were when the window was maximised, and took the
+// maximised size when it was restored.
+static gboolean lay_out_again(gpointer unused) {
+	int i;
 
-	frequency_box = gtk_event_box_new();
+	(void)unused;
+	is_lay_out_due = 0;
+	scale_across = (double)laid_out_width / PANEL_WIDTH;
+	scale_down = (double)laid_out_height / PANEL_HEIGHT;
+	scale = scale_down;
+	if (scale_across < scale)
+		scale = scale_across;
+	load_style();
+	for (i = 0; i < PLACED_MAX; i++) {
+		if (placed[i].widget != NULL)
+			place(&placed[i]);
+	}
+	for (i = 0; i < row_count; i++) {
+		if (rows[i].place == IN_LIST)
+			gtk_widget_set_size_request(rows[i].box, -1, px_down(ROW_HEIGHT));
+	}
+	return G_SOURCE_REMOVE;
+}
+
+// the window has a new size
+static void on_screen_sized(GtkWidget *widget, GdkRectangle *size, gpointer unused) {
+	(void)widget;
+	(void)unused;
+	if (size->width == laid_out_width && size->height == laid_out_height)
+		return;
+	laid_out_width = size->width;
+	laid_out_height = size->height;
+	if (!is_lay_out_due)
+		g_idle_add(lay_out_again, NULL);
+	is_lay_out_due = 1;
+}
+
+// the frequency's box: the VFO and the time over the figures
+static void create_frequency(void) {
+	GtkWidget *inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	GtkWidget *over = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+
+	vfo_label = gtk_label_new("");
+	clock_label = gtk_label_new("");
 	frequency_label = gtk_label_new("");
-	gtk_container_add(GTK_CONTAINER(frequency_box), frequency_label);
-	gtk_widget_set_size_request(frequency_box, -1, ROW_HEIGHT);
-	gtk_widget_add_events(frequency_box, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
+	gtk_label_set_xalign(GTK_LABEL(vfo_label), 0);
+	gtk_label_set_xalign(GTK_LABEL(clock_label), 1);
+	add_label_class(vfo_label, "tile-title");
+	add_label_class(clock_label, "tile-title");
+	add_label_class(frequency_label, "frequency");
+	gtk_widget_set_margin_start(over, px(SPAN_LEFT));
+	gtk_widget_set_margin_end(over, px(SPAN_LEFT));
+	gtk_box_pack_start(GTK_BOX(over), vfo_label, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(over), clock_label, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(inside), over, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(inside), frequency_label, TRUE, TRUE, 0);
+	frequency_box = tile_new(inside);
 	g_signal_connect(frequency_box, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
 	g_signal_connect(frequency_box, "button-press-event",
 		G_CALLBACK(on_frequency_click), NULL);
-
-	status_label = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(status_label), 1);
-	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
-
-	tuning_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_set_homogeneous(GTK_BOX(tuning_bar), TRUE);
-
-	spectrum_area = gtk_drawing_area_new();
-	gtk_widget_set_size_request(spectrum_area, -1, SPECTRUM_MIN_HEIGHT);
-	gtk_widget_set_vexpand(spectrum_area, TRUE);
-	gtk_widget_add_events(spectrum_area, GDK_SCROLL_MASK);
-	g_signal_connect(spectrum_area, "draw", G_CALLBACK(on_draw_spectrum), NULL);
-	g_signal_connect(spectrum_area, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
-
-	gtk_box_pack_start(GTK_BOX(top), frequency_box, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(top), status_label, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(column), top, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(column), tuning_bar, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(column), spectrum_area, TRUE, TRUE, 0);
-	return column;
+	put(frequency_box, FREQ_LEFT, 0, FREQ_WIDTH, ROW_HEIGHT);
 }
 
-static GtkWidget *create_sidebar(void) {
+// the buttons that are always there: the bands, the column and the bottom
+// row's
+static void create_buttons(void) {
+	GtkWidget *label;
+	int i;
+
+	for (i = 0; i < BANDS; i++) {
+		band_box[i] = button_new(band_names[i], &label);
+		g_signal_connect(band_box[i], "button-press-event", G_CALLBACK(on_band_click),
+			GINT_TO_POINTER(i));
+		put(band_box[i], i * TILE_WIDTH, BANDS_TOP, TILE_WIDTH, ROW_HEIGHT);
+	}
+	for (i = 0; i < COLUMN_BUTTONS; i++) {
+		column_box[i] = button_new(column_names[i], &column_label[i]);
+		gtk_widget_set_no_show_all(column_box[i], TRUE);
+		gtk_widget_show(column_label[i]);
+		g_signal_connect(column_box[i], "button-press-event",
+			G_CALLBACK(on_column_click), GINT_TO_POINTER(i));
+		put(column_box[i], 0, MIDDLE_TOP + i * ROW_HEIGHT, TILE_WIDTH, ROW_HEIGHT);
+	}
+	for (i = 0; i < FOOTER_TILES; i++) {
+		footer_box[i] = button_new("", &footer_label[i]);
+		gtk_widget_set_no_show_all(footer_box[i], TRUE);
+		gtk_widget_show(footer_label[i]);
+		g_signal_connect(footer_box[i], "button-press-event",
+			G_CALLBACK(on_footer_click), GINT_TO_POINTER(i));
+		put(footer_box[i], i * TILE_WIDTH, FOOTER_TOP, TILE_WIDTH, ROW_HEIGHT);
+	}
+}
+
+// the status line, and under it the graph and the waterfall
+static void create_middle(void) {
+	status_label = gtk_label_new("");
+	meter_label = gtk_label_new("");
+	gtk_label_set_xalign(GTK_LABEL(status_label), 0);
+	gtk_label_set_xalign(GTK_LABEL(meter_label), 1);
+	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
+	add_label_class(status_label, "status");
+	add_label_class(meter_label, "status");
+	put(status_label, GRAPH_LEFT, MIDDLE_TOP, GRAPH_WIDTH - METER_WIDTH, STATUS_HEIGHT);
+	put(meter_label, GRAPH_LEFT + GRAPH_WIDTH - METER_WIDTH, MIDDLE_TOP, METER_WIDTH,
+		STATUS_HEIGHT);
+
+	spectrum_area = gtk_drawing_area_new();
+	gtk_widget_add_events(spectrum_area, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK);
+	g_signal_connect(spectrum_area, "draw", G_CALLBACK(on_draw_spectrum), NULL);
+	g_signal_connect(spectrum_area, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
+	g_signal_connect(spectrum_area, "button-press-event",
+		G_CALLBACK(on_spectrum_click), NULL);
+	put(spectrum_area, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
+		GRAPH_HEIGHT + FALL_HEIGHT);
+
+	// FT8's messages, in the same place and on down to the foot
+	messages = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	messages_scroller = gtk_scrolled_window_new(NULL, NULL);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(messages_scroller),
+		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(messages_scroller),
+		FALSE);
+	gtk_container_add(GTK_CONTAINER(messages_scroller), messages);
+	gtk_widget_set_no_show_all(messages_scroller, TRUE);
+	gtk_widget_show_all(gtk_bin_get_child(GTK_BIN(messages_scroller)));
+	g_signal_connect(messages, "size-allocate", G_CALLBACK(on_messages_sized), NULL);
+	put(messages_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
+		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
+}
+
+static void create_list(void) {
 	list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	list_scroller = gtk_scrolled_window_new(NULL, NULL);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(list_scroller),
 		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	// the scroll bar has a strip of its own beside the rows, and is not
+	// drawn over the values at their right ends
+	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(list_scroller), FALSE);
 	gtk_container_add(GTK_CONTAINER(list_scroller), list);
-	gtk_widget_set_size_request(list_scroller, SIDEBAR_WIDTH, -1);
-	gtk_style_context_add_class(gtk_widget_get_style_context(list_scroller), "sidebar");
-	return list_scroller;
+	put(list_scroller, LIST_LEFT, MIDDLE_TOP, LIST_WIDTH, LIST_HEIGHT);
+}
+
+static GtkWidget *key_new(const char *text, GCallback pressed, gpointer data) {
+	GtkWidget *key = gtk_button_new_with_label(text);
+
+	gtk_style_context_add_class(gtk_widget_get_style_context(key), "key");
+	gtk_widget_set_can_focus(key, FALSE);
+	gtk_widget_set_hexpand(key, TRUE);
+	gtk_widget_set_vexpand(key, TRUE);
+	g_signal_connect(key, "clicked", pressed, data);
+	return key;
+}
+
+// the top of a screen that is not the main one: the arrow that goes back,
+// and what the screen is
+static GtkWidget *create_top_bar(const char *back_to, GtkWidget **title) {
+	GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	GtkWidget *back = key_new("\u2190", G_CALLBACK(on_back_pressed), (gpointer)back_to);
+
+	*title = gtk_label_new("");
+	add_label_class(*title, "tile-value");
+	gtk_widget_set_hexpand(back, FALSE);
+	gtk_widget_set_vexpand(back, FALSE);
+	gtk_widget_set_size_request(back, px_across(TILE_WIDTH), px_down(ROW_HEIGHT));
+	gtk_box_pack_start(GTK_BOX(bar), back, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(bar), *title, TRUE, TRUE, 0);
+	return bar;
+}
+
+static GtkWidget *create_settings_page(void) {
+	GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
+	GtkWidget *title;
+
+	gtk_box_pack_start(GTK_BOX(page), create_top_bar(PAGE_MAIN, &title), FALSE, FALSE, 0);
+	gtk_label_set_text(GTK_LABEL(title), "SETTINGS");
+	settings_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER,
+		GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(scroller), FALSE);
+	gtk_container_add(GTK_CONTAINER(scroller), settings_list);
+	gtk_box_pack_start(GTK_BOX(page), scroller, TRUE, TRUE, 0);
+	return page;
+}
+
+// the screen a text is typed on: what is typed in the upper part, and in
+// the lower part the keyboard, which has no more keys than are needed
+static GtkWidget *create_text_page(void) {
+	static const char *const key_rows[KEY_ROWS] = {
+		"1234567890", "QWERTYUIOP", "ASDFGHJKL/", "ZXCVBNM.?-",
+	};
+	GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	GtkWidget *keys = gtk_grid_new();
+	char text[2] = "";
+	int column = 0;
+	int row;
+	int i;
+
+	gtk_box_pack_start(GTK_BOX(page), create_top_bar(PAGE_SETTINGS, &text_title), FALSE,
+		FALSE, 0);
+	typed_label = gtk_label_new("");
+	add_label_class(typed_label, "typed");
+	gtk_widget_set_size_request(typed_label, -1, px_down(ROW_HEIGHT));
+	gtk_box_pack_start(GTK_BOX(page), typed_label, FALSE, FALSE, 0);
+
+	gtk_grid_set_row_homogeneous(GTK_GRID(keys), TRUE);
+	gtk_grid_set_column_homogeneous(GTK_GRID(keys), TRUE);
+	for (row = 0; row < KEY_ROWS; row++) {
+		for (i = 0; i < KEYS_A_ROW; i++) {
+			text[0] = key_rows[row][i];
+			gtk_grid_attach(GTK_GRID(keys), key_new(text, G_CALLBACK(on_key_pressed),
+				GINT_TO_POINTER(text[0])), i, row, 1, 1);
+		}
+	}
+	gtk_grid_attach(GTK_GRID(keys), key_new("CANCEL", G_CALLBACK(on_back_pressed),
+		PAGE_SETTINGS), column, KEY_ROWS, CANCEL_KEYS, 1);
+	column += CANCEL_KEYS;
+	gtk_grid_attach(GTK_GRID(keys), key_new("SPACE", G_CALLBACK(on_key_pressed),
+		GINT_TO_POINTER(' ')), column, KEY_ROWS, SPACE_KEYS, 1);
+	column += SPACE_KEYS;
+	gtk_grid_attach(GTK_GRID(keys), key_new("\u232B", G_CALLBACK(on_rub_out_pressed),
+		NULL), column, KEY_ROWS, RUB_OUT_KEYS, 1);
+	column += RUB_OUT_KEYS;
+	gtk_grid_attach(GTK_GRID(keys), key_new("SAVE", G_CALLBACK(on_save_pressed), NULL),
+		column, KEY_ROWS, SAVE_KEYS, 1);
+	gtk_box_pack_end(GTK_BOX(page), keys, TRUE, TRUE, 0);
+	return page;
 }
 
 static GtkWidget *create_window(void) {
 	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	GtkWidget *halves = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, GAP);
 
 	load_style();
 	gtk_window_set_title(GTK_WINDOW(window), "zbitx");
 	gtk_window_set_default_size(GTK_WINDOW(window), WINDOW_WIDTH, WINDOW_HEIGHT);
-	gtk_container_set_border_width(GTK_CONTAINER(window), GAP);
+	gtk_window_maximize(GTK_WINDOW(window));
+	screen = gtk_layout_new(NULL, NULL);
+	create_frequency();
+	create_buttons();
+	create_middle();
+	create_list();
 
-	gtk_box_pack_start(GTK_BOX(halves), create_main_area(), TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(halves), create_sidebar(), FALSE, FALSE, 0);
-	gtk_container_add(GTK_CONTAINER(window), halves);
+	pages = gtk_stack_new();
+	gtk_stack_add_named(GTK_STACK(pages), screen, PAGE_MAIN);
+	gtk_stack_add_named(GTK_STACK(pages), create_settings_page(), PAGE_SETTINGS);
+	gtk_stack_add_named(GTK_STACK(pages), create_text_page(), PAGE_TEXT);
+	gtk_container_add(GTK_CONTAINER(window), pages);
 
+	g_signal_connect(screen, "size-allocate", G_CALLBACK(on_screen_sized), NULL);
 	g_signal_connect(window, "key-press-event", G_CALLBACK(on_key), NULL);
 	g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 	return window;
@@ -1141,6 +2444,8 @@ int main(int argc, char **argv) {
 	gtk_widget_show_all(window);
 	show_values();
 
+	g_timeout_add(CLOCK_SHOWN_EVERY_MS, show_clock, NULL);
+	open_knobs();
 	connector = g_socket_client_new();
 	try_to_connect();
 	gtk_main();

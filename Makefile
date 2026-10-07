@@ -237,9 +237,13 @@ $(BUILD)/test_audio: tests/test_audio.c hw/audio.c $(HW_HEADERS) | $(BUILD)
 # from the rest because the radio has no need of it
 gui: $(GUI)
 
-$(GUI): clients/gtk/zbitx_gui.c
-	$(CC) $(CFLAGS) $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
-		$$(pkg-config --libs gtk+-3.0)
+# the window reads the sbitx's two knobs itself, with its own knob reader;
+# of hw/ it has the pins, and the boards for the radio's name
+GUI_PARTS = clients/gtk/knob.c hw/gpio.c hw/board.c
+
+$(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h hw/gpio.h hw/board.h
+	$(CC) $(CFLAGS) -Iclients/gtk $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
+		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread
 
 panel:
 	arduino-cli compile --fqbn $(PANEL_BOARD) --build-path $(PANEL_BUILD) \

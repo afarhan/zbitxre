@@ -53,17 +53,6 @@
 static uint8_t part[LINK_COUNTED_MAX];
 static unsigned long last_sent;
 
-static int make_a_line(char *line, int room, const struct message *m) {
-	struct tm utc;
-
-	gmtime_r(&m->at, &utc);
-	if (m->is_sent)
-		return snprintf(line, room, "%02d%02d%02d|TX|%d|%s", utc.tm_hour, utc.tm_min,
-			utc.tm_sec, m->pitch_hz, m->text);
-	return snprintf(line, room, "%02d%02d%02d|%d|%d|%s", utc.tm_hour, utc.tm_min,
-		utc.tm_sec, m->snr_db, m->pitch_hz, m->text);
-}
-
 void panel_messages_poll(void) {
 	char line[LINK_MESSAGE_LINE_MAX + 1];
 	struct message m;
@@ -73,7 +62,7 @@ void panel_messages_poll(void) {
 	if (panel_is_waiting(LINK_MESSAGES))
 		return;
 	while (used + (int)sizeof(line) <= (int)sizeof(part) && message_next(&last_sent, &m)) {
-		length = make_a_line(line, sizeof(line), &m);
+		length = message_line(&m, line, sizeof(line));
 		if (length > LINK_MESSAGE_LINE_MAX)
 			length = LINK_MESSAGE_LINE_MAX;
 		memcpy(part + used, line, length);

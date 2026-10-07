@@ -1155,6 +1155,11 @@ static void messages_print(void) {
 		fflush(stdout);
 }
 
+// a client's click on a message, as the panel's is
+static void answer_message(const char *line) {
+	ft8_qso_answer(line);
+}
+
 static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
@@ -1178,6 +1183,7 @@ static void main_loop(void) {
 		panel_cw_poll(now_ms());
 		ft8_qso_poll();
 		panel_messages_poll();
+		server_send_messages();
 		radio_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
@@ -1238,6 +1244,7 @@ int main(int argc, char **argv) {
 		set_setting("AUDIO", volume, ORIGIN_TERMINAL);
 	panel_controls_describe();
 
+	server_on_answer(answer_message);
 	if (server_open(SERVER_PORT) < 0)
 		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);
 	else

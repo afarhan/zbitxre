@@ -26,3 +26,4 @@ void message_add(const char *mode, time_t at, int snr_db, int pitch_hz,
 	const char *text);
 void message_add_sent(const char *mode, time_t at, int pitch_hz, const char *text);
 int message_next(unsigned long *last_read, struct message *m);
+int message_line(const struct message *m, char *line, int room);

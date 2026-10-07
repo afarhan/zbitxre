@@ -64,6 +64,7 @@
 
 #include "board.h"
 #include "hw_stand_ins.h"
+#include "messages.h"
 #include "gpio.h"
 #include "key.h"
 #include "sdr.h"
@@ -682,6 +683,13 @@ static struct control stepped = {
 };
 
 // how many times a line beginning with this appears in what was heard
+#define ANSWER_ROOM 128
+static char answered[ANSWER_ROOM];
+
+static void keep_the_answer(const char *line) {
+	snprintf(answered, sizeof(answered), "%s", line);
+}
+
 static int count_lines(const char *heard, const char *beginning) {
 	const char *at = heard;
 	int count = 0;
@@ -963,7 +971,41 @@ int main(void) {
 	expect(!has(heard, "SPECTRUM") && !server_wants_spectrum(),
 		"and not after it says spectrum off");
 
-	close(other);
+say(one, "time\n");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(has(heard, "TIME ") && !has(other_heard, "TIME"),
+		"a client that asks the time is told it, and no other is");
+
+	message_add("FT8", 15 * 3600 + 30 * 60 + 15, -12, 1797, "CQ VU2ESE MK97");
+	server_send_messages();
+	hear(one, heard);
+	expect(!has(heard, "MESSAGE"), "a message copied is not sent to a client that has not asked");
+	say(one, "messages on\n");
+	server_send_messages();
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(has(heard, "MESSAGE 153015|-12|1797|CQ VU2ESE MK97\n")
+			&& !has(other_heard, "MESSAGE"),
+		"one that asks is sent what was copied before, and no other is");
+	message_add_sent("FT8", 15 * 3600 + 30 * 60 + 30, 1500, "VU2ESE G0XYZ R-07");
+	server_send_messages();
+	hear(one, heard);
+	expect(has(heard, "MESSAGE 153030|TX|1500|VU2ESE G0XYZ R-07\n")
+			&& !has(heard, "CQ VU2ESE"),
+		"and then each as it comes, once, what the radio sent among them");
+	server_on_answer(keep_the_answer);
+	say(one, "answer 153015|-12|1797|CQ VU2ESE MK97\n");
+	hear(one, heard);
+	expect(!strcmp(answered, "153015|-12|1797|CQ VU2ESE MK97"),
+		"a message sent back after the word answer is handed on to be answered");
+	say(one, "messages off\n");
+	message_add("FT8", 15 * 3600 + 30 * 60 + 45, -3, 900, "CQ G0XYZ IO91");
+	server_send_messages();
+	hear(one, heard);
+	expect(!has(heard, "MESSAGE"), "and none after it says messages off");
+
+		close(other);
 	serve_a_while();
 	other = connect_a_client();
 	hear(other, other_heard);

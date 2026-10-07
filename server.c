@@ -66,6 +66,38 @@
 // client that cannot keep up misses lines rather than falling behind: how
 // is below.
 //
+// A client that sends "messages on" is sent what the radio copies off the
+// air, FT8's messages, a line each as it is copied, beginning with what
+// the radio still has of what was copied before; messages.c says what is
+// in a line:
+//
+//     MESSAGE 043015|-12|1797|CQ VU2ESE MK97
+//
+// until it sends "messages off". A message is not the radio's state, as a
+// control's value is, so none is left out for a slow client: each client
+// has its own place in what messages.c keeps, and is sent on from there
+// as its socket takes them. One that stalls for longer than messages.c
+// keeps misses the oldest.
+//
+// A client answers a message, as the front panel does with a click on it,
+// by sending the message's line back after the word answer:
+//
+//     answer 043015|-12|1797|CQ VU2ESE MK97
+//
+// What is done with it is not the server's business; whoever opened the
+// server says, with server_on_answer().
+//
+// A client that sends time is answered with the radio's time, in UTC, as
+// seconds since 1970, or 0 while the radio does not know the time:
+//
+//     TIME 1791397105
+//
+// The radio's CLOCK says the time each minute, which is as often as it
+// changes for a control; a client that shows the seconds asks this once,
+// counts on from it by its own clock, and has the start of each minute
+// from CLOCK. The radio's time is hw/radio_clock.c's, which may be ahead
+// of or behind the computer's own.
+//
 // A line the radio will not take is answered, to that client alone, with
 // ERROR, the name, and what it would take:
 //
@@ -139,6 +171,8 @@
 #include <unistd.h>
 
 #include "control.h"
+#include "messages.h"
+#include "radio_clock.h"
 #include "server.h"
 
 #define LINE_MAX_LENGTH 128
@@ -150,6 +184,8 @@
 #define LABEL_ROOM 16
 #define SPECTRUM_LINE_MAX (2 * SERVER_SPECTRUM_POINTS_MAX + 32)
 #define HEX_DIGITS "0123456789abcdef"
+#define MESSAGE_LINE_MAX (MESSAGE_TEXT_ROOM + 48)
+#define ANSWER_WORD "answer "
 
 struct client {
 	int fd;
@@ -158,8 +194,12 @@ struct client {
 	char out[OUT_MAX];
 	int out_count;
 	int wants_spectrum;
+	int wants_messages;
+	unsigned long last_message;
 	uint8_t changed[CONTROLS_MAX];
 };
+
+static void (*answer_a_message)(const char *line);
 
 static int listener = NOBODY;
 static struct client clients[SERVER_CLIENTS_MAX];
@@ -203,6 +243,7 @@ static void client_close(struct client *c) {
 	c->in_count = 0;
 	c->out_count = 0;
 	c->wants_spectrum = 0;
+	c->wants_messages = 0;
 }
 
 void server_close(void) {
@@ -359,6 +400,31 @@ void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
 	}
 }
 
+void server_on_answer(void (*answer)(const char *line)) {
+	answer_a_message = answer;
+}
+
+// to each client that asked, the messages copied since it was last sent
+// any, as many as there is room to queue for it
+void server_send_messages(void) {
+	char text[MESSAGE_LINE_MAX];
+	char line[MESSAGE_LINE_MAX + LABEL_ROOM];
+	struct message m;
+	struct client *c;
+
+	if (listener == NOBODY)
+		return;
+	for (c = clients; c < clients + SERVER_CLIENTS_MAX; c++) {
+		while (c->fd != NOBODY && c->wants_messages
+				&& c->out_count + (int)sizeof(line) <= OUT_MAX
+				&& message_next(&c->last_message, &m)) {
+			message_line(&m, text, sizeof(text));
+			snprintf(line, sizeof(line), "MESSAGE %s\n", text);
+			client_queue_line(c, line);
+		}
+	}
+}
+
 static void send_all_settings(struct client *client) {
 	int i;
 
@@ -411,6 +477,7 @@ static void accept_client(void) {
 	clients[i].in_count = 0;
 	clients[i].out_count = 0;
 	clients[i].wants_spectrum = 0;
+	clients[i].wants_messages = 0;
 	memset(clients[i].changed, 0, sizeof(clients[i].changed));
 	send_all_settings(&clients[i]);
 }
@@ -418,6 +485,7 @@ static void accept_client(void) {
 static void handle_line(struct client *c, char *line) {
 	char why[WHY_MAX];
 	char answer[LINE_MAX_LENGTH + WHY_MAX + LABEL_ROOM];
+	time_t now = 0;
 	char *value;
 
 	if (!strcmp(line, "?")) {
@@ -434,6 +502,27 @@ static void handle_line(struct client *c, char *line) {
 	}
 	if (!strcmp(line, "spectrum off")) {
 		c->wants_spectrum = 0;
+		return;
+	}
+	if (!strcmp(line, "time")) {
+		if (radio_clock_now(&now) == RADIO_CLOCK_NOT_SET)
+			now = 0;
+		snprintf(answer, sizeof(answer), "TIME %lld\n", (long long)now);
+		client_queue_line(c, answer);
+		return;
+	}
+	if (!strcmp(line, "messages on")) {
+		c->wants_messages = 1;
+		c->last_message = 0;
+		return;
+	}
+	if (!strcmp(line, "messages off")) {
+		c->wants_messages = 0;
+		return;
+	}
+	if (!strncmp(line, ANSWER_WORD, strlen(ANSWER_WORD))) {
+		if (answer_a_message != NULL)
+			answer_a_message(line + strlen(ANSWER_WORD));
 		return;
 	}
 	value = strchr(line, ' ');
