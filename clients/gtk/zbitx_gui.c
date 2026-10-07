@@ -44,9 +44,22 @@
 // did. A modem's own controls are shown only in its modes: a control in
 // the group CW in CW and CWR, one in VOICE in USB, LSB and AM.
 //
-// The frequency's box has the VFO in use in its top left corner, and
-// beside it where the transmitter is to be when that is elsewhere, as with
-// RIT or SPLIT on; in its top right corner is the time in UTC, to the
+// The frequency's box has two lines, as zbitxv2's window had, by its
+// draw_dial(): a small one over a large one. The large line is the
+// frequency in use and the small line the one in waiting, each with what
+// it is before it:
+//
+//   as a rule            small  the other VFO, "B:7.050.000"
+//                        large  the VFO in use, "A:7.100.000"; while the
+//                               radio transmits, "TX:7.100.000"
+//   RIT or SPLIT on      small  where the transmitter is to be, "TX:..."
+//                        large  where the receiver listens, "RX:..."
+//                        and the two change places while the radio
+//                        transmits, so that the large line is always
+//                        where the radio is working
+//
+// A VFO not yet used is shown where the other is, which is where it would
+// open. In the box's top right corner is the time in UTC, to the
 // second, with a Z after it, as on the panel, "01:15:22Z", and "--:--:--Z"
 // while the radio does not know the time. It is the radio's time and not
 // this computer's: the window asks the radio the time once, on connecting,
@@ -267,7 +280,7 @@
 #define CORNER_SIZE 9
 #define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
-#define FREQUENCY_SIZE 19
+#define FREQUENCY_SIZE 17
 #define STATUS_SIZE 10
 #define SPAN_LEFT 3
 #define SPAN_BASELINE 11
@@ -687,24 +700,48 @@ static int choice_at(const char *choices, int n, char *choice, int room) {
 	return 0;
 }
 
-// the frequency where the receiver listens, in large figures; over it the
-// VFO in use and, when the transmitter is to be elsewhere, where; and the
-// time in UTC
+// one line of the frequency's box: what the frequency is, and the frequency
+static void format_dial_line(char *text, int room, const char *what, int hz) {
+	char figures[TEXT_MAX / 2];
+
+	format_frequency(figures, sizeof(figures), hz);
+	snprintf(text, room, "%.2s:%s", what, figures);
+}
+
+// the frequency's two lines, as zbitxv2's draw_dial() had them: the large
+// one is where the radio is working and the small one what is in waiting
 static void show_frequency(void) {
 	int receive_hz = receiver_hz();
 	int transmit_hz = transmitter_hz();
-	char receive[TEXT_MAX];
-	char transmit[TEXT_MAX];
-	char over[TEXT_MAX * 2];
+	int is_transmitting = is_on("TX");
+	int other = VFO_B;
+	const char *other_name = "B";
+	char small_line[TEXT_MAX];
+	char large_line[TEXT_MAX];
 
-	format_frequency(receive, sizeof(receive), receive_hz);
-	gtk_label_set_text(GTK_LABEL(frequency_label), receive);
-	snprintf(over, sizeof(over), "%s:", value_of("VFO"));
-	if (transmit_hz != receive_hz) {
-		format_frequency(transmit, sizeof(transmit), transmit_hz);
-		snprintf(over, sizeof(over), "%s: TX %s", value_of("VFO"), transmit);
+	if (vfo_in_use == VFO_B) {
+		other = VFO_A;
+		other_name = "A";
 	}
-	gtk_label_set_text(GTK_LABEL(vfo_label), over);
+	if (receive_hz != transmit_hz && is_transmitting) {
+		format_dial_line(small_line, sizeof(small_line), "RX", receive_hz);
+		format_dial_line(large_line, sizeof(large_line), "TX", transmit_hz);
+	}
+	else if (receive_hz != transmit_hz) {
+		format_dial_line(small_line, sizeof(small_line), "TX", transmit_hz);
+		format_dial_line(large_line, sizeof(large_line), "RX", receive_hz);
+	}
+	else {
+		format_dial_line(small_line, sizeof(small_line), other_name, dial_hz);
+		if (vfo_dial_hz[other] != 0)
+			format_dial_line(small_line, sizeof(small_line), other_name,
+				vfo_dial_hz[other]);
+		format_dial_line(large_line, sizeof(large_line), value_of("VFO"), dial_hz);
+		if (is_transmitting)
+			format_dial_line(large_line, sizeof(large_line), "TX", dial_hz);
+	}
+	gtk_label_set_text(GTK_LABEL(vfo_label), small_line);
+	gtk_label_set_text(GTK_LABEL(frequency_label), large_line);
 	set_class(frequency_box, "focused", focus == ON_FREQUENCY);
 }
 
