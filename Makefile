@@ -54,7 +54,8 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
-	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger
+	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
+	$(BUILD)/test_sbitxv3
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -91,6 +92,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_ft8_qso
 	$(BUILD)/test_cw_decoder
 	$(BUILD)/test_logger
+	$(BUILD)/test_sbitxv3
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -139,6 +141,9 @@ STAND_INS   = tests/hw_stand_ins.c hw/board.c hw/si5351.c hw/radio_clock.c
 
 $(BUILD)/test_am: tests/test_am.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_am.c $(DSP) $(STAND_INS) -lpthread -lm
+
+$(BUILD)/test_sbitxv3: tests/test_sbitxv3.c $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_sbitxv3.c $(DSP) $(STAND_INS) -lpthread -lm
 
 $(BUILD)/test_cw_decoder: tests/test_cw_decoder.c $(DSP) $(STAND_INS) $(DSP_HEADERS) \
 		$(HW_HEADERS) | $(BUILD)

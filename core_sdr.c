@@ -232,6 +232,11 @@ static atomic_int tx_drive = 40;
 static int tx_gain = 100;
 //tx_amp in millionths, so that the audio thread reads it whole
 static atomic_int tx_amp_millionths = 0;
+//the largest sample sent to the transmitter while it is on, and in the
+//transmission before, for "stat:tx_peak": what the sound card is given,
+//told apart from what the hardware makes of it
+static atomic_int tx_peak = 0;
+static atomic_int tx_peak_before = 0;
 //zbitxv2's user interface sets this as it starts, with set_volume(20000000),
 //and tx_process() scales what it sends by it
 static double volume = 20000000.0;
@@ -244,6 +249,8 @@ static atomic_int reset_wanted = 0;
 
 #define MICROS_PER_MILLI 1000
 #define MILLIONTHS 1000000.0
+#define SAMPLE_FULL_SCALE 2147483647.0
+#define DB_OF_AMPLITUDE 20.0
 #define TX_MUTE_BLOCKS 20
 
 //the waits of tr_switch(), in milliseconds, as zbitxv2 had them
@@ -471,6 +478,10 @@ static void set_rx1(int frequency){
 		return;
 	radio_tune_to(frequency);
 	freq_hdr = frequency;
+	//where the receiver hears through the low-pass filters, the one for
+	//the new frequency is put in; a transmission keeps the one it began with
+	if (board_in_use()->is_filter_in_receive && !in_tx)
+		board_select_filter(frequency);
 }
 
 static void tx_init(int frequency, short mode, int bpf_low, int bpf_high){
@@ -933,10 +944,14 @@ static void tx_process(
 	fft_execute(r->plan_rev, r->fft_freq, r->fft_time);
 	float scale = volume;
 	double tx_amp = atomic_load(&tx_amp_millionths) / MILLIONTHS;
+	int peak = atomic_load(&tx_peak);
 	for (i= 0; i < MAX_BINS/2; i++){
 		double s = creal(r->fft_time[i+(MAX_BINS/2)]);
 		output_tx[i] = s * scale * tx_amp;
+		if (abs(output_tx[i]) > peak)
+			peak = abs(output_tx[i]);
 	}
+	atomic_store(&tx_peak, peak);
 }
 
 /*
@@ -1008,9 +1023,17 @@ static void set_rx_filter(){
 	center_bin, if they are there, are the radio's own too and are
 	taken in place of the board's, and so are tr_switch()'s three
 	waits, tr_rx_drain_ms, tr_filter_settle_ms and tr_tx_drain_ms.
-	a radio with no such file works with zbitxv2's figures.
+
+	the file is read first, before a pin is touched, as sbitx.c read
+	it, because it says which radio this is: radio=zbitx. the name
+	picks the board's table, and hw/board.c says how. a radio whose
+	file does not say is not opened: the tables differ in which pin
+	powers the transmitter, and a guess could key one.
 */
 #define HW_LINE_MAX 200
+
+static int bfo_freq_of_radio;
+static int center_bin_of_radio;
 
 static void hw_settings_handler(const char *name, const char *value){
 	static int hw_init_index = 0;
@@ -1024,9 +1047,9 @@ static void hw_settings_handler(const char *name, const char *value){
 			band_power[hw_init_index++].scale = atof(value);
 	}
 	if (!strcmp(name, "bfo_freq"))
-		bfo_freq = atoi(value);
+		bfo_freq_of_radio = atoi(value);
 	if (!strcmp(name, "center_bin"))
-		center_bin = atoi(value);
+		center_bin_of_radio = atoi(value);
 	if (!strcmp(name, "tr_rx_drain_ms") && tr_wait_ok(atoi(value)))
 		tr_rx_drain_ms = atoi(value);
 	if (!strcmp(name, "tr_filter_settle_ms") && tr_wait_ok(atoi(value)))
@@ -1083,12 +1106,18 @@ static void tr_switch(int tx_on){
 		mute_count = TX_MUTE_BLOCKS;
 		tx_process_restart = 1;
 		set_tx_power_levels();
+		atomic_store(&tx_peak, 0);
 		in_tx = 1;
 
 		board_receiver_power(0);
 
 		//first turn off the LPFs, so PA doesnt connect
 		board_release_filters();
+
+		//a board with one T/R line goes over to transmit here, with
+		//its filters out, as sbitx.c's tr_switch_v2() did
+		if (board_in_use()->is_power_before_filter)
+			board_transmitter_power(1);
 
 		//the receiver's circuits drain
 		delay(tr_rx_drain_ms);
@@ -1101,7 +1130,11 @@ static void tr_switch(int tx_on){
 	else {
 
 		in_tx = 0;
-		board_transmitter_power(0);
+		atomic_store(&tx_peak_before, atomic_load(&tx_peak));
+		//a board with one T/R line stays on it until its filters are
+		//out, as sbitx.c's tr_switch_v2() did
+		if (!board_in_use()->is_power_before_filter)
+			board_transmitter_power(0);
 
 		delay(TR_TX_OFF_MS);
 		rx_process_restart = 1;
@@ -1110,8 +1143,12 @@ static void tr_switch(int tx_on){
 		board_release_filters();
 		//power down the PA chain to null any gain
 		delay(tr_tx_drain_ms);
+		board_transmitter_power(0);
 		reset_wanted = 1;
 		board_receiver_power(1);
+		//the receiver of such a board hears through the filter
+		if (board_in_use()->is_filter_in_receive)
+			board_select_filter(freq_hdr);
 	}
 }
 
@@ -1129,9 +1166,18 @@ static void setup_oscillators(){
 	si5351_reset_plls();
 }
 
-int setup(const struct board *board){
-	if (is_set_up || board == NULL)
+int setup(void){
+	const struct board *board;
+
+	if (is_set_up)
 		return -1;
+	board = board_named_in(hw_settings_file);
+	if (board == NULL){
+		printf("%s does not say which radio this is: it needs a line radio=zbitx or radio=sbitxv3\n",
+			hw_settings_file);
+		return -1;
+	}
+	read_hw_ini();
 	if (board_open(board) < 0)
 		return -1;
 	if (i2c_open_bus_of(SI5351_ADDRESS) < 0)
@@ -1139,7 +1185,10 @@ int setup(const struct board *board){
 
 	bfo_freq = board->bfo_hz;
 	center_bin = board->centre_bin;
-	read_hw_ini();
+	if (bfo_freq_of_radio > 0)
+		bfo_freq = bfo_freq_of_radio;
+	if (center_bin_of_radio > 0)
+		center_bin = center_bin_of_radio;
 
 	fft_init();
 	vfo_init_phase_table();
@@ -1208,6 +1257,21 @@ void sdr_request(char *request, char *response){
 			strcpy(response, "ok on");
 		else
 			strcpy(response, "ok off");
+	}
+	//the largest sample sent to the transmitter, in dB below the sound
+	//card's full scale, in this transmission or the one before, and the
+	//drive times the band's scale it was sent at
+	else if (!strcmp(cmd, "stat:tx_peak")){
+		int peak = atomic_load(&tx_peak_before);
+		if (in_tx)
+			peak = atomic_load(&tx_peak);
+		if (peak <= 0)
+			sprintf(response, "nothing sent, level %.4f",
+				atomic_load(&tx_amp_millionths) / MILLIONTHS);
+		else
+			sprintf(response, "%.1f dBFS, level %.4f",
+				DB_OF_AMPLITUDE * log10(peak / SAMPLE_FULL_SCALE),
+				atomic_load(&tx_amp_millionths) / MILLIONTHS);
 	}
 	else if (!strcmp(cmd, "r1:freq")){
 		int d = atoi(value);

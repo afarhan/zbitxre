@@ -18,6 +18,7 @@ struct board_filter {
 };
 
 struct board {
+	const char *radio;
 	const char *name;
 	int transmitter_pin;
 	int receiver_pin;
@@ -25,11 +26,16 @@ struct board {
 	int key_pin;
 	uint32_t bfo_hz;
 	int centre_bin;
+	int is_filter_in_receive;
+	int is_power_before_filter;
 	struct board_filter filter[BOARD_FILTERS_MAX + 1];
 };
 
 extern const struct board board_zbitx_1;
+extern const struct board board_sbitx_v3;
 
+const struct board *board_find(const char *radio);
+const struct board *board_named_in(const char *settings_file);
 int board_open(const struct board *which);
 void board_close(void);
 const struct board *board_in_use(void);

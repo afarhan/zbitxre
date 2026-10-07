@@ -1210,11 +1210,11 @@ int main(int argc, char **argv) {
 	started_at_s = monotonic_s();
 	start_check_at_ms = now_ms() + START_CHECK_AFTER_MS;
 	is_start_check_due = 1;
-	if (setup(&board_zbitx_1) < 0) {
+	if (setup() < 0) {
 		printf("the radio did not open\n");
 		return 1;
 	}
-	printf("radio open on the %s\n", board_zbitx_1.name);
+	printf("radio open on the %s\n", board_in_use()->name);
 
 	panel_open();
 	radio_open();

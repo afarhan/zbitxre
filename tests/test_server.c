@@ -764,7 +764,8 @@ int main(void) {
 	int sidetone_length;
 	int i;
 
-	if (setup(&board_zbitx_1) < 0) {
+	hw_stand_in_radio(board_zbitx_1.radio);
+	if (setup() < 0) {
 		printf("could not set up\n");
 		return EXIT_FAILURE;
 	}

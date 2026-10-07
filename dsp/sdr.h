@@ -185,7 +185,7 @@ extern char hw_settings_file[];
 extern int freq_hdr;
 extern int bfo_freq;
 
-int setup(const struct board *board);
+int setup(void);
 void teardown(void);
 
 void sdr_request(char *request, char *response);

@@ -223,7 +223,8 @@ int main(void) {
 	char spectrum[READ_ROOM];
 
 	printf("CW decoder:\n");
-	if (setup(board) < 0) {
+	hw_stand_in_radio(board->radio);
+	if (setup() < 0) {
 		printf("the receiver did not open\n");
 		return EXIT_FAILURE;
 	}

@@ -20,10 +20,15 @@
 // Turning a pin into an input or an output rewrites a register that ten pins
 // share, and setting a pull takes two waits, so both are for start-up only.
 //
-// A pull is set the way the BCM2835 asks: name the pull, wait, clock it into
-// the pin, wait, then clear each register with a wait after it. That holds for
-// every Pi up to the 3 and for the Zero 2W. The Pi 4 and 5 set pulls
-// differently; gpiolib handles them and this file does not.
+// A pull is set the way the Pi's processor asks, and there are two ways.
+// The BCM2835's, which holds for every Pi up to the 3 and for the Zero 2W
+// in the zbitx: name the pull, wait, clock it into the pin, wait, then clear
+// each register with a wait after it. The BCM2711's, in the Pi 4 of the
+// sbitx: each pin has two bits of its own in four registers further on,
+// written once, and there the numbers for up and down are the other way
+// round. Which processor it is, is told as gpiolib tells it: where the
+// BCM2711 has the last of those four registers, the older ones read back
+// the letters "gpio". The Pi 5 is different again and is not handled.
 //
 // Every function that can fail returns 0, or -1 with errno set.
 
@@ -52,6 +57,15 @@
 #define FUNCTION_OUTPUT   1u
 
 #define PULL_SETTLE_US    10
+
+#define REG_PULL_2711       57
+#define REG_PULL_2711_LAST  60
+#define NO_SUCH_REGISTER    0x6770696fu
+#define PINS_PER_PULL_2711  16
+#define BITS_PER_PULL_2711  2
+#define PULL_MASK_2711      3u
+#define PULL_UP_2711        1u
+#define PULL_DOWN_2711      2u
 
 static volatile uint32_t *registers;
 
@@ -101,7 +115,27 @@ static void set_function(int pin, uint32_t function) {
 	registers[reg] = value;
 }
 
+static void set_pull_2711(int pin, int pull) {
+	uint32_t value;
+	uint32_t bits = 0;
+	int reg = REG_PULL_2711 + pin / PINS_PER_PULL_2711;
+	int shift = (pin % PINS_PER_PULL_2711) * BITS_PER_PULL_2711;
+
+	if (pull == GPIO_PULL_UP)
+		bits = PULL_UP_2711;
+	if (pull == GPIO_PULL_DOWN)
+		bits = PULL_DOWN_2711;
+	value = registers[reg];
+	value &= ~(PULL_MASK_2711 << shift);
+	value |= bits << shift;
+	registers[reg] = value;
+}
+
 static void set_pull(int pin, int pull) {
+	if (registers[REG_PULL_2711_LAST] != NO_SUCH_REGISTER) {
+		set_pull_2711(pin, pull);
+		return;
+	}
 	registers[REG_PULL] = (uint32_t)pull;
 	usleep(PULL_SETTLE_US);
 	registers[REG_PULL_CLOCK] = 1u << pin;

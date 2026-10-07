@@ -124,7 +124,8 @@ static unsigned int oscillator(void) {
 }
 
 static void open_the_receiver(void) {
-	if (setup(&board_zbitx_1) < 0) {
+	hw_stand_in_radio(board_zbitx_1.radio);
+	if (setup() < 0) {
 		printf("the receiver did not open\n");
 		exit(EXIT_FAILURE);
 	}

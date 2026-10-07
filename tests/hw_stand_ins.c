@@ -19,15 +19,23 @@
 // test's time moves only as blocks go by. hw_stand_in_key() closes or opens
 // a contact at a time from now, and key_take_event() reports it once that
 // time has come, moving the contact's pin as it does.
+//
+// Which radio it is, setup() reads from the radio's hw_settings.ini. A test
+// says which with hw_stand_in_radio() before it calls setup(): a file of
+// that one line is written for the occasion and the core is pointed at it.
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "audio.h"
 #include "gpio.h"
 #include "i2c.h"
 #include "board.h"
 #include "key.h"
+#include "sdr.h"
 #include "hw_stand_ins.h"
 
 #define PINS 64
@@ -145,6 +153,28 @@ int audio_set_transmitter(int percent) {
 int audio_set_microphone(int percent) {
 	(void)percent;
 	return 0;
+}
+
+static char radio_file[] = "/tmp/zbitxre_hw_settings_XXXXXX";
+
+static void remove_radio_file(void) {
+	unlink(radio_file);
+}
+
+void hw_stand_in_radio(const char *radio) {
+	char *path = radio_file;
+	char line[HW_SETTINGS_PATH_MAX];
+	int file;
+	int length;
+
+	file = mkstemp(path);
+	if (file < 0)
+		return;
+	length = snprintf(line, sizeof(line), "radio=%s\n", radio);
+	if (write(file, line, length) == length)
+		snprintf(hw_settings_file, HW_SETTINGS_PATH_MAX, "%s", path);
+	close(file);
+	atexit(remove_radio_file);
 }
 
 void hw_stand_in_block(struct audio_block *block) {
