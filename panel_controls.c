@@ -14,7 +14,9 @@
 // nothing here says where a control is shown.
 //
 // A control is known on the link by a number. FREQ and AUDIO have the
-// numbers they always had; the rest are numbered in the order of the table.
+// numbers they always had, and the meter's POWER, SWR and BATTERY have
+// numbers of their own too, since the panel sends them without being told
+// of them; the rest are numbered in the order of the table.
 //
 // A number's value goes as it is. A choice's goes as which of its choices
 // it is, counted from 0, and comes back the same way. An action has no
@@ -48,6 +50,19 @@
 #define NOT_ON_THE_LINK 0
 #define CHOICES_BETWEEN '/'
 
+// the controls whose numbers on the link are always the same
+static const struct {
+	const char *name;
+	uint8_t number;
+} fixed[] = {
+	{ "FREQ", LINK_FREQ },
+	{ "AUDIO", LINK_VOLUME },
+	{ "POWER", LINK_POWER },
+	{ "SWR", LINK_SWR },
+	{ "BATTERY", LINK_BATTERY },
+};
+#define FIXED ((int)(sizeof(fixed) / sizeof(fixed[0])))
+
 static uint8_t number_of[CONTROLS_MAX];
 static uint8_t said[LINK_COUNTED_MAX];
 static int next_to_describe;
@@ -60,15 +75,16 @@ static void number_the_controls(void) {
 	const struct control *c;
 	int next = LINK_FIRST_DESCRIBED;
 	int i;
+	int f;
 
 	memset(number_of, NOT_ON_THE_LINK, sizeof(number_of));
 	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
 		c = control_at(i);
-		if (!strcmp(c->name, "FREQ"))
-			number_of[i] = LINK_FREQ;
-		else if (!strcmp(c->name, "AUDIO"))
-			number_of[i] = LINK_VOLUME;
-		else if (next < LINK_CONTROLS)
+		for (f = 0; f < FIXED; f++) {
+			if (!strcmp(c->name, fixed[f].name))
+				number_of[i] = fixed[f].number;
+		}
+		if (number_of[i] == NOT_ON_THE_LINK && next < LINK_CONTROLS)
 			number_of[i] = (uint8_t)next++;
 	}
 }

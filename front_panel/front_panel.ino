@@ -130,6 +130,7 @@ void setup() {
   waterfall_init();
   Serial.println("the screen is up");
   i2c_link_init();
+  meter_init();
 }
 
 //a line that begins with '#' is a note: the rest of it, up to the end of
@@ -174,6 +175,7 @@ void on_serial(int c) {
     take_a_touch();
   if (c == ASK_ABOUT_LINK) {
     i2c_link_report();
+    meter_print();
     waterfall_report();
     ui_report();
   }
@@ -241,6 +243,7 @@ void loop() {
   screens_slice();
   messages_slice();
   waterfall_slice();
+  meter_slice();
   if (Serial.available())
     on_serial(Serial.read());
 }

@@ -226,10 +226,16 @@ void ui_init(){
 
 /* how much LVGL has painted since this was last asked */
 void ui_report(){
+  lv_mem_monitor_t memory;
+
   Serial.printf("screen: painted %lu times, %lu pixels, since the last report\n",
     flushes, pixels_flushed);
   flushes = 0;
   pixels_flushed = 0;
+  lv_mem_monitor(&memory);
+  Serial.printf("lvgl memory: %lu of %lu bytes used, %lu free in one piece at most\n",
+    (unsigned long)(memory.total_size - memory.free_size), (unsigned long)memory.total_size,
+    (unsigned long)memory.free_biggest_size);
 }
 
 /* sends the whole screen, as LVGL draws it, to whoever is on the serial port.

@@ -37,7 +37,10 @@
 //
 //     first      the high two bits are the size of the value: 0 is one byte,
 //                1 is two, 2 is four, 3 is counted. The low six bits are the
-//                control.
+//                control, or 63 when the control is 63 or more, and then
+//     control    the control, a byte of its own. The radio has more controls
+//                than six bits hold; those that always had their numbers,
+//                and the first of the rest, go as they always went
 //     count      only if counted: how many bytes of value follow
 //     value      low byte first
 //
@@ -177,9 +180,18 @@
 //
 // A control that is offered waits until the other side says it took the
 // frame the control went in. If it is offered again meanwhile, it goes out
-// afresh, in a frame with a new number, and everything else still waiting
-// goes with it. So only the newest value of a control is ever sent: ten
-// steps of the knob between two polls are one record.
+// afresh, in the next frame. So only the newest value of a control is ever
+// sent: ten steps of the knob between two polls are one record.
+//
+// A new frame is not made until the other side has said it took the last
+// one; until then the last is said again, under its number. A new frame
+// carries everything still waiting, and the other side may have taken the
+// last frame and not yet said so: the records in it would be taken twice.
+// For a value that is harmless, but a part of a text would be taken whole
+// twice, and an FT8 station was answered five times, when the panel's
+// battery reading, changing at each look, kept making new frames. It
+// costs no time: the radio reads the panel's frame and then writes its own,
+// saying what it took, so the panel's next frame is ready by the next poll.
 //
 // A frame whose check is wrong is dropped whole. Nothing says it was taken,
 // so it comes again.
@@ -214,6 +226,7 @@
 
 #define SIZE_SHIFT 6
 #define CONTROL_MASK 0x3f
+#define CONTROL_FOLLOWS 0x3f
 #define SIZE_ONE 0
 #define SIZE_TWO 1
 #define SIZE_FOUR 2
@@ -342,32 +355,64 @@ static int something_new_is_waiting(const struct link_end *end) {
 	return 0;
 }
 
+// whether the frame last made has things in it the other side has not yet
+// said it took
+static int is_unanswered(const struct link_end *end) {
+	int i;
+
+	for (i = 0; i < LINK_CONTROLS; i++) {
+		if (end->control[i].is_waiting && end->control[i].went_under != 0
+				&& end->control[i].went_under == end->number)
+			return 1;
+	}
+	return 0;
+}
+
 static uint8_t number_after(uint8_t number) {
 	if (number >= HIGHEST_NUMBER)
 		return 1;
 	return number + 1;
 }
 
-static int length_to_put(const struct link_control *c) {
+// the record's first byte, and the control's own byte after it if it does
+// not fit in the first
+static int header_length(int control) {
+	if (control >= CONTROL_FOLLOWS)
+		return 2;
+	return 1;
+}
+
+static int length_to_put(int control, const struct link_control *c) {
 	if (c->counted != NULL)
-		return 2 + c->bytes;
-	return 1 + c->bytes;
+		return header_length(control) + 1 + c->bytes;
+	return header_length(control) + c->bytes;
+}
+
+static int put_header(uint8_t *at, int control, int size_code) {
+	if (control < CONTROL_FOLLOWS) {
+		at[0] = (uint8_t)((size_code << SIZE_SHIFT) | control);
+		return 1;
+	}
+	at[0] = (uint8_t)((size_code << SIZE_SHIFT) | CONTROL_FOLLOWS);
+	at[1] = (uint8_t)control;
+	return 2;
 }
 
 static int put_record(uint8_t *at, int control, const struct link_control *c) {
 	uint32_t value = (uint32_t)c->value;
+	int used;
 	int i;
 
 	if (c->counted != NULL) {
-		at[0] = (uint8_t)((SIZE_COUNTED << SIZE_SHIFT) | control);
-		at[1] = c->bytes;
-		memcpy(at + 2, c->counted, c->bytes);
-		return 2 + c->bytes;
+		used = put_header(at, control, SIZE_COUNTED);
+		at[used] = c->bytes;
+		memcpy(at + used + 1, c->counted, c->bytes);
+		return used + 1 + c->bytes;
 	}
-	at[0] = (uint8_t)((size_code_of(c->bytes) << SIZE_SHIFT) | control);
+	used = put_header(at, control, size_code_of(c->bytes));
 	for (i = 0; i < c->bytes; i++)
-		at[1 + i] = (uint8_t)(value >> (BITS_IN_A_BYTE * i));
-	return 1 + c->bytes;
+		at[used + i] = (uint8_t)(value >> (BITS_IN_A_BYTE * i));
+	return used + c->bytes;
 }
 
 static int goes_in_this_frame(const struct link_control *c, uint8_t number,
@@ -385,7 +430,7 @@ int link_make_frame(struct link_end *end, uint8_t *frame) {
 	int used;
 	int i;
 
-	is_new_frame = something_new_is_waiting(end);
+	is_new_frame = something_new_is_waiting(end) && !is_unanswered(end);
 	if (is_new_frame)
 		end->number = number_after(end->number);
 
@@ -394,7 +439,7 @@ int link_make_frame(struct link_end *end, uint8_t *frame) {
 		c = &end->control[i];
 		if (!goes_in_this_frame(c, end->number, is_new_frame))
 			continue;
-		if (used + length_to_put(c) + CHECK_BYTES > end->room)
+		if (used + length_to_put(i, c) + CHECK_BYTES > end->room)
 			continue;
 		used += put_record(frame + used, i, c);
 		c->went_under = end->number;
@@ -441,14 +486,30 @@ static int32_t value_at(const uint8_t *at, int bytes) {
 	return (int32_t)value;
 }
 
+// how many bytes the record's first byte and its control take
+static int header_taken(const uint8_t *at) {
+	if ((at[0] & CONTROL_MASK) == CONTROL_FOLLOWS)
+		return 2;
+	return 1;
+}
+
+static int control_of_record(const uint8_t *at) {
+	if ((at[0] & CONTROL_MASK) == CONTROL_FOLLOWS)
+		return at[1];
+	return at[0] & CONTROL_MASK;
+}
+
+// a record that runs past what is left says it is longer than that, so
+// that the frame is not taken
 static int length_of_record(const uint8_t *at, int left) {
 	int code = at[0] >> SIZE_SHIFT;
+	int header = header_taken(at);
 
-	if (code != SIZE_COUNTED)
-		return 1 + bytes_of_size_code(code);
-	if (left < 2)
+	if (left < header + 1 && (code == SIZE_COUNTED || header > 1))
 		return left + 1;
-	return 2 + at[1];
+	if (code != SIZE_COUNTED)
+		return header + bytes_of_size_code(code);
+	return header + 1 + at[header];
 }
 
 static int records_are_whole(const uint8_t *records, int count) {
@@ -465,15 +526,17 @@ static void take_records(const uint8_t *records, int count, link_took_fn took,
 	int length;
 	int control;
 	int is_counted;
+	int header;
 
 	while (at < count) {
 		length = length_of_record(records + at, count - at);
-		control = records[at] & CONTROL_MASK;
+		control = control_of_record(records + at);
+		header = header_taken(records + at);
 		is_counted = (records[at] >> SIZE_SHIFT) == SIZE_COUNTED;
 		if (is_counted && took_bytes != NULL)
-			took_bytes(control, records + at + 2, length - 2);
+			took_bytes(control, records + at + header + 1, length - header - 1);
 		if (!is_counted && took != NULL)
-			took(control, value_at(records + at + 1, length - 1));
+			took(control, value_at(records + at + header, length - header));
 		at += length;
 	}
 }

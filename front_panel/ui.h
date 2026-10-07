@@ -47,6 +47,12 @@ void i2c_link_changed(int control, int32_t value);
 void i2c_link_report();
 void main_radio_says(int control, int32_t value);
 
+// the SWR bridge and the battery
+void meter_init();
+void meter_slice();
+void meter_print();
+void main_meter(const char *text);
+
 /* saved block of user data*/
 extern struct saved block;
 bool block_read();
@@ -96,6 +102,7 @@ bool messages_answer_marked();
 
 // the link, for text
 void i2c_link_send_text(int number, const char *text);
+bool i2c_link_is_sending_text();
 
 // the other screens
 void screens_open_settings();

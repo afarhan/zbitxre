@@ -53,6 +53,15 @@
 // terminal and to the panel, whose LOG screen asks for the same;
 // panel_log.c and logbook.c say how.
 //
+// A contact in CW or on the voice is logged by hand: "CALL VU2XZ", "SENT
+// 599", "RECV 579", and "EXCH" and "NR" for the exchanges, then "LOGGER
+// SAVE", as the panel's LOG screen does; "LOGGER WIPE" clears them.
+// logger.c says what an entry needs.
+//
+// What the panel measures, the forward power, the SWR and the battery, is
+// not printed as it changes, five times a second as the radio transmits;
+// "report" prints it. radio.c says what the numbers are.
+//
 // What the radio copies off the air, FT8's messages, is printed on the
 // terminal as it is copied, a line to each: the mode, the time in UTC it
 // was sent at, its strength in dB, its pitch in Hz and its text. The same
@@ -107,7 +116,11 @@
 // bin. server.c says how.
 //
 // Some words are the program's own. "report" prints how the sound card and
-// the link have been doing. "panel=off" stops the radio polling the panel
+// the link have been doing, and the largest sample sent to the transmitter
+// in the last transmission, in dB below the sound card's full scale, with
+// the drive times the band's scale it went at: what the sound card was
+// given, so that a transmitter that is weak can be told to be weak in the
+// program or after it. "panel=off" stops the radio polling the panel
 // and "panel=on" starts it again. "spectrum=off" stops the spectrum being
 // sent and "spectrum=on" starts it again. They are there so that the noise
 // each makes in the receiver can be told by ear from the rest. "quit", or
@@ -214,6 +227,7 @@
 #include "panel_cw.h"
 #include "radio_clock.h"
 #include "ft8_qso.h"
+#include "logger.h"
 #include "messages.h"
 #include "panel_wifi.h"
 #include "control.h"
@@ -264,6 +278,9 @@
 // the kernel's times and the program's are not quite the same clock
 #define SYNC_ERROR_SLACK_S 2.0
 #define HZ_PER_KHZ 1000.0
+#define TENTHS 10.0
+#define HUNDREDTHS 100.0
+#define TX_PEAK_ASKED "stat:tx_peak="
 
 #define TX_LIMIT_MS     120000
 #define PTT_SETTLED_MS  30
@@ -316,6 +333,8 @@ static long now_ms(void) {
 static void report(void) {
 	struct audio_report sound;
 	struct panel_report link;
+	char asked[] = TX_PEAK_ASKED;
+	char answer[RESPONSE_MAX];
 
 	audio_get_report(&sound);
 	printf("blocks %lu, gaps %lu, dropped %lu, overflows %lu, "
@@ -336,6 +355,11 @@ static void report(void) {
 		printf("the panel is not being polled\n");
 	else if (!link.is_present)
 		printf("the panel does not answer\n");
+	sdr_request(asked, answer);
+	printf("transmitter: peak %s\n", answer);
+	printf("meter: power %.1f W, swr %.1f, battery %.2f V\n",
+		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
+		control_get_int("BATTERY") / HUNDREDTHS);
 }
 
 static int max_bin_level(int first_bin, int after_last_bin) {
@@ -835,6 +859,8 @@ static void on_control_changed(const struct control *c, int origin) {
 	if (origin != ORIGIN_PANEL)
 		panel_controls_changed(c);
 	settings_changed(c, now_ms());
+	if (!strcmp(c->group, "METER"))
+		return;
 	printf("%s %s\n", c->name, c->value);
 	fflush(stdout);
 }
@@ -1200,6 +1226,7 @@ int main(int argc, char **argv) {
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();
+	logger_open();
 	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);

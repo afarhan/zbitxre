@@ -158,6 +158,7 @@ static void afresh(const char *ops, const char *reply) {
 	set("FT8_REPLY", reply);
 	set("FT8_REPEAT", "4");
 	set("FT8_AUTO", "OFF");
+	set("FT8_TX1ST", "ON");
 	now = (double)T0 - SLOT;
 	set("FT8_DO", "HALT");
 	armed[0] = 0;
@@ -253,8 +254,17 @@ static void check_cq_unanswered(void) {
 	printf("CQ with no answer:\n");
 	afresh("NORMAL", "RR73");
 	call_cq_at(T0 + 3.0);
+	expect(is_armed("CQ VU2ESE MK97", T0 + 2 * SLOT),
+		"with TX1ST ON, pressed three seconds into the slot at :00, CQ waits for :30");
+	call_cq_at(T0 + SLOT + 0.2);
+	expect(is_armed("CQ VU2ESE MK97", T0 + 2 * SLOT),
+		"and pressed at :15, it waits for :30 too");
+
+	afresh("NORMAL", "RR73");
+	set("FT8_TX1ST", "OFF");
+	call_cq_at(T0 + 3.0);
 	expect(is_armed("CQ VU2ESE MK97", T0 + SLOT),
-		"pressed three seconds into a slot, CQ waits for the next");
+		"with TX1ST OFF, pressed three seconds into the slot at :00, CQ goes at :15");
 	for (i = 1; i <= 3; i++)
 		searched_slot(T0 + (2 * i) * SLOT);
 	expect(arms == 3 && logged(rows) == 0 && strstr(said, "no answer"),

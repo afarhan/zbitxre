@@ -51,6 +51,17 @@
 //           start of that minute at the moment it is set. hw/radio_clock.c
 //           says where the time comes from and why it is kept as it is.
 //
+//   POWER, SWR, BATTERY   what the front panel measures, in a group of
+//           their own, METER, so that no list of the radio's controls
+//           shows them and they are not kept from one start to the next.
+//           The panel reads the SWR bridge and the battery, as zbitx's
+//           first panel did, and sends them five times a second, when they
+//           change: the forward power in tenths of a watt, the SWR in
+//           tenths, 13 for 1.3, and the battery in hundredths of a volt.
+//           front_panel/meter.cpp says how they are measured. They are
+//           here, in the table, so that every client is told of them as of
+//           any control; nothing in the radio acts on them.
+//
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.
 //
@@ -120,6 +131,9 @@
 // TIME_SET runs to the end of the year 2100
 #define TIME_SET_MAX_MINUTES 39445919
 #define TIME_SAID_EVERY_MS 1000
+#define POWER_MAX_TENTHS 999
+#define SWR_MAX_TENTHS 999
+#define BATTERY_MAX_HUNDREDTHS 9999
 
 static long next_time_said_ms;
 
@@ -538,6 +552,21 @@ static struct control tx = {
 	.value = "OFF", .apply = apply_tx,
 };
 
+static struct control power = {
+	.group = "METER", .name = "POWER", .kind = CONTROL_NUMBER,
+	.min = 0, .max = POWER_MAX_TENTHS, .step = 1, .value = "0",
+};
+
+static struct control swr = {
+	.group = "METER", .name = "SWR", .kind = CONTROL_NUMBER,
+	.min = 0, .max = SWR_MAX_TENTHS, .step = 1, .value = "0",
+};
+
+static struct control battery = {
+	.group = "METER", .name = "BATTERY", .kind = CONTROL_NUMBER,
+	.min = 0, .max = BATTERY_MAX_HUNDREDTHS, .step = 1, .value = "0",
+};
+
 int radio_open(void) {
 	if (control_register(&freq) < 0 || control_register(&band) < 0
 			|| control_register(&stack) < 0
@@ -546,7 +575,8 @@ int radio_open(void) {
 			|| control_register(&mic) < 0 || control_register(&agc) < 0
 			|| control_register(&tx) < 0 || control_register(&my_callsign) < 0
 			|| control_register(&my_grid) < 0 || control_register(&clock_control) < 0
-			|| control_register(&time_set) < 0)
+			|| control_register(&time_set) < 0 || control_register(&power) < 0
+			|| control_register(&swr) < 0 || control_register(&battery) < 0)
 		return -1;
 	core_request("r1:freq", freq.value);
 	apply_mode(NULL, mode.value, NULL, 0);

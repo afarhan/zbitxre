@@ -18,7 +18,9 @@
 // lost; an answer spoiled; the radio's word lost; each end restarted while
 // the other carries on; a value going from the radio to the panel; more
 // waiting than one answer holds; a line of the spectrum; and frames made by
-// hand that are wrong or hold what this version does not know.
+// hand that are wrong or hold what this version does not know; a control
+// whose number does not fit in six bits; and a part of a text not taken
+// twice when something new is offered before the panel hears it was taken.
 //
 // Exits 0 when every check passes.
 
@@ -38,6 +40,11 @@
 #define KNOB_STEPS 10
 #define MANY_CONTROLS 20
 #define FIRST_OF_MANY 10
+#define A_HIGH_CONTROL 80
+#define ANOTHER_HIGH_CONTROL 95
+#define A_HIGH_VALUE 1234
+#define A_PART "VU2XZ"
+#define A_PART_LENGTH 5
 
 struct took {
 	int control;
@@ -102,6 +109,16 @@ static void on_panel_took_bytes(int control, const uint8_t *bytes, int count) {
 		memcpy(line_taken, bytes, count);
 }
 
+static int radio_parts_taken;
+static int radio_part_control;
+
+static void on_radio_took_bytes(int control, const uint8_t *bytes, int count) {
+	(void)bytes;
+	(void)count;
+	radio_parts_taken++;
+	radio_part_control = control;
+}
+
 static void forget_what_was_taken(void) {
 	radio_took_count = 0;
 	panel_took_count = 0;
@@ -120,7 +137,7 @@ static void one_turn(void) {
 	if (spoil_the_answer)
 		answer[count / 2] ^= 0x10;
 	if (!lose_the_answer)
-		link_take_frame(&radio, answer + 1, answer[0], on_radio_took, NULL);
+		link_take_frame(&radio, answer + 1, answer[0], on_radio_took, on_radio_took_bytes);
 
 	last_word_bytes = 0;
 	if (!link_has_something_to_say(&radio))
@@ -471,6 +488,45 @@ static void check_frames_made_by_hand(void) {
 		NULL) == LINK_SPOILED, "a frame of one byte is spoiled");
 }
 
+// the radio has more controls than six bits number; they go as themselves
+static void check_high_controls(void) {
+	start_both();
+	forget_what_was_taken();
+	link_offer(&panel, A_HIGH_CONTROL, A_HIGH_VALUE);
+	turns(TURNS_TO_SETTLE);
+	expect(radio_took_only(A_HIGH_CONTROL, A_HIGH_VALUE),
+		"a control numbered 80 goes from the panel as 80, not as 80 cut to six bits");
+	link_offer_bytes(&radio, ANOTHER_HIGH_CONTROL, (const uint8_t *)A_PART, A_PART_LENGTH);
+	turns(TURNS_TO_SETTLE);
+	expect(lines_taken == 1 && line_control == ANOTHER_HIGH_CONTROL
+		&& line_count == A_PART_LENGTH && !memcmp(line_taken, A_PART, A_PART_LENGTH),
+		"and a counted value for control 95 comes to the panel whole, as 95's");
+	link_offer(&panel, LINK_VOLUME, 30);
+	turns(TURNS_TO_SETTLE);
+	expect(radio_took_count == 2 && radio_took[1].control == LINK_VOLUME,
+		"and the controls under 63 go as they always went");
+}
+
+// the radio takes a part of a text, and its word saying so is lost; the
+// panel then has a new value to say. The part must not be taken again
+static void check_a_part_not_taken_twice(void) {
+	start_both();
+	forget_what_was_taken();
+	radio_parts_taken = 0;
+	link_offer_kept_bytes(&panel, LINK_TEXT_PART, (const uint8_t *)A_PART, A_PART_LENGTH);
+	lose_the_word = 1;
+	one_turn();
+	link_offer(&panel, LINK_VOLUME, 55);
+	one_turn();
+	one_turn();
+	lose_the_word = 0;
+	turns(TURNS_TO_SETTLE);
+	expect(radio_parts_taken == 1 && radio_part_control == LINK_TEXT_PART,
+		"a part taken, whose taking the panel has not heard of, is not taken again with a newer value");
+	expect(radio_took_only(LINK_VOLUME, 55), "and the newer value goes, once, after it");
+	expect(!link_has_something_to_say(&panel), "and nothing is left waiting");
+}
+
 int main(void) {
 	check_the_crc();
 	check_starting();
@@ -487,6 +543,8 @@ int main(void) {
 	check_descriptions();
 	check_sizes();
 	check_frames_made_by_hand();
+	check_high_controls();
+	check_a_part_not_taken_twice();
 
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);

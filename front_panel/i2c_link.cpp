@@ -61,8 +61,9 @@ static struct said said_list[SAID_MAX];
 static volatile int said_count;
 
 //the values of text controls that the radio has said, kept until loop()
-//takes them
-#define TEXTS_MAX 4
+//takes them: the logger's five fields are said together when it wipes
+//them, and every text control's value after the radio has described them
+#define TEXTS_MAX 12
 struct said_text {
 	int number;
 	char text[CONTROL_TEXT_ROOM];
@@ -75,7 +76,15 @@ static struct link_wifi_point wifi_staged[LINK_WIFI_POINTS_MAX];
 static volatile int wifi_staged_count;
 static volatile bool wifi_is_new;
 
-//a text on its way to the radio, a part at a time
+//a text on its way to the radio, a part at a time, and those to go after
+//it, in turn
+#define TEXTS_QUEUED_MAX 4
+struct text_to_send {
+	int number;
+	char text[LINK_TEXT_MAX + 1];
+};
+static struct text_to_send queued[TEXTS_QUEUED_MAX];
+static int queued_count;
 static char sending[LINK_TEXT_MAX + 1];
 static uint8_t sending_part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
 static int sending_number;
@@ -214,13 +223,50 @@ void i2c_link_changed(int control, int32_t value){
 	interrupts();
 }
 
-//a text is sent to the radio as the new value of a control; link.c says
-//how it goes in parts
-void i2c_link_send_text(int number, const char *text){
+static void start_sending(int number, const char *text){
 	snprintf(sending, sizeof(sending), "%s", text);
 	sending_number = number;
 	sending_offset = 0;
 	is_sending = true;
+}
+
+//a text is sent to the radio as the new value of a control; link.c says
+//how it goes in parts. One goes at a time, so a text given while another
+//is on its way waits its turn, as a field typed and then a search asked
+//for at once; a newer text for the same number takes the place of one
+//still waiting, and when too many wait the newest is lost
+void i2c_link_send_text(int number, const char *text){
+	int i;
+
+	if (!is_sending){
+		start_sending(number, text);
+		return;
+	}
+	for (i = 0; i < queued_count; i++){
+		if (queued[i].number == number){
+			snprintf(queued[i].text, sizeof(queued[i].text), "%s", text);
+			return;
+		}
+	}
+	if (queued_count == TEXTS_QUEUED_MAX)
+		return;
+	queued[queued_count].number = number;
+	snprintf(queued[queued_count].text, sizeof(queued[queued_count].text), "%s", text);
+	queued_count++;
+}
+
+//whether a text is still on its way, so that what depends on it can wait
+bool i2c_link_is_sending_text(){
+	return is_sending;
+}
+
+static void send_the_next_text(){
+	is_sending = false;
+	if (queued_count == 0)
+		return;
+	start_sending(queued[0].number, queued[0].text);
+	queued_count--;
+	memmove(queued, queued + 1, queued_count * sizeof(queued[0]));
 }
 
 //the next part goes when the radio has taken the one before
@@ -233,7 +279,7 @@ static void send_the_next_part(){
 	if (!link_is_waiting(&panel_end, LINK_TEXT_PART)){
 		count = link_put_text_part(sending_part, sending_number, sending, sending_offset);
 		if (count == 0)
-			is_sending = false;
+			send_the_next_text();
 		else {
 			link_offer_kept_bytes(&panel_end, LINK_TEXT_PART, sending_part, count);
 			make_the_answer_ready();

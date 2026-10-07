@@ -30,6 +30,12 @@
 //   FT8_REPEAT 1 to 5, shown as REPEAT: how often a message is sent before
 //              a contact that is not answered is given up. It starts at 5,
 //              zbitxv2's. CQ in NORMAL is three times whatever it is.
+//   FT8_TX1ST  ON or OFF, shown as TX1ST: which slots a CQ goes in, as
+//              zbitxv2's FT8_TX1ST said. ON, the first and the third of the
+//              minute, at :00 and :30; OFF, the second and the fourth, at
+//              :15 and :45. It starts ON, as zbitxv2's did. It is only for
+//              calling CQ: an answer goes in the slots the station called
+//              in does not.
 //   FT8_DO     an action: CQ starts calling CQ, HALT stops whatever is
 //              being sent and ends the contact, without logging it.
 //
@@ -112,6 +118,9 @@
 #define TX_PITCH_STEP 10
 #define SECONDS_DIGITS 2
 #define NOTHING_YET 0
+// the parity of a slot: the first and third of the minute, or the others
+#define FIRST_SLOTS 0
+#define SECOND_SLOTS 1
 #define EXCHANGE_WORDS_MAX 12
 #define EXCHANGE_ROOM 64
 
@@ -401,17 +410,6 @@ static time_t slot_start(double t) {
 
 static int parity_of(time_t slot) {
 	return (int)((slot / SLOT_SECONDS) % 2);
-}
-
-// the first slot we can still send in: this one, if it began no more than
-// LATE_START_S ago, or the next
-static time_t first_free_slot(void) {
-	double now = ft8_time_now();
-	time_t slot = slot_start(now);
-
-	if (now - (double)slot <= LATE_START_S)
-		return slot;
-	return slot + SLOT_SECONDS;
 }
 
 // the first slot of the parity given that we can still send in: this one,
@@ -765,6 +763,14 @@ static void decide(time_t slot) {
 
 /* what starts a contact */
 
+// the slots CQ is called in: those at :00 and :30 with TX1ST ON, the
+// others with it OFF
+static int cq_parity(void) {
+	if (!strcmp(control_get("FT8_TX1ST"), "ON"))
+		return FIRST_SLOTS;
+	return SECOND_SLOTS;
+}
+
 static void call_cq(void) {
 	if (is_ops("POUNCING")) {
 		say("pouncing: CQ is not called");
@@ -773,7 +779,7 @@ static void call_cq(void) {
 	ft8_tx_cancel();
 	memset(&qso, 0, sizeof(qso));
 	snprintf(qso.freq, sizeof(qso.freq), "%s", control_get("FREQ"));
-	qso.next_slot = first_free_slot();
+	qso.next_slot = first_slot_of(cq_parity());
 	send_cq();
 }
 
@@ -917,6 +923,11 @@ static struct control ft8_repeat = {
 	.min = REPEAT_LOWEST, .max = REPEAT_HIGHEST, .step = 1, .value = "5",
 };
 
+static struct control ft8_tx1st = {
+	.group = "FT8", .name = "FT8_TX1ST", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON", .value = "ON",
+};
+
 static struct control ft8_do = {
 	.group = "FT8", .name = "FT8_DO", .kind = CONTROL_ACTION,
 	.choices = "CQ/HALT", .apply = apply_ft8_do,
@@ -928,6 +939,7 @@ void ft8_qso_open(void) {
 	control_register(&tx_pitch);
 	control_register(&ft8_auto);
 	control_register(&ft8_repeat);
+	control_register(&ft8_tx1st);
 	control_register(&ft8_do);
 }
 

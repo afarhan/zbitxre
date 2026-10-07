@@ -173,6 +173,8 @@
 #define MACROS 6
 #define STATUS_HEIGHT 16
 #define STATUS_SHOWN_MAX 44
+//the meter, over the right end of the status line while there is power
+#define METER_WIDTH 112
 #define BANDS 9
 #define FOOTER_TOP 272
 #define FOOTER_TILES 6
@@ -310,6 +312,7 @@ lv_obj_t *main_screen = NULL;
 
 static struct widget macro_widget[MACROS];
 static lv_obj_t *status_label;
+static lv_obj_t *meter_label;
 //"01:15:22Z": eight characters of the time and the Z for UTC
 #define CLOCK_CELLS 9
 #define CLOCK_FIRST_COLON 2
@@ -1335,6 +1338,18 @@ static void screen_create(){
 	lv_obj_set_style_bg_color(status_label, lv_color_hex(COLOUR_SWITCHED_ON), 0);
 	lv_obj_set_style_bg_opa(status_label, LV_OPA_TRANSP, 0);
 	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT, STATUS_TOP);
+
+	//the power and the SWR as the radio transmits, over the status line's
+	//right end, on black so that what is under it does not show through
+	meter_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_WITH_FOCUS);
+	lv_obj_set_size(meter_label, METER_WIDTH, STATUS_HEIGHT);
+	lv_label_set_long_mode(meter_label, LV_LABEL_LONG_CLIP);
+	lv_obj_set_style_text_align(meter_label, LV_TEXT_ALIGN_RIGHT, 0);
+	lv_obj_set_style_bg_color(meter_label, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_bg_opa(meter_label, LV_OPA_COVER, 0);
+	lv_obj_align(meter_label, LV_ALIGN_TOP_LEFT,
+		WATERFALL_LEFT + WATERFALL_WIDTH - TITLE_LEFT - METER_WIDTH, STATUS_TOP);
+	lv_obj_add_flag(meter_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* what the rest of the panel calls */
@@ -1484,6 +1499,15 @@ static void status_show(){
 		lv_obj_set_style_bg_opa(status_label, LV_OPA_COVER, 0);
 	else
 		lv_obj_set_style_bg_opa(status_label, LV_OPA_TRANSP, 0);
+}
+
+//the power and the SWR, from meter.cpp, while there is power; empty when
+//there is none, and then nothing is shown
+void main_meter(const char *text){
+	if (meter_label == NULL)
+		return;
+	lv_label_set_text(meter_label, text);
+	set_hidden(meter_label, text[0] == 0);
 }
 
 void main_status(const char *text){

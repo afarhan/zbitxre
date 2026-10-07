@@ -54,7 +54,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_panel_controls $(BUILD)/test_start_check $(BUILD)/test_cw_text \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
-	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder
+	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -90,6 +90,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_messages
 	$(BUILD)/test_ft8_qso
 	$(BUILD)/test_cw_decoder
+	$(BUILD)/test_logger
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -122,11 +123,11 @@ sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
 		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h panel_cw.c panel_cw.h \
-		server.h control.h \
+		logger.c logger.h server.h control.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
 		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c logbook.c \
-		settings.c \
+		logger.c settings.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
@@ -184,6 +185,11 @@ $(BUILD)/test_radio_clock: tests/test_radio_clock.c hw/radio_clock.c \
 
 $(BUILD)/test_logbook: tests/test_logbook.c logbook.c logbook.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_logbook.c logbook.c -lsqlite3
+
+$(BUILD)/test_logger: tests/test_logger.c logger.c logger.h control.c control.h \
+		logbook.c logbook.h hw/radio_clock.c hw/radio_clock.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_logger.c logger.c control.c logbook.c \
+		hw/radio_clock.c -lsqlite3
 
 $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUILD)
 	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<

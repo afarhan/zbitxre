@@ -81,7 +81,11 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    #define LV_MEM_SIZE (64 * 1024U)          /**< [bytes] */
+    /** zbitxre: 96 kB. At 64 kB the panel hung when the settings were
+     *  opened after the logbook, whose fields have a keyboard of their own:
+     *  LVGL could not find the memory, and its check of that stops the
+     *  panel. ui_report() says how much is used */
+    #define LV_MEM_SIZE (96 * 1024U)          /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0

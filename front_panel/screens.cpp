@@ -68,8 +68,7 @@
 // panel has memory for. Opening the screen asks the radio for them. A line
 // to an entry, in the order zbitxv2's panel showed them: the date and the
 // time in UTC, the frequency in kHz, the mode, the other station's
-// callsign, what was sent and what was received. Ten entries are in view,
-// under a line of headings. One is marked; the knob moves the mark, and
+// callsign, what was sent and what was received, under a line of headings. One is marked; the knob moves the mark, and
 // when it goes past the top or the bottom the list moves on by a screenful.
 // A touch on an entry marks it.
 //
@@ -84,13 +83,33 @@
 // search: the operator may be deleting every entry of one callsign. The
 // mark stays where it was.
 //
-// Beside the title is the search: a touch on it opens the text screen for
-// a callsign, or the beginning of one, and the radio then sends the newest
-// hundred entries with stations whose callsign begins so. The author's
-// rule is that the request to the radio always carries what is searched
-// for; it is empty when the logbook is first opened, which is every
-// station, and it stays as it was typed until it is typed again. The cross
-// to the right of it clears it, and the whole logbook is listed again.
+// Under the title is the entry being written, as zbitxv2's logger had it:
+// CALL, SENT, RECV, EXCH and NR, the radio's controls of those names, which
+// logger.c on the radio says what they are; and three buttons: "?" beside
+// CALL, and WIPE and SAVE at the end. A touch on a field brings a keyboard up over the list, at the
+// author's asking, and the field is typed into there on its row, with its
+// edge marked; the keyboard's tick, or a touch on another field, or on any
+// of the three buttons, takes what was typed, and its cross drops it. "?" searches
+// the logbook for the callsign in CALL, or the beginning of one, and the
+// radio sends the newest hundred entries with stations whose callsign
+// begins so; an empty CALL lists every station. The author's rule is that
+// the request to the radio always carries what is searched for; it is
+// empty when the logbook is first opened. WIPE clears the five fields and
+// lists the whole logbook again. SAVE asks the radio to log the entry. The
+// author's rule is that it needs at least CALL, SENT and RECV; the radio
+// checks, and says what is missing, or that the entry is logged, on the
+// line beside the title, where the count of entries is otherwise, and what
+// they were searched for. Once it is logged the radio clears the fields
+// and sends the whole logbook again, the new entry at the top. Eight
+// entries are in view, under the fields.
+//
+// The fields are the radio's, and what the panel shows in them is what the
+// radio says they are, as the settings show the callsign. The radio's word
+// is taken at once after WIPE or SAVE, which the operator presses when done
+// typing, though it might come within a second of a field being typed,
+// when the panel would otherwise keep what was typed. And a SAVE waits
+// until the last field typed has gone to the radio, a part at a time, so
+// that the entry is not saved without it.
 //
 // THE KNOB
 //
@@ -205,7 +224,14 @@ static bool wifi_is_to_show;
 static char wifi_said[LINK_SAY_MAX + 1];
 
 //the rollers of the date screen, left to right
-enum { YEAR, MONTH, DAY, HOUR, MINUTE, ROLLERS };
+enum {
+	YEAR,
+	MONTH,
+	DAY,
+	HOUR,
+	MINUTE,
+	ROLLERS,
+};
 
 struct roller_place {
 	const char *label;
@@ -223,10 +249,13 @@ static const struct roller_place roller_places[ROLLERS] = {
 	{"Minute", 384, 88, 0, 60},
 };
 
+#define DAYS_IN_A_YEAR 365
+#define DAYS_IN_A_LEAP_YEAR 366
+
 //the log's columns, left to right, their headings and their widths, which
 //add up to the screen's
 #define LOG_COLUMNS 7
-#define LOG_ROWS_IN_VIEW 10
+#define LOG_ROWS_IN_VIEW 8
 #define LOG_TABLE_ROWS (LOG_ROWS_IN_VIEW + 1)
 #define LOG_ROW_PAD 4
 #define LOG_FIELDS_BETWEEN '|'
@@ -236,22 +265,56 @@ static const struct roller_place roller_places[ROLLERS] = {
 #define ASK_BUTTON_HEIGHT 48
 #define ASK_DIMMED LV_OPA_60
 #define LOG_SEARCH_MAX 12
-#define LOG_SEARCH_LEFT 152
-#define LOG_SEARCH_WIDTH 176
-#define LOG_SEARCH_HEIGHT 36
-#define LOG_CLEAR_WIDTH 40
-#define LOG_STATUS_LEFT (LOG_SEARCH_LEFT + LOG_SEARCH_WIDTH + LOG_CLEAR_WIDTH + PAD)
+#define LOG_STATUS_LEFT 152
+#define LOG_STATUS_WIDTH (SCREEN_WIDTH - LOG_STATUS_LEFT - PAD)
+//the entry being written: a row of fields and buttons under the title,
+//with a gap around each
+#define LOG_GAP 4
+#define LOG_FIELDS_HEIGHT 44
+#define LOG_FIELD_TITLE_TOP 2
+#define LOG_FIELD_VALUE_BOTTOM (-4)
+#define LOG_FIELD_MAX 12
+#define LOG_TABLE_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
+#define LOG_SAID_MAX 64
 
 static const char *const log_headings[LOG_COLUMNS] = {
 	"Date", "UTC", "kHz", "Mode", "Callsign", "Sent", "Rcvd",
 };
 static const int16_t log_widths[LOG_COLUMNS] = { 80, 44, 48, 42, 90, 88, 88 };
 
+//a field of the entry: the radio's control, its width on the row, and
+//the box it is typed into
+struct log_field {
+	const char *control;
+	int16_t width;
+	lv_obj_t *box;
+	lv_obj_t *value;
+};
+
+static struct log_field log_fields[] = {
+	{"CALL", 96, NULL, NULL},
+	{"SENT", 48, NULL, NULL},
+	{"RECV", 48, NULL, NULL},
+	{"EXCH", 64, NULL, NULL},
+	{"NR", 48, NULL, NULL},
+};
+#define LOG_FIELDS ((int)(sizeof(log_fields) / sizeof(log_fields[0])))
+
+//the field "?" searches for, and the buttons and their widths: "?" after
+//it, WIPE and SAVE after the rest
+#define LOG_CALL_FIELD 0
+#define LOG_FIND_WIDTH 36
+#define LOG_WIPE_WIDTH 52
+#define LOG_SAVE_WIDTH 52
+
 static lv_obj_t *log_screen;
 static lv_obj_t *log_status;
-static lv_obj_t *log_search;
-static lv_obj_t *log_search_text;
 static char log_searched_for[LOG_SEARCH_MAX + 1];
+static char log_said[LOG_SAID_MAX + 1];
+#define NOT_EDITING (-1)
+static int log_editing = NOT_EDITING;
+static lv_obj_t *log_keyboard;
+static bool log_is_save_waiting;
 static lv_obj_t *log_table;
 static char log_lines[LINK_LOG_LINES_MAX][LINK_LOG_LINE_MAX + 1];
 static volatile int log_count;
@@ -318,9 +381,15 @@ static lv_obj_t *box_create(lv_obj_t *mom, int x, int y, int w, int h){
 
 //the row the knob is on has the bright edge
 static void show_mark(lv_obj_t *box, bool is_marked){
-	lv_obj_set_style_border_color(box,
-		lv_color_hex(is_marked ? COLOUR_MARK : COLOUR_EDGE), 0);
-	lv_obj_set_style_border_width(box, is_marked ? EDGE_WITH_MARK : EDGE_WITHOUT, 0);
+	uint32_t colour = COLOUR_EDGE;
+	int width = EDGE_WITHOUT;
+
+	if (is_marked){
+		colour = COLOUR_MARK;
+		width = EDGE_WITH_MARK;
+	}
+	lv_obj_set_style_border_color(box, lv_color_hex(colour), 0);
+	lv_obj_set_style_border_width(box, width, 0);
 }
 
 static lv_obj_t *text_create(lv_obj_t *mom, const char *text, const lv_font_t *font,
@@ -427,8 +496,10 @@ static void text_input_open(lv_obj_t *from, const char *title, const char *promp
 	lv_label_set_text(input_accept, accept);
 	lv_textarea_set_max_length(input_box, max_length);
 	lv_textarea_set_text(input_box, initial);
-	lv_keyboard_set_mode(input_keyboard,
-		capitals ? LV_KEYBOARD_MODE_TEXT_UPPER : LV_KEYBOARD_MODE_TEXT_LOWER);
+	if (capitals)
+		lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_UPPER);
+	else
+		lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 	input_is_capitals = capitals;
 	input_done = done;
 	input_opened_from = from;
@@ -584,6 +655,7 @@ static void log_ask(){
 	log_is_to_show = true;
 	log_top = 0;
 	log_mark = 0;
+	log_said[0] = 0;
 	Serial.printf("LOG %s\n", log_searched_for);
 	i2c_link_send_text(LINK_LOG_LIST, log_searched_for);
 }
@@ -593,18 +665,164 @@ static void log_search_done(const char *text){
 	log_ask();
 }
 
-//the cross beside the search: nothing is searched for, and every
-//station's entries come back
-static void on_log_clear_touched(lv_event_t *e){
+//an action of the radio's is told to it, as the main screen's buttons do
+static void send_action(const char *name, const char *choice){
+	struct panel_control *c = controls_find(name);
+	struct panel_control tried;
+	char text[CONTROL_TEXT_MAX];
+	int i;
+
+	if (c == NULL)
+		return;
+	tried = *c;
+	for (i = 0; i < controls_choices(c); i++){
+		tried.value = i;
+		controls_value_text(&tried, text, sizeof(text));
+		if (!strcmp(text, choice)){
+			Serial.printf("%s %s\n", name, choice);
+			i2c_link_changed(c->d.number, i);
+		}
+	}
+}
+
+//each field shows what the radio says it is, but for the one being typed
+//into, which shows what is typed
+static void log_fields_show(){
+	char text[INPUT_TEXT_MAX];
+	int i;
+
+	if (log_screen == NULL)
+		return;
+	for (i = 0; i < LOG_FIELDS; i++){
+		if (i == log_editing)
+			continue;
+		text_of(log_fields[i].control, text, sizeof(text));
+		lv_textarea_set_text(log_fields[i].value, text);
+	}
+}
+
+//the operator is done typing: what the radio says the fields are is taken
+//at once from now
+static void log_fields_given_back(){
+	struct panel_control *c;
+	int i;
+
+	for (i = 0; i < LOG_FIELDS; i++){
+		c = controls_find(log_fields[i].control);
+		if (c != NULL)
+			c->last_user_change = 0;
+	}
+}
+
+//the field being typed into is let go: its edge goes back to the others',
+//and the keyboard goes down, if nothing else is to be typed
+static void log_editing_end(){
+	if (log_editing == NOT_EDITING)
+		return;
+	lv_obj_remove_state(log_fields[log_editing].value, LV_STATE_FOCUSED);
+	show_mark(log_fields[log_editing].box, false);
+	log_editing = NOT_EDITING;
+	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+	log_fields_show();
+}
+
+//what is typed in the field goes to the radio, in capitals, as callsigns
+//and reports are
+static void log_editing_done(){
+	char text[INPUT_TEXT_MAX];
+	char *p;
+
+	if (log_editing == NOT_EDITING)
+		return;
+	snprintf(text, sizeof(text), "%s", lv_textarea_get_text(log_fields[log_editing].value));
+	for (p = text; *p; p++)
+		*p = (char)toupper((unsigned char)*p);
+	set_text(log_fields[log_editing].control, text);
+	log_editing_end();
+}
+
+//the keyboard comes up over the list, under the fields, and what is typed
+//goes into the field touched, there on the row; a touch on another field
+//takes what was typed in this one first
+static void log_editing_begin(int which){
+	if (which == log_editing)
+		return;
+	log_editing_done();
+	log_editing = which;
+	show_mark(log_fields[which].box, true);
+	lv_obj_add_state(log_fields[which].value, LV_STATE_FOCUSED);
+	lv_textarea_set_cursor_pos(log_fields[which].value, LV_TEXTAREA_CURSOR_LAST);
+	lv_keyboard_set_textarea(log_keyboard, log_fields[which].value);
+	lv_keyboard_set_mode(log_keyboard, LV_KEYBOARD_MODE_TEXT_UPPER);
+	lv_obj_remove_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void on_log_field_touched(lv_event_t *e){
+	log_editing_begin((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+static void on_log_keyboard_ready(lv_event_t *e){
 	(void)e;
+	log_editing_done();
+}
+
+//the keyboard's cross: what was typed is dropped, and the field shows what
+//the radio has
+static void on_log_keyboard_cancel(lv_event_t *e){
+	(void)e;
+	log_editing_end();
+}
+
+//"?": the logbook is searched for the callsign in CALL, as it is typed if
+//it is being typed
+static void log_find(){
+	char call[INPUT_TEXT_MAX];
+
+	log_editing_done();
+	text_of("CALL", call, sizeof(call));
+	log_search_done(call);
+}
+
+static void log_wipe(){
+	struct panel_control *c;
+	int i;
+
+	log_editing_end();
+	log_fields_given_back();
+	for (i = 0; i < LOG_FIELDS; i++){
+		c = controls_find(log_fields[i].control);
+		if (c != NULL)
+			c->text[0] = 0;
+	}
+	send_action("LOGGER", "WIPE");
+	log_fields_show();
 	log_search_done("");
 }
 
-static void on_log_search_touched(lv_event_t *e){
+//the radio sends the whole logbook once the entry is saved, so what was
+//searched for goes; the SAVE itself goes from screens_slice(), when the
+//last field typed has gone
+static void log_save(){
+	log_editing_done();
+	log_fields_given_back();
+	log_searched_for[0] = 0;
+	log_said[0] = 0;
+	log_is_save_waiting = true;
+}
+
+static void on_log_find_touched(lv_event_t *e){
 	(void)e;
-	text_input_open(log_screen, "Search the logbook",
-		"A callsign, or how it begins; nothing, for every station", log_searched_for,
-		LOG_SEARCH_MAX, true, "GO", log_search_done);
+	log_find();
+}
+
+static void on_log_wipe_touched(lv_event_t *e){
+	(void)e;
+	log_wipe();
+}
+
+static void on_log_save_touched(lv_event_t *e){
+	(void)e;
+	log_save();
 }
 
 //an entry's line is put into a row of the table, a field to a column; the
@@ -621,7 +839,9 @@ static void log_fill_row(int table_row, const char *line){
 		if (at != NULL){
 			at++;
 			end = strchr(at, LOG_FIELDS_BETWEEN);
-			length = end == NULL ? (int)strlen(at) : (int)(end - at);
+			length = (int)strlen(at);
+			if (end != NULL)
+				length = (int)(end - at);
 			memcpy(field, at, length);
 			field[length] = 0;
 			at = end;
@@ -646,21 +866,16 @@ static void log_show(){
 	char text[WIFI_SHOWN_MAX];
 
 	log_is_to_show = false;
-	if (!log_is_whole)
+	//what the radio said comes first: an entry logged, or what it needs
+	if (log_said[0] != 0)
+		snprintf(text, sizeof(text), "%s", log_said);
+	else if (!log_is_whole)
 		snprintf(text, sizeof(text), "loading...");
+	else if (log_searched_for[0] != 0)
+		snprintf(text, sizeof(text), "%d entries of %s", (int)log_count, log_searched_for);
 	else
 		snprintf(text, sizeof(text), "%d entries", (int)log_count);
 	lv_label_set_text(log_status, text);
-	//the search shows what is searched for, or dimly what it is for
-	if (log_searched_for[0] != 0){
-		snprintf(text, sizeof(text), LV_SYMBOL_EYE_OPEN "  %s", log_searched_for);
-		lv_obj_set_style_text_color(log_search_text, lv_color_hex(COLOUR_VALUE), 0);
-	}
-	else {
-		snprintf(text, sizeof(text), LV_SYMBOL_EYE_OPEN "  search a callsign");
-		lv_obj_set_style_text_color(log_search_text, lv_color_hex(COLOUR_DIM), 0);
-	}
-	lv_label_set_text(log_search_text, text);
 	//a list that has come again after an entry was deleted keeps the mark
 	//where it was, or on the last entry if that one is gone
 	if (log_is_whole){
@@ -842,6 +1057,75 @@ static void on_back_from_log(lv_event_t *e){
 	screens_close();
 }
 
+//where a field's value is typed: a line of text that looks like the
+//others on the screen, with a cursor while it is being typed into. A touch
+//goes through it to the field's box, which starts the typing
+static lv_obj_t *log_value_create(lv_obj_t *box, int width){
+	lv_obj_t *value = lv_textarea_create(box);
+
+	lv_textarea_set_one_line(value, true);
+	lv_textarea_set_max_length(value, LOG_FIELD_MAX);
+	lv_obj_set_width(value, width);
+	lv_obj_set_style_text_font(value, &lv_font_montserrat_14, 0);
+	lv_obj_set_style_text_color(value, lv_color_hex(COLOUR_VALUE), 0);
+	lv_obj_set_style_bg_opa(value, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(value, 0, 0);
+	lv_obj_set_style_pad_all(value, 0, 0);
+	lv_obj_set_style_radius(value, 0, 0);
+	lv_obj_set_style_border_color(value, lv_color_hex(COLOUR_VALUE),
+		LV_PART_CURSOR | LV_STATE_FOCUSED);
+	lv_obj_remove_flag(value, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_remove_flag(value, LV_OBJ_FLAG_SCROLLABLE);
+	return value;
+}
+
+//the keyboard for the fields, over the list and under the row of fields,
+//so that what is typed is seen where it goes
+static void log_keyboard_create(){
+	log_keyboard = lv_keyboard_create(log_screen);
+	lv_obj_set_size(log_keyboard, SCREEN_WIDTH, SCREEN_HEIGHT - LOG_TABLE_TOP);
+	lv_obj_align(log_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_keyboard_set_textarea(log_keyboard, NULL);
+	lv_obj_add_event_cb(log_keyboard, on_log_keyboard_ready, LV_EVENT_READY, NULL);
+	lv_obj_add_event_cb(log_keyboard, on_log_keyboard_cancel, LV_EVENT_CANCEL, NULL);
+	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+//the fields and the buttons, left to right, each its width and a gap:
+//CALL, "?", SENT, RECV, EXCH, NR, WIPE, SAVE
+static void log_fields_create(){
+	lv_obj_t *box;
+	lv_obj_t *title;
+	int x = LOG_GAP;
+	int y = BAR_HEIGHT + LOG_GAP;
+	int i;
+
+	for (i = 0; i < LOG_FIELDS; i++){
+		box = box_create(log_screen, x, y, log_fields[i].width, LOG_FIELDS_HEIGHT);
+		log_fields[i].box = box;
+		lv_obj_add_event_cb(box, on_log_field_touched, LV_EVENT_CLICKED,
+			(void *)(intptr_t)i);
+		title = text_create(box, log_fields[i].control, &lv_font_montserrat_12, COLOUR_TITLE);
+		lv_obj_align(title, LV_ALIGN_TOP_LEFT, LOG_GAP, LOG_FIELD_TITLE_TOP);
+		log_fields[i].value = log_value_create(box, log_fields[i].width - 2 * LOG_GAP);
+		lv_obj_align(log_fields[i].value, LV_ALIGN_BOTTOM_LEFT, LOG_GAP,
+			LOG_FIELD_VALUE_BOTTOM);
+		x += log_fields[i].width + LOG_GAP;
+		//"?" searches for what is in CALL, so it is beside it, the author's
+		//asking: the eye takes what is close together as belonging together
+		if (i == LOG_CALL_FIELD){
+			button_create(log_screen, x, y, LOG_FIND_WIDTH, LOG_FIELDS_HEIGHT, "?",
+				on_log_find_touched);
+			x += LOG_FIND_WIDTH + LOG_GAP;
+		}
+	}
+	button_create(log_screen, x, y, LOG_WIPE_WIDTH, LOG_FIELDS_HEIGHT, "WIPE",
+		on_log_wipe_touched);
+	x += LOG_WIPE_WIDTH + LOG_GAP;
+	button_create(log_screen, x, y, LOG_SAVE_WIDTH, LOG_FIELDS_HEIGHT, "SAVE",
+		on_log_save_touched);
+}
+
 static void log_create(){
 	lv_obj_t *label;
 	int row;
@@ -851,20 +1135,15 @@ static void log_create(){
 	label = text_create(log_screen, "LOGBOOK", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
 	log_status = text_create(log_screen, "", &lv_font_montserrat_14, COLOUR_TITLE);
+	lv_obj_set_width(log_status, LOG_STATUS_WIDTH);
+	lv_label_set_long_mode(log_status, LV_LABEL_LONG_DOT);
 	lv_obj_align(log_status, LV_ALIGN_TOP_LEFT, LOG_STATUS_LEFT, (BAR_HEIGHT - 14) / 2);
 	back_button_create(log_screen, on_back_from_log);
-	log_search = box_create(log_screen, LOG_SEARCH_LEFT, (BAR_HEIGHT - LOG_SEARCH_HEIGHT) / 2,
-		LOG_SEARCH_WIDTH, LOG_SEARCH_HEIGHT);
-	lv_obj_add_event_cb(log_search, on_log_search_touched, LV_EVENT_CLICKED, NULL);
-	log_search_text = text_create(log_search, "", &lv_font_montserrat_14, COLOUR_DIM);
-	lv_obj_align(log_search_text, LV_ALIGN_LEFT_MID, PAD, 0);
-	button_create(log_screen, LOG_SEARCH_LEFT + LOG_SEARCH_WIDTH,
-		(BAR_HEIGHT - LOG_SEARCH_HEIGHT) / 2, LOG_CLEAR_WIDTH, LOG_SEARCH_HEIGHT,
-		LV_SYMBOL_CLOSE, on_log_clear_touched);
+	log_fields_create();
 
 	log_table = lv_table_create(log_screen);
-	lv_obj_set_size(log_table, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
-	lv_obj_align(log_table, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
+	lv_obj_set_size(log_table, SCREEN_WIDTH, SCREEN_HEIGHT - LOG_TABLE_TOP);
+	lv_obj_align(log_table, LV_ALIGN_TOP_LEFT, 0, LOG_TABLE_TOP);
 	lv_table_set_column_count(log_table, LOG_COLUMNS);
 	lv_table_set_row_count(log_table, LOG_TABLE_ROWS);
 	lv_obj_set_style_radius(log_table, 0, 0);
@@ -891,6 +1170,7 @@ static void log_create(){
 	lv_obj_add_event_cb(log_table, on_log_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
 	lv_obj_add_flag(log_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 	lv_obj_add_event_cb(log_table, on_log_touched, LV_EVENT_VALUE_CHANGED, NULL);
+	log_keyboard_create();
 	ask_create();
 }
 
@@ -898,6 +1178,12 @@ static void log_create(){
 
 static bool is_leap(int year){
 	return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+static int days_in_year(int year){
+	if (is_leap(year))
+		return DAYS_IN_A_LEAP_YEAR;
+	return DAYS_IN_A_YEAR;
 }
 
 static int days_in(int year, int month){
@@ -966,7 +1252,7 @@ static int32_t minutes_on_the_rollers(){
 	if (day > days_in(year, month))
 		day = days_in(year, month);
 	for (y = FIRST_YEAR; y < year; y++)
-		days += is_leap(y) ? 366 : 365;
+		days += days_in_year(y);
 	for (m = 1; m < month; m++)
 		days += days_in(year, m);
 	days += day - 1;
@@ -1092,8 +1378,10 @@ static void wifi_show(){
 			continue;
 		}
 		lv_label_set_text(wifi_rows[i].name, wifi_points[i].name);
-		snprintf(text, sizeof(text), "%s%d dBm", wifi_points[i].is_secured ? "" : "open  ",
-			wifi_points[i].signal_dbm);
+		if (wifi_points[i].is_secured)
+			snprintf(text, sizeof(text), "%d dBm", wifi_points[i].signal_dbm);
+		else
+			snprintf(text, sizeof(text), "open  %d dBm", wifi_points[i].signal_dbm);
 		lv_label_set_text(wifi_rows[i].signal, text);
 		lv_obj_remove_flag(wifi_rows[i].box, LV_OBJ_FLAG_HIDDEN);
 	}
@@ -1232,6 +1520,7 @@ void screens_open_log(){
 	waterfall_set_painting(false);
 	main_hide();
 	lv_obj_remove_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
+	log_fields_show();
 	log_search_done("");
 }
 
@@ -1267,7 +1556,7 @@ void screens_knob_turned(int steps){
 		ask_is_on_yes = !ask_is_on_yes;
 		ask_show();
 	}
-	else if (is_up(log_screen))
+	else if (is_up(log_screen) && !is_up(log_keyboard))
 		log_mark_at(log_mark + steps);
 	if (is_up(date_screen)){
 		roller_set(roller_marked, roller_value(roller_marked) + steps);
@@ -1286,7 +1575,7 @@ void screens_knob_turned(int steps){
 void screens_knob_clicked(){
 	if (is_up(log_screen) && is_up(ask_layer))
 		ask_answered(ask_is_on_yes);
-	else if (is_up(log_screen))
+	else if (is_up(log_screen) && !is_up(log_keyboard))
 		log_ask_to_delete();
 	else if (is_up(date_screen)){
 		roller_marked = (roller_marked + 1) % ROLLERS;
@@ -1301,6 +1590,10 @@ void screens_knob_clicked(){
 //what the radio says for the status bar is shown on the WiFi screen too,
 //where it says whether the access point was joined
 void screens_status(const char *text){
+	if (log_screen != NULL){
+		snprintf(log_said, sizeof(log_said), "%s", text);
+		log_is_to_show = true;
+	}
 	if (wifi_screen == NULL)
 		return;
 	snprintf(wifi_said, sizeof(wifi_said), "%s", text);
@@ -1313,6 +1606,10 @@ void screens_slice(){
 		wifi_show();
 	if (log_is_to_show && log_screen != NULL)
 		log_show();
+	if (log_is_save_waiting && !i2c_link_is_sending_text()){
+		log_is_save_waiting = false;
+		send_action("LOGGER", "SAVE");
+	}
 }
 
 //what typing a text and saving it would do, for trying it from the serial
@@ -1330,12 +1627,25 @@ void screens_set_text(char *control_and_text){
 	set_text(control_and_text, text);
 }
 
-//what a touch on a row of the settings, or on BACK, would do, by name
+//what a touch on a row of the settings, on the logbook's buttons, or on
+//BACK, would do, by name
 void screens_select(const char *name){
 	int i;
 
 	if (!strcmp(name, "BACK"))
 		screens_close();
+	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN)){
+		if (!strcmp(name, "?"))
+			log_find();
+		if (!strcasecmp(name, "WIPE"))
+			log_wipe();
+		if (!strcasecmp(name, "SAVE"))
+			log_save();
+		for (i = 0; i < LOG_FIELDS; i++){
+			if (!strcasecmp(name, log_fields[i].control))
+				log_editing_begin(i);
+		}
+	}
 	if (settings_screen == NULL || lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))
 		return;
 	for (i = 0; i < SETTINGS; i++){
@@ -1378,6 +1688,7 @@ void screens_close(){
 	if (date_screen != NULL)
 		lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
 	if (log_screen != NULL){
+		log_editing_end();
 		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
 	}
@@ -1387,8 +1698,11 @@ void screens_close(){
 	main_ui();
 }
 
-//the radio has said something: the settings show it if they are up
+//the radio has said something: the settings and the logbook's fields
+//show it if they are up
 void screens_radio_said(){
+	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN))
+		log_fields_show();
 	if (date_screen != NULL && !lv_obj_has_flag(date_screen, LV_OBJ_FLAG_HIDDEN))
 		date_show();
 	if (settings_screen != NULL && !lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))

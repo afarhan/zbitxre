@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #define LINK_ADDRESS 0x0a
-#define LINK_VERSION 3
+#define LINK_VERSION 4
 
 // the most the panel answers with, its count byte included, and the most
 // the radio writes
@@ -25,7 +25,7 @@ extern "C" {
 // a frame is at least its numbers and its check
 #define LINK_FRAME_MIN 2
 
-#define LINK_CONTROLS 64
+#define LINK_CONTROLS 96
 
 #define LINK_HELLO 0
 #define LINK_FREQ 1
@@ -88,6 +88,12 @@ extern "C" {
 // what CW has read off the air since the last value, for the panel's
 // status line: a kept, counted value, its characters
 #define LINK_CW_TEXT 14
+// what the panel measures on the SWR bridge and the battery, sent to the
+// radio five times a second: the forward power in tenths of a watt, the
+// SWR in tenths, 13 for 1.3, and the battery in hundredths of a volt
+#define LINK_POWER 15
+#define LINK_SWR 16
+#define LINK_BATTERY 17
 
 struct link_wifi_point {
 	int8_t signal_dbm;
@@ -96,7 +102,7 @@ struct link_wifi_point {
 };
 // the radio numbers the rest of its controls from here, in the order of
 // its table, and tells the panel which is which by describing them
-#define LINK_FIRST_DESCRIBED 16
+#define LINK_FIRST_DESCRIBED 24
 
 // one line of the spectrum: a byte for each point, left to right on the
 // screen, the lowest frequency first. A byte is the strength in dB above

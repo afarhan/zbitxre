@@ -28,7 +28,9 @@
 // Not kept as controls: BAND and STACK, which follow from the frequency,
 // and setting STACK would move the radio to another of the band's places.
 // TX is not a setting. An action has no value. The clock's two controls are the
-// time and not a setting.
+// time and not a setting. Nor are the groups METER, what the panel measures
+// as the radio transmits, and LOGGER, the entry being written for the
+// logbook, which is done with when it is saved.
 //
 // The author's rule is that everything persists, the band stack too. The
 // bands' places are not controls, so radio.c writes and reads them itself,
@@ -53,6 +55,9 @@
 
 static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
+// what the panel measures, and the entry being written for the logbook
+static const char *const groups_not_kept[] = { "METER", "LOGGER" };
+#define GROUPS_NOT_KEPT ((int)(sizeof(groups_not_kept) / sizeof(groups_not_kept[0])))
 
 static char file_path[PATH_MAX_LENGTH];
 static settings_save_fn save_extras;
@@ -66,6 +71,10 @@ static int is_kept(const struct control *c) {
 		return 0;
 	for (i = 0; i < NOT_KEPT; i++) {
 		if (!strcmp(c->name, not_kept[i]))
+			return 0;
+	}
+	for (i = 0; i < GROUPS_NOT_KEPT; i++) {
+		if (!strcmp(c->group, groups_not_kept[i]))
 			return 0;
 	}
 	return 1;
