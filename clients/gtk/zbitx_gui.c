@@ -133,7 +133,10 @@
 //
 // A control has its name over its value, in cyan, in the middle of its
 // tile with a little room above it: the author found the names too small
-// and too faint in grey at the tiles' corners.
+// and too faint in grey at the tiles' corners. The small line of the
+// frequency's box is the same size and colour, and the time beside it the
+// same size in white; nothing in the window is in small grey letters but
+// the span in the graph's corner.
 //
 // A control is selected by a click on it, or a touch, and has a bright edge
 // while it is. The mouse wheel over a control moves its value a step; over
@@ -2203,7 +2206,7 @@ static void load_style(void) {
 		".tile.on { background-color: #B02020; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
 		".tile-title { font-size: %dpx; color: #00FFFF; }"
-		".corner { font-size: %dpx; color: #90A0B0; }"
+		".clock { font-size: %dpx; color: #FFFFFF; }"
 		".status.qso { color: #FFFFFF; background-color: #B02020; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"
@@ -2223,7 +2226,7 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), px(CORNER_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE),
+		px(1), px(TITLE_SIZE), px(TITLE_SIZE), px(VALUE_SIZE), px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
@@ -2280,8 +2283,9 @@ static void create_frequency(void) {
 	frequency_label = gtk_label_new("");
 	gtk_label_set_xalign(GTK_LABEL(vfo_label), 0);
 	gtk_label_set_xalign(GTK_LABEL(clock_label), 1);
-	add_label_class(vfo_label, "corner");
-	add_label_class(clock_label, "corner");
+	add_label_class(vfo_label, "tile-title");
+	add_label_class(clock_label, "clock");
+	gtk_widget_set_margin_top(over, px(TITLE_ROOM_ABOVE));
 	add_label_class(frequency_label, "frequency");
 	gtk_widget_set_margin_start(over, px(SPAN_LEFT));
 	gtk_widget_set_margin_end(over, px(SPAN_LEFT));
