@@ -1657,8 +1657,14 @@ static gboolean on_frequency_wheel(GtkWidget *widget, GdkEventScroll *event, gpo
 // the other VFO
 /* the tuning wheel */
 
+// the wheel fills the smaller way of its box, less a margin
 static double wheel_radius(void) {
-	return gtk_widget_get_allocated_width(wheel_area) / 2.0 - px(WHEEL_MARGIN);
+	double across = gtk_widget_get_allocated_width(wheel_area);
+	double down = gtk_widget_get_allocated_height(wheel_area);
+
+	if (down < across)
+		across = down;
+	return across / 2.0 - px(WHEEL_MARGIN);
 }
 
 // the angle of a place on the wheel from its middle, which grows clockwise
@@ -2711,6 +2717,23 @@ static void load_style(void) {
 // or sized is not seen to until the size changes once more: the buttons
 // then stayed as they were when the window was maximised, and took the
 // maximised size when it was restored.
+// the wheel's box is square on the screen. The plan is stretched across
+// and down by different amounts to fill the window, so a box square in the
+// plan is not: on the sbitx it came out wider than tall, and the wheel,
+// drawn to its width, was cut off above and below. The box is as wide as
+// the frequency's, and as tall as that is on the screen, or as tall as
+// there is room for under the frequency and then no wider than that
+static void place_wheel(void) {
+	double across = WHEEL_SIZE;
+	double down = WHEEL_SIZE * scale_across / scale_down;
+
+	if (down > PANEL_HEIGHT - WHEEL_TOP) {
+		down = PANEL_HEIGHT - WHEEL_TOP;
+		across = down * scale_down / scale_across;
+	}
+	put_again(wheel_area, WHEEL_LEFT, WHEEL_TOP, (int)(across + 0.5), (int)(down + 0.5));
+}
+
 static gboolean lay_out_again(gpointer unused) {
 	int i;
 
@@ -2722,6 +2745,7 @@ static gboolean lay_out_again(gpointer unused) {
 	if (scale_across < scale)
 		scale = scale_across;
 	load_style();
+	place_wheel();
 	for (i = 0; i < PLACED_MAX; i++) {
 		if (placed[i].widget != NULL)
 			place(&placed[i]);
