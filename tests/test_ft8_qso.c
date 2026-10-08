@@ -271,9 +271,9 @@ static void check_cq_unanswered(void) {
 
 	printf("CQ with no answer:\n");
 	afresh("NORMAL", "RR73");
-	call_cq_at(T0 + 3.0);
+	call_cq_at(T0 + 6.0);
 	expect(is_armed("CQ VU2ESE MK97", T0 + 2 * SLOT),
-		"with TX1ST ON, pressed three seconds into the slot at :00, CQ waits for :30");
+		"with TX1ST ON, pressed six seconds into the slot at :00, CQ waits for :30");
 	call_cq_at(T0 + SLOT + 0.2);
 	expect(is_armed("CQ VU2ESE MK97", T0 + 2 * SLOT),
 		"and pressed at :15, it waits for :30 too");
@@ -464,6 +464,21 @@ static void check_auto(void) {
 		"another station that calls with a report is answered with the R and ours");
 }
 
+// a message tapped after our slot has begun
+static void check_late(void) {
+	printf("a slot already begun:\n");
+	afresh("POUNCING", "RR73");
+	now = T0 + 3 * SLOT + 4.0;
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") == 0
+		&& is_armed("G0XYZ VU2ESE MK97", T0 + 3 * SLOT),
+		"four seconds into our slot the answer still goes in it");
+	afresh("POUNCING", "RR73");
+	now = T0 + 3 * SLOT + 5.0;
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") == 0
+		&& is_armed("G0XYZ VU2ESE MK97", T0 + 5 * SLOT),
+		"five seconds in, too little is left to be read: it waits for our next slot");
+}
+
 // the grid as it was on the sbitx on 2026-10-08, a digit short: nothing
 // could be sent, and the remark that followed hid the reason
 static void check_station(void) {
@@ -542,6 +557,7 @@ int main(void) {
 	check_waiting();
 	check_repeat();
 	check_auto();
+	check_late();
 	check_station();
 	check_stops();
 

@@ -95,7 +95,15 @@
 
 #define SLOT_SECONDS 15
 #define DECIDED_BY_S 14.95
-#define LATE_START_S 1.5
+// A message is one pass of 12.64 s: only the marks a receiver finds it by
+// are there three times, the message itself once, with enough spare for a
+// receiver to make good the part it missed. Tried with our own receiver on
+// 2026-10-08, the start cut off a message and the rest given to it: with 4 s
+// missing it was read nine times in ten, with 4.5 s seldom, with 5 s never,
+// however strong. So a slot is still ours to send in until 4.5 s of it have
+// gone, the message beginning at half a second, and after that we wait for
+// the next
+#define LATE_START_S 4.5
 #define REPEAT_LOWEST 1
 #define REPEAT_HIGHEST 5
 #define AUTO_QUIET_FOR_S 120

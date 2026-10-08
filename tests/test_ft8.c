@@ -78,6 +78,18 @@ static int add_message(const char *text, int pitch_hz, float strength) {
 	return 0;
 }
 
+// a message joined late: what is left of it after the seconds missed
+static int add_message_late(const char *text, int pitch_hz, float strength, double missed_s) {
+	int samples = sbitx_ft8_encode(text, pitch_hz, FT8_SAMPLE_RATE, wave, WAVE_ROOM);
+	int i;
+
+	if (samples < 0)
+		return -1;
+	for (i = (int)(missed_s * FT8_SAMPLE_RATE); i < samples; i++)
+		slot[STARTS_AT_SAMPLE + i] += strength * wave[i];
+	return 0;
+}
+
 // a message made at the sound card's rate, and kept one sample in eight,
 // as the receiver does
 static int add_message_at_96k(const char *text, int pitch_hz, float strength) {
@@ -175,6 +187,18 @@ int main(void) {
 		&& add_message("CQ VU2ESE MK97", 1000, STRONG) == 0
 		&& add_message("G0XYZ VU2ESE +05", 1000, STRONG) == 0,
 		"and the messages of a standard contact are made");
+
+	// how late a message may be joined, which ft8_qso.c's LATE_START_S rests on
+	fill_with_noise();
+	add_message_late("G0XYZ VU2ESE MK97", 1500, WEAK, 3.5);
+	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
+	expect(is_found_at("G0XYZ VU2ESE MK97", 1500),
+		"a weak message with its first 3.5 s missing is still read");
+	fill_with_noise();
+	add_message_late("G0XYZ VU2ESE MK97", 1500, STRONG, 6.0);
+	found_count = sbitx_ft8_decode(slot, SLOT_SAMPLES, found, FOUND_MAX);
+	expect(find_message("G0XYZ VU2ESE MK97") == NOWHERE,
+		"with its first 6 s missing it is not, however strong: it is sent once, not thrice");
 
 	if (checks_failed) {
 		printf("ft8: %d checks FAILED\n", checks_failed);

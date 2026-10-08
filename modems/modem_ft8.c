@@ -65,9 +65,11 @@
 // that slot until the message has been sent. tx() gives the transmitter
 // silence until half a second into the slot, where WSJT-X and every other
 // station begin, and then the message, 12.64 seconds of it, at zbitxv2's
-// level, a seventh of full scale. A message armed for a slot that began
-// more than two seconds ago is not sent at all: begun later, it would be
-// too late for most receivers to find. ft8_tx_cancel() stops a message,
+// level, a seventh of full scale. A message armed after its slot began is
+// joined where it would by then have been, not begun afresh, so that what
+// is sent of it is in step with the slot; one armed more than five seconds
+// in is not sent at all, as too little of it is left for a receiver to
+// read. ft8_qso.c says how that was found. ft8_tx_cancel() stops a message,
 // whether it is waiting or being sent.
 //
 // What is sent is heard in the speaker as it goes, as zbitxv2 let it be
@@ -352,7 +354,9 @@
 #define NS_PER_MS 1000000
 #define NS_PER_S 1000000000.0
 #define TX_STARTS_AT_S 0.5
-#define TX_LATEST_START_S 2.0
+// ft8_qso.c gives a slot up at 4.5 s and says why; this is a little after,
+// for a message armed just before then
+#define TX_LATEST_START_S 5.0
 // zbitxv2's level for FT8: a seventh of full scale
 #define TX_DIVISOR 7.0
 // the speaker's peak with the sidetone at its loudest, as CW's
