@@ -170,10 +170,22 @@
 // while it is. The mouse wheel over a control moves its value a step; over
 // the frequency, the graph or the waterfall it tunes. A click on a choice
 // that is already selected moves it to its next choice, and round from the
-// last to the first, so RIT is switched with two clicks; a click on the
-// frequency when it is selected goes to the other VFO. On the keyboard, Tab
+// last to the first, so RIT is switched with two clicks. On the keyboard, Tab
 // and Shift-Tab move the selection, the up and down keys move what is
 // selected, and Escape goes back to the frequency.
+//
+// THE TUNING WHEEL
+//
+// A tap on the frequency drops a box down under it with a wheel in it, for
+// tuning by touch, as the author asked: a finger put on the wheel and taken
+// round it turns it, clockwise up and the other way down, a step of STEP
+// for every ten degrees, thirty-six to the turn, so that a turn with the
+// step at 100 Hz is 3.6 kHz. The wheel has a dimple that goes round with
+// it, so that it is seen to turn, and the step is written on its hub. It is
+// the angle the finger goes through that counts, not where it is put down.
+// The cross in the box's corner, or another tap on the frequency, puts the
+// box away. The tap used to go to the other VFO; the author set that aside
+// for the time being, and VFO in the list still does it.
 //
 // TUNING
 //
@@ -263,6 +275,7 @@
 
 #include <gtk/gtk.h>
 #include <pthread.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -290,6 +303,19 @@
 #define TILE_WIDTH 48
 #define FREQ_LEFT 48
 #define FREQ_WIDTH 144
+#define WHEEL_LEFT FREQ_LEFT
+#define WHEEL_TOP ROW_HEIGHT
+#define WHEEL_SIZE 144
+#define WHEEL_MARGIN 8
+#define WHEEL_HUB_SHARE 0.32
+#define WHEEL_DIMPLE_AT 0.68
+#define WHEEL_DIMPLE_SHARE 0.16
+#define WHEEL_TICKS 36
+#define WHEEL_TICK_SHARE 0.08
+#define WHEEL_NOTCH (2.0 * G_PI / WHEEL_TICKS)
+#define WHEEL_CLOSE_SIZE 24
+#define WHEEL_CLOSE_ARM 5
+#define WHEEL_STEP_SIZE 12
 #define BANDS_TOP 48
 #define MIDDLE_TOP 96
 #define COLUMN_BUTTONS 4
@@ -505,6 +531,15 @@ static int is_lay_out_due;
 static GtkCssProvider *css;
 static GtkWidget *screen;
 static GtkWidget *frequency_box;
+static GtkWidget *wheel_area;
+// how far round the wheel has been turned, where the finger last was on it,
+// and what has been turned since the last step was taken
+static double wheel_angle;
+static double wheel_finger_angle;
+static double wheel_owed;
+static double wheel_began_x;
+static double wheel_began_y;
+static int is_wheel_held;
 static GtkWidget *frequency_label;
 static GtkWidget *vfo_label;
 static GtkWidget *clock_label;
@@ -977,6 +1012,7 @@ static void show_values(void) {
 	show_buttons();
 	show_meter();
 	place_graph();
+	gtk_widget_queue_draw(wheel_area);
 	gtk_widget_set_visible(messages_scroller, !strcmp(mode_group(), MESSAGES_GROUP));
 	gtk_widget_queue_draw(spectrum_area);
 }
@@ -1619,17 +1655,161 @@ static gboolean on_frequency_wheel(GtkWidget *widget, GdkEventScroll *event, gpo
 
 // a click on the frequency selects it; on it when it is selected, goes to
 // the other VFO
-static gboolean on_frequency_click(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
-	struct known *vfo = find_known("VFO");
+/* the tuning wheel */
 
+static double wheel_radius(void) {
+	return gtk_widget_get_allocated_width(wheel_area) / 2.0 - px(WHEEL_MARGIN);
+}
+
+// the angle of a place on the wheel from its middle, which grows clockwise
+static double wheel_angle_at(double x, double y) {
+	double middle_x = gtk_widget_get_allocated_width(wheel_area) / 2.0;
+	double middle_y = gtk_widget_get_allocated_height(wheel_area) / 2.0;
+
+	return atan2(y - middle_y, x - middle_x);
+}
+
+static int is_on_wheel_close(double x, double y) {
+	return x >= gtk_widget_get_allocated_width(wheel_area) - px(WHEEL_CLOSE_SIZE)
+		&& y <= px(WHEEL_CLOSE_SIZE);
+}
+
+static void show_wheel(int on) {
+	is_wheel_held = 0;
+	gtk_widget_set_visible(wheel_area, on);
+	if (on && gtk_widget_get_window(wheel_area) != NULL)
+		gdk_window_raise(gtk_widget_get_window(wheel_area));
+}
+
+static gboolean on_draw_wheel(GtkWidget *widget, cairo_t *cr, gpointer unused) {
+	const struct known *step = find_known("STEP");
+	cairo_text_extents_t extents;
+	double width = gtk_widget_get_allocated_width(widget);
+	double height = gtk_widget_get_allocated_height(widget);
+	double radius = wheel_radius();
+	double corner = px(WHEEL_CLOSE_SIZE) / 2.0;
+	double arm = px(WHEEL_CLOSE_ARM);
+	double angle;
+	int i;
+
+	(void)unused;
+	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
+	cairo_rectangle(cr, 0, 0, width, height);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 1.0, 0.75, 0.0);
+	cairo_set_line_width(cr, px(1));
+	cairo_rectangle(cr, px(1) / 2.0, px(1) / 2.0, width - px(1), height - px(1));
+	cairo_stroke(cr);
+
+	// the cross that puts the box away
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_set_line_width(cr, px(1) + 1);
+	cairo_move_to(cr, width - corner - arm, corner - arm);
+	cairo_line_to(cr, width - corner + arm, corner + arm);
+	cairo_move_to(cr, width - corner + arm, corner - arm);
+	cairo_line_to(cr, width - corner - arm, corner + arm);
+	cairo_stroke(cr);
+
+	cairo_translate(cr, width / 2.0, height / 2.0);
+	cairo_set_source_rgb(cr, 0.16, 0.22, 0.28);
+	if (is_wheel_held)
+		cairo_set_source_rgb(cr, 0.22, 0.30, 0.38);
+	cairo_arc(cr, 0, 0, radius, 0, 2.0 * G_PI);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
+	cairo_set_line_width(cr, px(1));
+	for (i = 0; i < WHEEL_TICKS; i++) {
+		angle = wheel_angle + i * WHEEL_NOTCH;
+		cairo_move_to(cr, radius * cos(angle), radius * sin(angle));
+		cairo_line_to(cr, radius * (1.0 - WHEEL_TICK_SHARE) * cos(angle),
+			radius * (1.0 - WHEEL_TICK_SHARE) * sin(angle));
+	}
+	cairo_stroke(cr);
+	// the dimple goes round with the wheel
+	cairo_set_source_rgb(cr, 0.04, 0.06, 0.08);
+	cairo_arc(cr, radius * WHEEL_DIMPLE_AT * cos(wheel_angle),
+		radius * WHEEL_DIMPLE_AT * sin(wheel_angle), radius * WHEEL_DIMPLE_SHARE, 0,
+		2.0 * G_PI);
+	cairo_fill(cr);
+	// the hub does not turn, and says the step
+	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
+	cairo_arc(cr, 0, 0, radius * WHEEL_HUB_SHARE, 0, 2.0 * G_PI);
+	cairo_fill(cr);
+	if (step == NULL)
+		return TRUE;
+	cairo_set_source_rgb(cr, 0, 1, 1);
+	cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+	cairo_set_font_size(cr, px(WHEEL_STEP_SIZE));
+	cairo_text_extents(cr, step->value, &extents);
+	cairo_move_to(cr, -extents.width / 2.0 - extents.x_bearing,
+		-extents.height / 2.0 - extents.y_bearing);
+	cairo_show_text(cr, step->value);
+	return TRUE;
+}
+
+// a finger, or the mouse, is put on the box: on the cross it puts the box
+// away, anywhere else it takes hold of the wheel
+static void on_wheel_held(GtkGestureDrag *gesture, gdouble x, gdouble y, gpointer unused) {
+	(void)gesture;
+	(void)unused;
+	if (is_on_wheel_close(x, y)) {
+		show_wheel(0);
+		return;
+	}
+	is_wheel_held = 1;
+	wheel_began_x = x;
+	wheel_began_y = y;
+	wheel_finger_angle = wheel_angle_at(x, y);
+	wheel_owed = 0;
+	gtk_widget_queue_draw(wheel_area);
+}
+
+// the finger has moved: the wheel goes round by the angle it went through,
+// and the radio is tuned a step for each notch of it
+static void on_wheel_turned(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y,
+		gpointer unused) {
+	double now;
+	double turned;
+	int notches;
+
+	(void)gesture;
+	(void)unused;
+	if (!is_wheel_held)
+		return;
+	now = wheel_angle_at(wheel_began_x + offset_x, wheel_began_y + offset_y);
+	turned = now - wheel_finger_angle;
+	// the short way round, across where the angle wraps
+	if (turned > G_PI)
+		turned -= 2.0 * G_PI;
+	if (turned < -G_PI)
+		turned += 2.0 * G_PI;
+	wheel_finger_angle = now;
+	wheel_angle += turned;
+	wheel_owed += turned;
+	notches = (int)(wheel_owed / WHEEL_NOTCH);
+	wheel_owed -= notches * WHEEL_NOTCH;
+	if (notches != 0)
+		tune(notches);
+	gtk_widget_queue_draw(wheel_area);
+}
+
+static void on_wheel_let_go(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y,
+		gpointer unused) {
+	(void)gesture;
+	(void)offset_x;
+	(void)offset_y;
+	(void)unused;
+	is_wheel_held = 0;
+	gtk_widget_queue_draw(wheel_area);
+}
+
+// a tap on the frequency drops the tuning wheel down, or puts it away
+static gboolean on_frequency_click(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
 	(void)widget;
 	(void)event;
 	(void)unused;
-	if (focus == ON_FREQUENCY && vfo != NULL) {
-		next_choice_round(vfo);
-		apply_own(vfo);
-	}
 	focus = ON_FREQUENCY;
+	show_wheel(!gtk_widget_get_visible(wheel_area));
 	show_values();
 	return TRUE;
 }
@@ -2772,6 +2952,24 @@ static GtkWidget *create_text_page(void) {
 	return page;
 }
 
+// the tuning wheel's box, made last so that it lies over what is under the
+// frequency, and not shown until the frequency is tapped
+static void create_wheel(void) {
+	GtkGesture *drag;
+
+	wheel_area = gtk_drawing_area_new();
+	gtk_widget_add_events(wheel_area, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK
+		| GDK_POINTER_MOTION_MASK | GDK_TOUCH_MASK);
+	g_signal_connect(wheel_area, "draw", G_CALLBACK(on_draw_wheel), NULL);
+	drag = gtk_gesture_drag_new(wheel_area);
+	g_signal_connect(drag, "drag-begin", G_CALLBACK(on_wheel_held), NULL);
+	g_signal_connect(drag, "drag-update", G_CALLBACK(on_wheel_turned), NULL);
+	g_signal_connect(drag, "drag-end", G_CALLBACK(on_wheel_let_go), NULL);
+	g_object_set_data_full(G_OBJECT(wheel_area), "drag", drag, g_object_unref);
+	gtk_widget_set_no_show_all(wheel_area, TRUE);
+	put(wheel_area, WHEEL_LEFT, WHEEL_TOP, WHEEL_SIZE, WHEEL_SIZE);
+}
+
 static GtkWidget *create_window(void) {
 	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
@@ -2786,6 +2984,7 @@ static GtkWidget *create_window(void) {
 	create_buttons();
 	create_middle();
 	create_list();
+	create_wheel();
 
 	pages = gtk_stack_new();
 	gtk_stack_add_named(GTK_STACK(pages), screen, PAGE_MAIN);
