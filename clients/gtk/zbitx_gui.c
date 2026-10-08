@@ -97,10 +97,15 @@
 // and HALT.
 //
 // In FT8 the graph and the waterfall are not shown. In their place, and
-// down to the foot of the window, is the list of the messages the radio
-// has copied, coloured as the panel's is: the time each was sent at, how
-// strong it was, its pitch and its text, the newest at the bottom and kept
-// in view. The rows of one slot are told from those of the next by their
+// down to the foot of the window, the left half is the list of the
+// messages the radio has copied, coloured as the panel's is: the second
+// each was sent at, how strong it was and its text, the newest at the
+// bottom and kept in view. The right half is the graph and the waterfall,
+// of FT8's passband alone, the dial at the left edge and 4 kHz above it at
+// the right, with a red line where TX_PITCH puts our own signal, as the old
+// sbitx drew it, so that a clear place can be seen; a tap there moves the
+// pitch to it. The pitch of each message is left out of the list, which is
+// half as wide as it was: where the stations are is seen beside it. The rows of one slot are told from those of the next by their
 // ground, a little lighter for every other slot; a station calling CQ is
 // in green; and what the radio itself sent is in red, with TX where the
 // strength would be. A tap on a message marks it, and the list then stays
@@ -318,7 +323,8 @@
 #define CSS_MAX 2048
 #define MESSAGES_SHOWN_MAX 200
 #define MESSAGE_FIELDS 4
-#define MESSAGE_SIZE 10
+#define MESSAGE_SIZE 8
+#define MESSAGES_WIDTH (GRAPH_WIDTH / 2)
 #define MARK_KEPT_FOR_S 30
 #define SLOT_SECONDS 15
 #define SECONDS_A_MINUTE 60
@@ -453,6 +459,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define MACRO_CONTROL "MACRO"
 #define MESSAGES_GROUP "FT8"
 #define FT8_DO_CONTROL "FT8_DO"
+#define TX_PITCH_CONTROL "TX_PITCH"
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
 #define PAGE_MAIN "main"
@@ -926,6 +933,26 @@ static void show_meter(void) {
 	gtk_widget_set_visible(meter_label, text[0] != 0);
 }
 
+static void put_again(GtkWidget *widget, int x, int y, int width, int height);
+
+// in FT8 the list of messages has the left half of where the graph and the
+// waterfall are, and they have the right half, down to the foot of the
+// window as the list is; in the other modes they have it all
+static void place_graph(void) {
+	static int was_beside_messages = -1;
+	int is_beside_messages = !strcmp(mode_group(), MESSAGES_GROUP);
+
+	if (is_beside_messages == was_beside_messages)
+		return;
+	was_beside_messages = is_beside_messages;
+	if (is_beside_messages)
+		put_again(spectrum_area, GRAPH_LEFT + MESSAGES_WIDTH, MIDDLE_TOP + STATUS_HEIGHT,
+			GRAPH_WIDTH - MESSAGES_WIDTH, PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
+	else
+		put_again(spectrum_area, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
+			GRAPH_HEIGHT + FALL_HEIGHT);
+}
+
 static void show_values(void) {
 	int i;
 
@@ -942,9 +969,8 @@ static void show_values(void) {
 	show_frequency();
 	show_buttons();
 	show_meter();
-	// in FT8 the list of messages is where the graph and the waterfall are
+	place_graph();
 	gtk_widget_set_visible(messages_scroller, !strcmp(mode_group(), MESSAGES_GROUP));
-	gtk_widget_set_visible(spectrum_area, strcmp(mode_group(), MESSAGES_GROUP) != 0);
 	gtk_widget_queue_draw(spectrum_area);
 }
 
@@ -1350,6 +1376,7 @@ static void take_message_line(const char *line) {
 	char *saved = NULL;
 	GtkWidget *box;
 	GtkWidget *label;
+	const char *seconds;
 	int minute;
 	int second;
 	int i;
@@ -1361,10 +1388,13 @@ static void take_message_line(const char *line) {
 	field[MESSAGE_FIELDS - 1] = strtok_r(NULL, "", &saved);
 	if (field[MESSAGE_FIELDS - 1] == NULL)
 		return;
-	snprintf(shown, sizeof(shown), "%s %3s %4s %s", field[0], field[1], field[2],
-		field[3]);
+	seconds = field[0];
+	if (strlen(seconds) == TIME_DIGITS)
+		seconds += TIME_SECOND_AT;
+	snprintf(shown, sizeof(shown), "%s %3s %s", seconds, field[1], field[3]);
 	label = gtk_label_new(shown);
 	gtk_label_set_xalign(GTK_LABEL(label), 0);
+	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
 	add_label_class(label, "message");
 	if (!strcmp(field[1], "TX"))
 		add_label_class(label, "sent");
@@ -1786,16 +1816,42 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 	return TRUE;
 }
 
-// a tap on the graph or the waterfall: the next span
+static int hz_of_x(double x, int width);
+
+// in FT8 a tap on the graph or the waterfall puts our pitch where it fell,
+// at the nearest step the radio's control has, within what it allows
+static void take_pitch_tap(double x) {
+	struct known *pitch = find_known(TX_PITCH_CONTROL);
+	char value[CONTROL_VALUE_MAX];
+	int hz;
+
+	if (pitch == NULL || pitch->step <= 0)
+		return;
+	hz = hz_of_x(x, gtk_widget_get_allocated_width(spectrum_area));
+	hz = ((hz + pitch->step / 2) / pitch->step) * pitch->step;
+	if (hz < pitch->min)
+		hz = pitch->min;
+	if (hz > pitch->max)
+		hz = pitch->max;
+	snprintf(value, sizeof(value), "%d", hz);
+	snprintf(pitch->value, sizeof(pitch->value), "%s", value);
+	send_line(pitch->name, value);
+	show_values();
+}
+
+// a tap on the graph or the waterfall: the next span, or in FT8 the pitch
 static void on_spectrum_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
 		gdouble y, gpointer unused) {
 	struct known *span = find_known("SPAN");
 
 	(void)gesture;
 	(void)presses;
-	(void)x;
 	(void)y;
 	(void)unused;
+	if (!strcmp(mode_group(), MESSAGES_GROUP)) {
+		take_pitch_tap(x);
+		return;
+	}
 	if (span == NULL || !span->is_choice)
 		return;
 	next_choice_round(span);
@@ -1987,6 +2043,7 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 		*high_hz = bw_voice;
 	}
 	if (!strcmp(mode, "FT8")) {
+		*tuned_hz = atoi(value_of(TX_PITCH_CONTROL));
 		*low_hz = FT8_LOW_HZ;
 		*high_hz = FT8_HIGH_HZ;
 	}
@@ -2013,21 +2070,53 @@ static int shown_hz(void) {
 	return chosen;
 }
 
-// the points of the radio's line that are in the span shown: how many, and
+// what the graph and the waterfall show, in Hz from the dial: the span
+// chosen, the dial in the middle; in FT8 its passband and no more, the dial
+// at the left edge, whatever the span
+static void shown_range(int *low_hz, int *high_hz) {
+	*low_hz = -shown_hz() / 2;
+	*high_hz = shown_hz() / 2;
+	if (!strcmp(mode_group(), MESSAGES_GROUP) && span_hz / 2 >= FT8_HIGH_HZ) {
+		*low_hz = 0;
+		*high_hz = FT8_HIGH_HZ;
+	}
+}
+
+// the points of the radio's line that are in what is shown: how many, and
 // the first of them
 static int shown_points(int *first) {
-	int count = (int)((double)point_count * shown_hz() / span_hz);
+	int low_hz;
+	int high_hz;
+	int count;
 
+	shown_range(&low_hz, &high_hz);
+	count = (int)((double)point_count * (high_hz - low_hz) / span_hz);
 	if (count < 2)
 		count = 2;
 	if (count > point_count)
 		count = point_count;
-	*first = (point_count - count) / 2;
+	*first = point_count / 2 + (int)((double)point_count * low_hz / span_hz);
+	if (*first < 0)
+		*first = 0;
+	if (*first > point_count - count)
+		*first = point_count - count;
 	return count;
 }
 
 static double x_of_hz(int hz, int width) {
-	return width / 2.0 + (double)hz * width / shown_hz();
+	int low_hz;
+	int high_hz;
+
+	shown_range(&low_hz, &high_hz);
+	return (double)(hz - low_hz) * width / (high_hz - low_hz);
+}
+
+static int hz_of_x(double x, int width) {
+	int low_hz;
+	int high_hz;
+
+	shown_range(&low_hz, &high_hz);
+	return low_hz + (int)(x * (high_hz - low_hz) / width);
 }
 
 static void draw_graph(cairo_t *cr, int width, int height) {
@@ -2074,9 +2163,9 @@ static void draw_graph(cairo_t *cr, int width, int height) {
 	cairo_stroke(cr);
 }
 
-// in CW the pitch, where a station tuned in is heard, is carried down the
-// waterfall from the graph, dotted, so that the station right under it is
-// not hidden
+// in CW the pitch, where a station tuned in is heard, and in FT8 the pitch
+// we send at, is carried down the waterfall from the graph, dotted, so that
+// the station right under it is not hidden
 static void draw_waterfall(cairo_t *cr, int width, int height) {
 	const char *mode = value_of("MODE");
 	const double dashes[] = { PITCH_DASH, PITCH_DASH };
@@ -2100,7 +2189,7 @@ static void draw_waterfall(cairo_t *cr, int width, int height) {
 	cairo_rectangle(cr, 0, 0, count, FALL_ROWS);
 	cairo_fill(cr);
 	cairo_restore(cr);
-	if (span_hz == 0 || (strcmp(mode, "CW") && strcmp(mode, "CWR")))
+	if (span_hz == 0 || (strcmp(mode, "CW") && strcmp(mode, "CWR") && strcmp(mode, "FT8")))
 		return;
 	passband(&low_hz, &high_hz, &tuned_hz);
 	x = x_of_hz(tuned_hz, width);
@@ -2124,7 +2213,9 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
 	cairo_set_font_size(cr, px(CORNER_SIZE));
 	cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
-	cairo_show_text(cr, value_of("SPAN"));
+	// FT8 shows its passband whatever the span, so the span is not named
+	if (strcmp(mode_group(), MESSAGES_GROUP))
+		cairo_show_text(cr, value_of("SPAN"));
 	cairo_translate(cr, 0, graph_height);
 	draw_waterfall(cr, width, height - graph_height);
 	return TRUE;
@@ -2174,6 +2265,22 @@ static void put(GtkWidget *widget, int x, int y, int width, int height) {
 	it->height = height;
 	g_signal_connect(widget, "destroy", G_CALLBACK(on_placed_destroyed), NULL);
 	place(it);
+}
+
+// a widget already on the screen is given another place in the plan
+static void put_again(GtkWidget *widget, int x, int y, int width, int height) {
+	struct placed *it;
+
+	for (it = placed; it < placed + PLACED_MAX; it++) {
+		if (it->widget != widget)
+			continue;
+		it->x = x;
+		it->y = y;
+		it->width = width;
+		it->height = height;
+		place(it);
+		return;
+	}
 }
 
 static void add_label_class(GtkWidget *label, const char *name) {
@@ -2508,7 +2615,7 @@ static void create_middle(void) {
 	gtk_widget_set_no_show_all(messages_scroller, TRUE);
 	gtk_widget_show_all(gtk_bin_get_child(GTK_BIN(messages_scroller)));
 	g_signal_connect(messages, "size-allocate", G_CALLBACK(on_messages_sized), NULL);
-	put(messages_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
+	put(messages_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, MESSAGES_WIDTH,
 		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
 }
 
