@@ -10,6 +10,7 @@
 // so. What the other station sends is added to messages.c, as the modem
 // adds what it copies. The logbook is a real one, made for the test.
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,8 +66,20 @@ time_t ft8_searched_slot(void) {
 	return searched;
 }
 
+// as the real one does, a message that cannot be put in FT8's 77 bits is
+// refused: here, one whose last word is neither a grid, a report nor a roger
+static int is_sendable(const char *message) {
+	const char *word = strrchr(message, ' ') + 1;
+
+	if (isdigit((unsigned char)word[strlen(word) - 1]) || word[0] == 'R')
+		return 1;
+	return 0;
+}
+
 int ft8_tx_arm(const char *message, int pitch_hz, time_t slot_start) {
 	(void)pitch_hz;
+	if (!is_sendable(message))
+		return -1;
 	snprintf(armed, sizeof(armed), "%s", message);
 	armed_slot = slot_start;
 	arms++;
@@ -446,6 +459,28 @@ static void check_auto(void) {
 		"another station that calls with a report is answered with the R and ours");
 }
 
+// the grid as it was on the sbitx on 2026-10-08, a digit short: nothing
+// could be sent, and the remark that followed hid the reason
+static void check_grid(void) {
+	printf("a grid that is not a locator:\n");
+	afresh("POUNCING", "RR73");
+	set("MYGRID", "mk9fj");
+	now = T0 + 2 * SLOT + 14.8;
+	ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91");
+	expect(arms == 0 && strstr(said, "MYGRID") != NULL,
+		"a CQ is not answered, and the operator is left reading that MYGRID is why");
+	set("FT8_OPS", "NORMAL");
+	said[0] = 0;
+	call_cq_at(T0 + 4 * SLOT + 0.2);
+	expect(arms == 0 && strstr(said, "MYGRID") != NULL,
+		"nor is CQ called, for the same reason");
+	set("FT8_OPS", "POUNCING");
+	set("MYGRID", "MK97fx");
+	now = T0 + 6 * SLOT + 14.8;
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") == 0 && arms == 1,
+		"with the grid put right the CQ is answered");
+}
+
 static void check_stops(void) {
 	printf("what stops a contact:\n");
 	afresh("NORMAL", "RR73");
@@ -476,6 +511,7 @@ int main(void) {
 	check_waiting();
 	check_repeat();
 	check_auto();
+	check_grid();
 	check_stops();
 
 	logbook_close();

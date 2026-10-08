@@ -427,24 +427,34 @@ static time_t first_slot_of(int parity) {
 }
 
 // the message is sent in our next slot; the answer is looked for in the
-// slot after it. A message sent again is counted
-static void send(enum state state, const char *message) {
+// slot after it. A message sent again is counted. When it cannot be sent
+// the operator is told why, and nothing more is to be said of it: a grid
+// that is not a locator is the usual reason, as every first message of ours
+// carries it
+static int send(enum state state, const char *message) {
+	char grid[GRID_ROOM];
+
 	if (qso.state != state || strcmp(qso.message, message) != 0)
 		qso.sends = 0;
 	qso.state = state;
 	snprintf(qso.message, sizeof(qso.message), "%s", message);
 	qso.sends++;
 	if (ft8_tx_arm(message, control_get_int("TX_PITCH"), qso.next_slot) < 0) {
-		say("the message cannot be sent as it is written");
+		my_grid(grid);
+		if (!is_grid(grid))
+			say("MYGRID is not a locator such as MK97: change it in SET");
+		else
+			say("the message cannot be sent as it is written");
 		ft8_tx_cancel();
 		qso.state = IDLE;
-		return;
+		return -1;
 	}
 	message_add_sent("FT8", qso.next_slot, control_get_int("TX_PITCH"), message);
 	if (state != CALLING_CQ)
 		exchange_add(strrchr(message, ' ') + 1);
 	qso.decide_slot = qso.next_slot + SLOT_SECONDS;
 	qso.next_slot += 2 * SLOT_SECONDS;
+	return 0;
 }
 
 static void send_cq(void) {
@@ -457,7 +467,8 @@ static void send_cq(void) {
 	my_grid(grid);
 	snprintf(message, sizeof(message), "CQ %s %s", call, grid);
 	qso.cq_calls++;
-	send(CALLING_CQ, message);
+	if (send(CALLING_CQ, message) < 0)
+		return;
 	if (is_ops("NORMAL"))
 		snprintf(text, sizeof(text), "CQ, %d of %d", qso.cq_calls, CQ_CALLS_NORMAL);
 	else
@@ -478,7 +489,8 @@ static void send_to_dx(enum state state, const char *word) {
 	if (word == NULL)
 		word = grid;
 	snprintf(message, sizeof(message), "%s %s %s", qso.dx, call, word);
-	send(state, message);
+	if (send(state, message) < 0)
+		return;
 	snprintf(text, sizeof(text), "%s: %s, %d of %d", qso.dx, word, qso.sends, sends_max());
 	say(text);
 }
@@ -582,7 +594,8 @@ static void send_again(void) {
 		return;
 	}
 	snprintf(message, sizeof(message), "%s", qso.message);
-	send(qso.state, message);
+	if (send(qso.state, message) < 0)
+		return;
 	snprintf(text, sizeof(text), "%s: %s again, %d of %d", qso.dx,
 		strrchr(qso.message, ' ') + 1, qso.sends, sends_max());
 	say(text);
