@@ -27,7 +27,11 @@
 //           window and the radio have to say: the radio's remarks, such
 //           as why a message could not be answered, and while an FT8
 //           contact is under way how it stands, white on red, as on the
-//           panel; with the power and the SWR at its right end while
+//           panel. In CW it has what the radio reads off the air, run
+//           through from right to left as on the panel: each letter
+//           comes in at the right end and what came before moves left
+//           and off; a remark takes the line until the next letter
+//           comes. With the power and the SWR at its right end while
 //           there is power; under it the graph, 64
 //           high, and the waterfall, 96. The span is in the graph's top
 //           left corner
@@ -138,8 +142,8 @@
 // saves and Escape cancels.
 //
 // What the panel has and the window has not yet: the logbook and the
-// keyboard behind LOG and TERM, which are shown dim and do nothing; and
-// what CW reads off the air. The window has no MENU button.
+// keyboard behind LOG and TERM, which are shown dim and do nothing. The
+// window has no MENU button.
 //
 // A control has its name over its value, in cyan, in the middle of its
 // tile with a little room above it: the author found the names too small
@@ -319,6 +323,7 @@
 #define TIME_SECOND_AT 4
 #define DIGITS_OF_TWO 100
 #define CLOCK_SHOWN_EVERY_MS 250
+#define CW_READ_MAX 80
 #define SECONDS_AN_HOUR 3600
 #define SECONDS_A_DAY 86400
 #define HALF_A_MINUTE 30
@@ -500,6 +505,8 @@ static GtkWidget *pages;
 static GtkWidget *settings_list;
 static GtkWidget *text_title;
 static GtkWidget *typed_label;
+// the newest of what the radio has read of CW, the latest at the end
+static char cw_read[CW_READ_MAX + 1];
 static struct known *typed_for;
 // how far the radio's time is ahead of this computer's steady clock, in
 // seconds, once the radio has said the time
@@ -564,8 +571,32 @@ static void add_label_class(GtkWidget *label, const char *name);
 static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data);
 static GtkWidget *list_row_new(const char *name, GtkWidget **value);
 
+// a remark on the status line, from its left end
 static void show_status(const char *text) {
+	gtk_label_set_xalign(GTK_LABEL(status_label), 0);
+	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
 	gtk_label_set_text(GTK_LABEL(status_label), text);
+}
+
+// CW read off the air: the characters join the end of what was read
+// before, the oldest go to make room, and the line shows the end of it,
+// against its right end
+static void take_cw_line(const char *text) {
+	size_t had = strlen(cw_read);
+	size_t more = strlen(text);
+
+	if (more > CW_READ_MAX) {
+		text += more - CW_READ_MAX;
+		more = CW_READ_MAX;
+	}
+	if (had + more > CW_READ_MAX) {
+		memmove(cw_read, cw_read + had + more - CW_READ_MAX, CW_READ_MAX - more);
+		had = CW_READ_MAX - more;
+	}
+	memcpy(cw_read + had, text, more + 1);
+	gtk_label_set_xalign(GTK_LABEL(status_label), 1);
+	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_START);
+	gtk_label_set_text(GTK_LABEL(status_label), cw_read);
 }
 
 static struct known *find_known(const char *name) {
@@ -1379,6 +1410,11 @@ static void handle_line(const char *name, char *value) {
 	}
 	if (!strcmp(name, "TIME")) {
 		take_time_line(value);
+		return;
+	}
+	if (!strcmp(name, "CW")) {
+		set_class(status_label, "qso", 0);
+		take_cw_line(value);
 		return;
 	}
 	if (!strcmp(name, "SAY")) {

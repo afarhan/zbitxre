@@ -93,6 +93,13 @@
 //     SAY that message cannot be answered
 //     QSO VU2XZ > -19 > R-14 > RR73
 //
+// And what the radio reads of CW off the air goes to every client as it
+// is read, a few characters at a time, the spaces between words among
+// them, so a line may be CW and nothing but a space:
+//
+//     CW CQ CQ DE VU
+//     CW 2ESE
+//
 // SAY is a remark: why something asked for was not done, how a thing
 // went. QSO is how the FT8 contact under way stands, and comes empty when
 // it ends. Neither is a control and neither is kept: a client that
@@ -430,6 +437,10 @@ void server_say(const char *text) {
 
 void server_show_qso(const char *text) {
 	tell_everyone("QSO", text);
+}
+
+void server_send_cw(const char *text) {
+	tell_everyone("CW", text);
 }
 
 void server_on_answer(void (*answer)(const char *line)) {

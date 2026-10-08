@@ -7,3 +7,4 @@
 #pragma once
 
 void panel_cw_poll(long now_ms);
+void panel_cw_also_tell(void (*read)(const char *text));

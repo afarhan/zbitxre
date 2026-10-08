@@ -16,6 +16,11 @@
 //   front_panel/main.cpp says how. The next value goes when the panel has
 //   taken the one before, and what was read meanwhile waits for it.
 //
+//   the reader's, too, to whoever else tools/sdr.c names with
+//   panel_cw_also_tell(), which is the radio's clients over the network:
+//   the characters as they are read, with no waiting for the panel, since
+//   a radio may have no panel at all, as the sbitx has none.
+//
 //   zbitxv2's, with its Goertzel filter, cw_rx_take(), to the terminal, a
 //   line at a time: "cw goertzel: CQ CQ DE VU2ESE K", when the line is
 //   LINE_MAX long or nothing more has come for IDLE_MS.
@@ -41,6 +46,12 @@ static char line[LINE_MAX + 1];
 static int line_count;
 static long last_read_ms;
 
+static void (*also_read)(const char *text);
+
+void panel_cw_also_tell(void (*read)(const char *text)) {
+	also_read = read;
+}
+
 static void print_the_line(void) {
 	if (line_count == 0)
 		return;
@@ -52,9 +63,13 @@ static void print_the_line(void) {
 
 void panel_cw_poll(long now_ms) {
 	char read[WAITING_MAX + 1];
-	int count = cw_rx_take_reader(read, sizeof(read));
+	int count = cw_rx_take_reader(read, sizeof(read) - 1);
 	int i;
 
+	if (count > 0 && also_read != NULL) {
+		read[count] = 0;
+		also_read(read);
+	}
 	for (i = 0; i < count && waiting_count < WAITING_MAX; i++)
 		waiting[waiting_count++] = read[i];
 	count = cw_rx_take(read, sizeof(read));

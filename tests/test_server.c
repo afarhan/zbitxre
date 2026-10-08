@@ -971,7 +971,12 @@ int main(void) {
 	expect(!has(heard, "SPECTRUM") && !server_wants_spectrum(),
 		"and not after it says spectrum off");
 
-server_say("that message cannot be answered");
+server_send_cw("CQ DE ");
+	hear(one, heard);
+	expect(has(heard, "CW CQ DE \n"),
+		"what is read of CW goes to a client, its spaces with it");
+
+	server_say("that message cannot be answered");
 	server_show_qso("VU2XZ > -19 > R-14 > RR73");
 	hear(one, heard);
 	hear(other, other_heard);
