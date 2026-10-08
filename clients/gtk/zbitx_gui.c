@@ -150,9 +150,11 @@
 // radio works too: what it types goes into the box, in capitals, Enter
 // saves and Escape cancels.
 //
-// What the panel has and the window has not yet: the logbook and the
-// keyboard behind LOG and TERM, which are shown dim and do nothing. The
-// window has no MENU button.
+// LOG opens the logbook, in a window of its own, logbook_window.c, which
+// does what the panel's LOG screen does. While it is open the knob that
+// works the selected control works its list instead. What the panel has
+// and the window has not yet is the terminal behind TERM, which is shown
+// dim and does nothing. The window has no MENU button.
 //
 // A control has its name over its value, in cyan, in the middle of its
 // tile with a little room above it: the author found the names too small
@@ -270,6 +272,7 @@
 #include "board.h"
 #include "gpio.h"
 #include "knob.h"
+#include "logbook_window.h"
 
 #define DEFAULT_RADIO "sbitx.local"
 #define DEFAULT_PORT 8081
@@ -460,6 +463,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define MESSAGES_GROUP "FT8"
 #define FT8_DO_CONTROL "FT8_DO"
 #define TX_PITCH_CONTROL "TX_PITCH"
+#define LOG_ROW 0
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
 #define PAGE_MAIN "main"
@@ -569,6 +573,7 @@ static const struct radio_knobs radios_with_knobs[] = {
 	{ .radio = NULL },
 };
 
+static GtkWidget *main_window;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -906,7 +911,7 @@ static void show_buttons(void) {
 	}
 	for (i = 0; i < COLUMN_BUTTONS; i++) {
 		gtk_label_set_text(GTK_LABEL(column_label[i]), column_names[i]);
-		set_class(column_box[i], "dim", i != SET_ROW);
+		set_class(column_box[i], "dim", i != SET_ROW && i != LOG_ROW);
 		gtk_widget_set_visible(column_box[i], column_names[i][0] != 0);
 	}
 	if (!is_ft8)
@@ -1438,6 +1443,11 @@ static void take_kept_dial(const char *name, int hz) {
 static void handle_line(const char *name, char *value) {
 	struct known *k;
 
+	// the logbook's window takes what is its own of every line
+	logbook_window_took(name, value);
+	if (!strcmp(name, "LOG") || !strcmp(name, "LOG_LIST"))
+		return;
+
 	if (!strcmp(name, "SPECTRUM")) {
 		take_spectrum_line(value);
 		return;
@@ -1807,6 +1817,10 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 		show_page(PAGE_SETTINGS);
 		return TRUE;
 	}
+	if (clicked == LOG_ROW) {
+		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of);
+		return TRUE;
+	}
 	if (strcmp(mode_group(), MESSAGES_GROUP))
 		return TRUE;
 	if (clicked == FT8_CQ_ROW)
@@ -1981,6 +1995,15 @@ static gboolean take_up_knobs(gpointer unused) {
 	(void)unused;
 	if (tuned != 0)
 		tune(tuned);
+	// while the logbook is open the knob that works the controls works it
+	if (logbook_window_is_open()) {
+		logbook_window_turned(turned);
+		while (pressed > 0) {
+			logbook_window_pressed();
+			pressed--;
+		}
+		return G_SOURCE_CONTINUE;
+	}
 	if (row == ON_FREQUENCY)
 		row = row_of(VOLUME_CONTROL);
 	if (turned != 0 && row != NOT_FOUND)
@@ -2720,6 +2743,8 @@ static GtkWidget *create_text_page(void) {
 
 static GtkWidget *create_window(void) {
 	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+
+	main_window = window;
 
 	load_style();
 	gtk_window_set_title(GTK_WINDOW(window), "zbitx");
