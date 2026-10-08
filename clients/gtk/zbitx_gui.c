@@ -574,6 +574,8 @@ static const struct radio_knobs radios_with_knobs[] = {
 };
 
 static GtkWidget *main_window;
+static guint retry_timer;
+static int is_connecting;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1503,6 +1505,20 @@ static void handle_line(const char *name, char *value) {
 	show_values();
 }
 
+// the one try that is waiting to be made
+static gboolean on_time_to_retry(gpointer unused) {
+	(void)unused;
+	retry_timer = 0;
+	try_to_connect();
+	return G_SOURCE_REMOVE;
+}
+
+// the connection is let go and another is tried for, once, a little later.
+// There is never more than one try waiting and never more than one
+// connection: until 2026-10-08 the try was made again every three seconds
+// for ever after the first loss, each a new connection to the radio, which
+// has eight places for clients, and the window grew until the sbitx had no
+// memory left
 static void disconnect(const char *why) {
 	char text[LINE_MAX_LENGTH];
 
@@ -1511,7 +1527,8 @@ static void disconnect(const char *why) {
 	g_clear_object(&connection);
 	snprintf(text, sizeof(text), "%s: %s; trying again", radio_name, why);
 	show_status(text);
-	g_timeout_add(RETRY_EVERY_MS, (GSourceFunc)try_to_connect, NULL);
+	if (retry_timer == 0)
+		retry_timer = g_timeout_add(RETRY_EVERY_MS, on_time_to_retry, NULL);
 }
 
 static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
@@ -1522,9 +1539,14 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 	(void)unused;
 	line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(source),
 		result, NULL, &error);
+	// a connection already let go has nothing more to say
+	if ((gpointer)source != (gpointer)reader) {
+		g_free(line);
+		g_clear_error(&error);
+		return;
+	}
 	if (line == NULL) {
-		if (error != NULL)
-			g_error_free(error);
+		g_clear_error(&error);
 		disconnect("gone");
 		return;
 	}
@@ -1542,15 +1564,21 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 	GError *error = NULL;
 	char text[LINE_MAX_LENGTH];
 	const char *asks = "schema\nspectrum on\nmessages on\ntime\n";
+	GSocketConnection *made;
 
 	(void)unused;
-	connection = g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(source),
-		result, &error);
-	if (connection == NULL) {
+	made = g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(source), result, &error);
+	is_connecting = 0;
+	if (made == NULL) {
 		disconnect(error->message);
 		g_error_free(error);
 		return;
 	}
+	if (connection != NULL) {
+		g_object_unref(made);
+		return;
+	}
+	connection = made;
 	reader = g_data_input_stream_new(
 		g_io_stream_get_input_stream(G_IO_STREAM(connection)));
 	writer = g_io_stream_get_output_stream(G_IO_STREAM(connection));
@@ -1565,6 +1593,9 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 static void try_to_connect(void) {
 	char text[LINE_MAX_LENGTH];
 
+	if (connection != NULL || is_connecting)
+		return;
+	is_connecting = 1;
 	snprintf(text, sizeof(text), "connecting to %s", radio_name);
 	show_status(text);
 	g_socket_client_connect_to_host_async(connector, radio_name, radio_port,
