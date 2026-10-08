@@ -176,8 +176,11 @@
 //
 // THE TUNING WHEEL
 //
-// A tap on the frequency drops a box down under it with a wheel in it, for
-// tuning by touch, as the author asked: a finger put on the wheel and taken
+// A tap on the frequency brings up a box with a wheel in it, for tuning by
+// touch, as the author asked. The box lies over the list of controls on the
+// right, which is as wide as it is: it was first dropped under the
+// frequency, where it hid a large part of the spectrum, and the spectrum is
+// what is watched while tuning. A finger put on the wheel and taken
 // round it turns it, clockwise up and the other way down, a step of STEP
 // for every ten degrees, thirty-six to the turn, so that a turn with the
 // step at 100 Hz is 3.6 kHz. The wheel has a dimple that goes round with
@@ -304,8 +307,8 @@
 #define TILE_WIDTH 48
 #define FREQ_LEFT 48
 #define FREQ_WIDTH 144
-#define WHEEL_LEFT FREQ_LEFT
-#define WHEEL_TOP ROW_HEIGHT
+#define WHEEL_LEFT LIST_LEFT
+#define WHEEL_TOP MIDDLE_TOP
 #define WHEEL_SIZE 144
 #define WHEEL_MARGIN 8
 #define WHEEL_HUB_SHARE 0.32
@@ -2710,8 +2713,8 @@ static void load_style(void) {
 // and down by different amounts to fill the window, so a box square in the
 // plan is not: on the sbitx it came out wider than tall, and the wheel,
 // drawn to its width, was cut off above and below. The box is as wide as
-// the frequency's, and as tall as that is on the screen, or as tall as
-// there is room for under the frequency and then no wider than that
+// the list it lies over, and as tall as that is on the screen, or as tall
+// as the list and then no wider than that
 static void place_wheel(void) {
 	double across = WHEEL_SIZE;
 	double down = WHEEL_SIZE * scale_across / scale_down;
@@ -2965,8 +2968,8 @@ static GtkWidget *create_text_page(void) {
 	return page;
 }
 
-// the tuning wheel's box, made last so that it lies over what is under the
-// frequency, and not shown until the frequency is tapped
+// the tuning wheel's box, made last so that it lies over the list of
+// controls, and not shown until the frequency is tapped
 static void create_wheel(void) {
 	GtkGesture *drag;
 
