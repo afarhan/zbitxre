@@ -44,6 +44,7 @@ static time_t armed_slot;
 static int arms;
 static int is_cancelled;
 static char said[ROOM];
+static char warned[ROOM];
 static char qso_line[ROOM];
 static int checks_failed;
 
@@ -101,6 +102,10 @@ void panel_show_qso(const char *text) {
 
 void panel_say(const char *text) {
 	snprintf(said, sizeof(said), "%s", text);
+}
+
+void panel_warn(const char *text) {
+	snprintf(warned, sizeof(warned), "%s", text);
 }
 
 /* the radio's controls that ft8_qso.c reads */
@@ -461,24 +466,50 @@ static void check_auto(void) {
 
 // the grid as it was on the sbitx on 2026-10-08, a digit short: nothing
 // could be sent, and the remark that followed hid the reason
-static void check_grid(void) {
-	printf("a grid that is not a locator:\n");
+static void check_station(void) {
+	printf("a station that is not set:\n");
 	afresh("POUNCING", "RR73");
 	set("MYGRID", "mk9fj");
 	now = T0 + 2 * SLOT + 14.8;
-	ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91");
-	expect(arms == 0 && strstr(said, "MYGRID") != NULL,
-		"a CQ is not answered, and the operator is left reading that MYGRID is why");
-	set("FT8_OPS", "NORMAL");
+	warned[0] = 0;
 	said[0] = 0;
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") < 0 && arms == 0
+			&& strstr(warned, "MYGRID") != NULL && said[0] == 0,
+		"with a grid that is no locator a CQ is not answered: a warning names MYGRID");
+	set("FT8_OPS", "NORMAL");
+	warned[0] = 0;
 	call_cq_at(T0 + 4 * SLOT + 0.2);
-	expect(arms == 0 && strstr(said, "MYGRID") != NULL,
-		"nor is CQ called, for the same reason");
-	set("FT8_OPS", "POUNCING");
+	expect(arms == 0 && strstr(warned, "MYGRID") != NULL,
+		"nor is CQ called, with the same warning");
+	set("MYGRID", "");
+	warned[0] = 0;
+	call_cq_at(T0 + 4 * SLOT + 0.2);
+	expect(arms == 0 && strstr(warned, "MYGRID is not set") != NULL,
+		"nor with no grid at all");
 	set("MYGRID", "MK97fx");
+
+	set("MYCALLSIGN", "");
+	warned[0] = 0;
+	call_cq_at(T0 + 4 * SLOT + 0.2);
+	expect(arms == 0 && strstr(warned, "MYCALLSIGN is not set") != NULL,
+		"with no callsign CQ is not called: a warning names MYCALLSIGN");
+	warned[0] = 0;
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") < 0 && arms == 0
+			&& strstr(warned, "MYCALLSIGN") != NULL,
+		"nor is a CQ answered");
+	set("MYCALLSIGN", "nobody");
+	warned[0] = 0;
+	call_cq_at(T0 + 4 * SLOT + 0.2);
+	expect(arms == 0 && strstr(warned, "MYCALLSIGN is not a callsign") != NULL,
+		"a word with no digit in it is not taken for a callsign");
+	set("MYCALLSIGN", "vu2ese");
+
+	set("FT8_OPS", "POUNCING");
+	warned[0] = 0;
 	now = T0 + 6 * SLOT + 14.8;
-	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") == 0 && arms == 1,
-		"with the grid put right the CQ is answered");
+	expect(ft8_qso_answer("043030|-15|1200|CQ G0XYZ IO91") == 0 && arms == 1
+			&& warned[0] == 0,
+		"with both put right the CQ is answered and there is no warning");
 }
 
 static void check_stops(void) {
@@ -511,7 +542,7 @@ int main(void) {
 	check_waiting();
 	check_repeat();
 	check_auto();
-	check_grid();
+	check_station();
 	check_stops();
 
 	logbook_close();

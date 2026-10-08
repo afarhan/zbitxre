@@ -1245,7 +1245,7 @@ int main(int argc, char **argv) {
 	panel_controls_describe();
 
 	server_on_answer(answer_message);
-	panel_also_tell(server_say, server_show_qso);
+	panel_also_tell(server_say, server_warn, server_show_qso);
 	panel_cw_also_tell(server_send_cw);
 	if (server_open(SERVER_PORT) < 0)
 		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);

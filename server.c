@@ -91,6 +91,7 @@
 // line, goes to every client as well, as it is said:
 //
 //     SAY that message cannot be answered
+//     WARN MYGRID is not set: enter it in SET
 //     QSO VU2XZ > -19 > R-14 > RR73
 //
 // And what the radio reads of CW off the air goes to every client as it
@@ -101,8 +102,10 @@
 //     CW 2ESE
 //
 // SAY is a remark: why something asked for was not done, how a thing
-// went. QSO is how the FT8 contact under way stands, and comes empty when
-// it ends. Neither is a control and neither is kept: a client that
+// went. WARN is one the operator has to act on before what was asked can
+// be done, a callsign or a grid not set; a client may show it more boldly.
+// QSO is how the FT8 contact under way stands, and comes empty when it
+// ends. None of them is a control and none is kept: a client that
 // connects later is not told what was said before.
 //
 // A client that sends time is answered with the radio's time, in UTC, as
@@ -433,6 +436,10 @@ static void tell_everyone(const char *word, const char *text) {
 
 void server_say(const char *text) {
 	tell_everyone("SAY", text);
+}
+
+void server_warn(const char *text) {
+	tell_everyone("WARN", text);
 }
 
 void server_show_qso(const char *text) {

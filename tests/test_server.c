@@ -984,6 +984,13 @@ server_send_cw("CQ DE ");
 			&& has(other_heard, "QSO VU2XZ > -19 > R-14 > RR73\n"),
 		"what the radio says, and how a contact stands, go to every client");
 
+	server_warn("MYGRID is not set: enter it in SET");
+	hear(one, heard);
+	hear(other, other_heard);
+	expect(has(heard, "WARN MYGRID is not set: enter it in SET\n")
+			&& has(other_heard, "WARN MYGRID is not set"),
+		"a warning goes to every client as one, apart from what is merely said");
+
 	say(one, "time\n");
 	hear(one, heard);
 	hear(other, other_heard);

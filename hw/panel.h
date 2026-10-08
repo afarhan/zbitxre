@@ -28,7 +28,9 @@ void panel_set_bytes(int control, const uint8_t *bytes, int count);
 void panel_set_kept_bytes(int control, const uint8_t *bytes, int count);
 int panel_is_waiting(int control);
 void panel_say(const char *text);
-void panel_also_tell(void (*said)(const char *text), void (*qso)(const char *text));
+void panel_warn(const char *text);
+void panel_also_tell(void (*said)(const char *text), void (*warned)(const char *text),
+		void (*qso)(const char *text));
 void panel_show_qso(const char *text);
 void panel_set_polling(int on);
 int panel_poll(long now_ms, link_took_fn took, link_took_bytes_fn took_bytes);

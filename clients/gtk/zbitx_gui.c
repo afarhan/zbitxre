@@ -569,14 +569,24 @@ static atomic_int control_presses;
 static void try_to_connect(void);
 static void make_list(void);
 static void add_label_class(GtkWidget *label, const char *name);
+static void set_class(GtkWidget *widget, const char *name, int on);
 static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data);
 static GtkWidget *list_row_new(const char *name, GtkWidget **value);
 
 // a remark on the status line, from its left end
 static void show_status(const char *text) {
+	set_class(status_label, "warning", 0);
 	gtk_label_set_xalign(GTK_LABEL(status_label), 0);
 	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
 	gtk_label_set_text(GTK_LABEL(status_label), text);
+}
+
+// something the radio will not do until the operator puts it right: in bold,
+// in a colour of its own, until the next remark
+static void show_warning(const char *text) {
+	show_status(text);
+	set_class(status_label, "qso", 0);
+	set_class(status_label, "warning", 1);
 }
 
 // CW read off the air: the characters join the end of what was read
@@ -1422,6 +1432,10 @@ static void handle_line(const char *name, char *value) {
 	if (!strcmp(name, "SAY")) {
 		set_class(status_label, "qso", 0);
 		show_status(value);
+		return;
+	}
+	if (!strcmp(name, "WARN")) {
+		show_warning(value);
 		return;
 	}
 	if (!strcmp(name, "QSO")) {
@@ -2319,6 +2333,7 @@ static void load_style(void) {
 		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #00FFFF; }"
 		".status.qso { color: #FFFFFF; background-color: #B02020; }"
+		".status.warning { color: #FFE000; background-color: #000000; font-weight: bold; }"
 		".status.meter { color: #FFC000; background-color: #000000; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"

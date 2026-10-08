@@ -94,26 +94,41 @@ int panel_is_waiting(int control) {
 // the radio's clients over the network, which have a status line too.
 // tools/sdr.c names them
 static void (*also_said)(const char *text);
+static void (*also_warned)(const char *text);
 static void (*also_qso)(const char *text);
 
-void panel_also_tell(void (*said)(const char *text), void (*qso)(const char *text)) {
+void panel_also_tell(void (*said)(const char *text), void (*warned)(const char *text),
+		void (*qso)(const char *text)) {
 	also_said = said;
+	also_warned = warned;
 	also_qso = qso;
 }
 
-// a line of text for the panel's status bar; a newer one replaces one that
-// has not gone yet
-void panel_say(const char *text) {
+static void offer_remark(const char *text) {
 	static uint8_t line[LINK_SAY_MAX];
 	size_t count = strlen(text);
-
-	if (also_said != NULL)
-		also_said(text);
 
 	if (count > LINK_SAY_MAX)
 		count = LINK_SAY_MAX;
 	memcpy(line, text, count);
 	link_offer_kept_bytes(&radio_end, LINK_SAY, line, (int)count);
+}
+
+// a line of text for the panel's status bar; a newer one replaces one that
+// has not gone yet
+void panel_say(const char *text) {
+	if (also_said != NULL)
+		also_said(text);
+	offer_remark(text);
+}
+
+// something the operator has to put right before what was asked can be
+// done. The panel shows it as any remark; the others told are told it is a
+// warning, so that they may show it as one
+void panel_warn(const char *text) {
+	if (also_warned != NULL)
+		also_warned(text);
+	offer_remark(text);
 }
 
 // the contact under way, or an empty text when there is none; the panel

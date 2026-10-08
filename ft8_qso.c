@@ -104,6 +104,7 @@
 #define QUIET_SLOTS_AFTER_RRR 2
 #define HEARD_MAX 128
 #define CALL_ROOM 16
+#define CALL_LENGTH_MIN 3
 #define GRID_ROOM 8
 #define WORD_ROOM 16
 #define MESSAGE_ROOM 40
@@ -223,12 +224,64 @@ static void say(const char *text) {
 	panel_say(text);
 }
 
+// what the operator must put right before anything can be sent
+static void warn(const char *text) {
+	printf("ft8: %s\n", text);
+	fflush(stdout);
+	panel_warn(text);
+}
+
 /* reading a message */
 
 static int is_grid(const char *w) {
 	return strlen(w) == GRID_LENGTH && w[0] >= 'A' && w[0] <= 'R' && w[1] >= 'A'
 		&& w[1] <= 'R' && isdigit((unsigned char)w[2]) && isdigit((unsigned char)w[3])
 		&& strcmp(w, "RR73") != 0;
+}
+
+// a callsign that may be sent: letters and digits, at least one of each,
+// three or more in all, and a / where it is a portable one
+static int is_callsign(const char *w) {
+	int letters = 0;
+	int digits = 0;
+	int i;
+
+	for (i = 0; w[i] != 0; i++) {
+		if (isdigit((unsigned char)w[i]))
+			digits++;
+		else if (w[i] >= 'A' && w[i] <= 'Z')
+			letters++;
+		else if (w[i] != '/')
+			return 0;
+	}
+	return letters > 0 && digits > 0 && letters + digits >= CALL_LENGTH_MIN;
+}
+
+// every first message of ours carries the station's callsign and its grid.
+// Without them nothing is begun, and the operator is told which is wanting
+static int is_station_set(void) {
+	char call[CALL_ROOM];
+	char grid[GRID_ROOM];
+
+	my_call(call);
+	my_grid(grid);
+	if (call[0] == 0) {
+		warn("MYCALLSIGN is not set: enter it in SET");
+		return 0;
+	}
+	if (!is_callsign(call)) {
+		warn("MYCALLSIGN is not a callsign: correct it in SET");
+		return 0;
+	}
+	if (grid[0] == 0) {
+		warn("MYGRID is not set: enter it in SET");
+		return 0;
+	}
+	if (!is_grid(grid)) {
+		warn("MYGRID is not a locator such as MK97: correct it in SET");
+		return 0;
+	}
+	return 1;
 }
 
 static int is_report(const char *w) {
@@ -428,23 +481,15 @@ static time_t first_slot_of(int parity) {
 
 // the message is sent in our next slot; the answer is looked for in the
 // slot after it. A message sent again is counted. When it cannot be sent
-// the operator is told why, and nothing more is to be said of it: a grid
-// that is not a locator is the usual reason, as every first message of ours
-// carries it
+// the operator is told, and nothing more is to be said of it
 static int send(enum state state, const char *message) {
-	char grid[GRID_ROOM];
-
 	if (qso.state != state || strcmp(qso.message, message) != 0)
 		qso.sends = 0;
 	qso.state = state;
 	snprintf(qso.message, sizeof(qso.message), "%s", message);
 	qso.sends++;
 	if (ft8_tx_arm(message, control_get_int("TX_PITCH"), qso.next_slot) < 0) {
-		my_grid(grid);
-		if (!is_grid(grid))
-			say("MYGRID is not a locator such as MK97: change it in SET");
-		else
-			say("the message cannot be sent as it is written");
+		warn("the message cannot be sent as it is written");
 		ft8_tx_cancel();
 		qso.state = IDLE;
 		return -1;
@@ -789,6 +834,8 @@ static void call_cq(void) {
 		say("pouncing: CQ is not called");
 		return;
 	}
+	if (!is_station_set())
+		return;
 	ft8_tx_cancel();
 	memset(&qso, 0, sizeof(qso));
 	snprintf(qso.freq, sizeof(qso.freq), "%s", control_get("FREQ"));
@@ -817,6 +864,8 @@ static int answer(const struct heard *h, time_t slot, int is_auto) {
 		say("that message cannot be answered");
 		return -1;
 	}
+	if (!is_station_set())
+		return -1;
 	ft8_tx_cancel();
 	memset(&qso, 0, sizeof(qso));
 	take_the_station(h);
