@@ -120,7 +120,10 @@
 // TX, the radio's own switch between receive and transmit, is on the
 // bottom row as the two buttons in the modes that have them, and in the
 // other modes it is a row of the list, so that there is always a way to
-// put the radio on the air and take it off.
+// put the radio on the air and take it off. FT8 has neither: the radio
+// keys itself in the slot a message is due and the switch, worked by hand,
+// sends nothing; a message is tapped twice, or CQ pressed, and HALT stops
+// it. The frequency in red says the radio is sending.
 //
 // SET opens the settings, a screen of their own in the window, as on the
 // panel: a row to each of the radio's controls in its group STATION, the
@@ -683,7 +686,7 @@ static int is_row_shown(const struct row *r) {
 		return 0;
 	if (r->place == IN_LIST && has_footer_button(r->control))
 		return 0;
-	if (!strcmp(r->control, "BW"))
+	if (!strcmp(r->control, "BW") || !strcmp(r->control, "TX"))
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
 	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
 		return 1;
