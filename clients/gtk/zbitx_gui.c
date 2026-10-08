@@ -31,8 +31,9 @@
 //           through from right to left as on the panel: each letter
 //           comes in at the right end and what came before moves left
 //           and off; a remark takes the line until the next letter
-//           comes. With the power and the SWR at its right end while
-//           there is power; under it the graph, 64
+//           comes. It is the whole width of the graph; the power and
+//           the SWR are laid over its right end only while there is
+//           power to show; under it the graph, 64
 //           high, and the waterfall, 96. The span is in the graph's top
 //           left corner
 //           on the right, 144 wide: the list, down to the foot of the
@@ -909,6 +910,7 @@ static void show_meter(void) {
 		snprintf(text, sizeof(text), "%d.%d W  SWR %d.%d", power / TENTHS,
 			power % TENTHS, swr / TENTHS, swr % TENTHS);
 	gtk_label_set_text(GTK_LABEL(meter_label), text);
+	gtk_widget_set_visible(meter_label, text[0] != 0);
 }
 
 static void show_values(void) {
@@ -2317,6 +2319,7 @@ static void load_style(void) {
 		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #00FFFF; }"
 		".status.qso { color: #FFFFFF; background-color: #B02020; }"
+		".status.meter { color: #FFC000; background-color: #000000; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"
 		".frequency { font-family: monospace; font-size: %dpx; font-weight: bold;"
@@ -2459,7 +2462,11 @@ static void create_middle(void) {
 	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
 	add_label_class(status_label, "status");
 	add_label_class(meter_label, "status");
-	put(status_label, GRAPH_LEFT, MIDDLE_TOP, GRAPH_WIDTH - METER_WIDTH, STATUS_HEIGHT);
+	// the status line is the whole width; the meter is laid over its right
+	// end, on a ground of its own, only while there is power to show
+	put(status_label, GRAPH_LEFT, MIDDLE_TOP, GRAPH_WIDTH, STATUS_HEIGHT);
+	add_label_class(meter_label, "meter");
+	gtk_widget_set_no_show_all(meter_label, TRUE);
 	put(meter_label, GRAPH_LEFT + GRAPH_WIDTH - METER_WIDTH, MIDDLE_TOP, METER_WIDTH,
 		STATUS_HEIGHT);
 
