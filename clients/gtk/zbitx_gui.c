@@ -88,9 +88,11 @@
 // the window shows the middle of it that the span calls for, so a
 // narrower span is the same spectrum drawn larger.
 //
-// On the bottom row, in USB, LSB and AM there is MIC, and two buttons, TX
-// and RX: TX starts transmitting and RX stops it, two buttons apart as the
-// author wanted on the panel. TX is red while the radio transmits and RX
+// On the bottom row, in USB, LSB and AM there are two buttons, TX and RX:
+// TX starts transmitting and RX stops it, two buttons apart as the author
+// wanted on the panel. MIC was on this row to their left; the author moved
+// it to the list, where it is a row in these modes as any modem's control
+// is in its own. TX is red while the radio transmits and RX
 // has the bright edge while it receives. 2TONE has the same two. In CW the
 // places are the first six of the radio's macros, each sent at a click. In
 // FT8 the row is empty, and the column's third and fourth buttons are CQ
@@ -423,11 +425,10 @@ struct known {
 
 // a row of the list: the control it works, or BW, which works BW_VOICE or
 // BW_CW with the mode
-// where a row is put: at a place of its own in the top two rows, at one on
-// the bottom row, or in the list
+// where a row is put: at a place of its own in the top two rows, or in the
+// list
 enum place {
 	ON_TOP,
-	IN_FOOTER,
 	IN_LIST,
 };
 
@@ -464,12 +465,6 @@ static const struct top_place top_places[] = {
 	{"IF", 384, 0},
 	{"AUDIO", 432, 0},
 	{"MODE", 432, BANDS_TOP},
-	{NULL, 0, 0},
-};
-
-// the controls on the bottom row, each in the mode of its group
-static const struct top_place footer_places[] = {
-	{"MIC", 0, FOOTER_TOP},
 	{NULL, 0, 0},
 };
 
@@ -2587,8 +2582,6 @@ static void add_row(const char *control, enum place place) {
 
 	if (row_count == KNOWN_MAX || has_row(control))
 		return;
-	if (place == IN_FOOTER)
-		where = place_of(footer_places, control);
 	if (place == IN_LIST) {
 		box = list_row_new(label_of(control), &value);
 		gtk_widget_set_size_request(box, -1, px_down(ROW_HEIGHT));
@@ -2640,8 +2633,6 @@ static void make_list(void) {
 	focus = ON_FREQUENCY;
 	for (p = top_places; p->control != NULL; p++)
 		add_row(p->control, ON_TOP);
-	for (p = footer_places; p->control != NULL; p++)
-		add_row(p->control, IN_FOOTER);
 	for (i = 0; i < known_count; i++) {
 		if (!strcmp(known[i].group, "RADIO") && is_in_list(&known[i]))
 			add_row(known[i].name, IN_LIST);
