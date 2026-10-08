@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=zbitxre
+Comment=The radio program and its window, started with the desktop
+Exec=x-terminal-emulator -e /home/pi/zbitxre/setup/start.sh

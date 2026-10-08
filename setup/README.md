@@ -187,6 +187,30 @@ Rename it back to `sbitx.desktop` to have zbitxv2 start at login again.
 
 zbitxv2 still works with the overlay line in place.
 
+## Starting zbitxre with the desktop
+
+On a radio with a screen of its own, as the sbitx has, zbitxre is started
+each time the desktop comes up: the radio program in a terminal, where what
+it prints can be read, and the window, maximised. Two files here do it.
+
+`start.sh` starts the window, `zbitx_gui`, and then runs the radio program,
+`sdr`, in the terminal it was started in. Neither is started if it is
+already running. The window tries the radio program every three seconds
+until it answers.
+
+`zbitxre.desktop` is the desktop's entry that runs `start.sh` in a terminal.
+It is put where the desktop looks at login, once, after `make` and
+`make gui` in `~/zbitxre`:
+
+    cp setup/zbitxre.desktop ~/.config/autostart/
+
+The entry names `/home/pi/zbitxre`; change it if the repository is kept
+elsewhere. The old program's entry must be out of the way first, as above.
+To stop zbitxre starting by itself, rename the entry to
+`zbitxre.desktop.disabled`.
+
+On the sbitx it was put in on 8 October 2026.
+
 ## What zbitxre keeps on the radio
 
 `data/snapshot.raw`, when "snapshot" has been asked for in the radio's
