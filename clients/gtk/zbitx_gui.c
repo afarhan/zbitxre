@@ -181,9 +181,10 @@
 // round it turns it, clockwise up and the other way down, a step of STEP
 // for every ten degrees, thirty-six to the turn, so that a turn with the
 // step at 100 Hz is 3.6 kHz. The wheel has a dimple that goes round with
-// it, so that it is seen to turn, and the step is written on its hub. It is
-// the angle the finger goes through that counts, not where it is put down.
-// The cross in the box's corner, or another tap on the frequency, puts the
+// it, so that it is seen to turn. It is the angle the finger goes through
+// that counts, not where it is put down. The hub in the wheel's middle does
+// not turn and has a cross on it: a tap there, where the author wanted it
+// and not in the box's corner, or another tap on the frequency, puts the
 // box away. The tap used to go to the other VFO; the author set that aside
 // for the time being, and VFO in the list still does it.
 //
@@ -313,9 +314,7 @@
 #define WHEEL_TICKS 36
 #define WHEEL_TICK_SHARE 0.08
 #define WHEEL_NOTCH (2.0 * G_PI / WHEEL_TICKS)
-#define WHEEL_CLOSE_SIZE 24
-#define WHEEL_CLOSE_ARM 5
-#define WHEEL_STEP_SIZE 12
+#define WHEEL_CLOSE_ARM 7
 #define BANDS_TOP 48
 #define MIDDLE_TOP 96
 #define COLUMN_BUTTONS 4
@@ -1675,9 +1674,13 @@ static double wheel_angle_at(double x, double y) {
 	return atan2(y - middle_y, x - middle_x);
 }
 
+// the hub, which has the cross that puts the box away
 static int is_on_wheel_close(double x, double y) {
-	return x >= gtk_widget_get_allocated_width(wheel_area) - px(WHEEL_CLOSE_SIZE)
-		&& y <= px(WHEEL_CLOSE_SIZE);
+	double across = x - gtk_widget_get_allocated_width(wheel_area) / 2.0;
+	double down = y - gtk_widget_get_allocated_height(wheel_area) / 2.0;
+	double hub = wheel_radius() * WHEEL_HUB_SHARE;
+
+	return across * across + down * down <= hub * hub;
 }
 
 static void show_wheel(int on) {
@@ -1688,12 +1691,9 @@ static void show_wheel(int on) {
 }
 
 static gboolean on_draw_wheel(GtkWidget *widget, cairo_t *cr, gpointer unused) {
-	const struct known *step = find_known("STEP");
-	cairo_text_extents_t extents;
 	double width = gtk_widget_get_allocated_width(widget);
 	double height = gtk_widget_get_allocated_height(widget);
 	double radius = wheel_radius();
-	double corner = px(WHEEL_CLOSE_SIZE) / 2.0;
 	double arm = px(WHEEL_CLOSE_ARM);
 	double angle;
 	int i;
@@ -1705,15 +1705,6 @@ static gboolean on_draw_wheel(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 	cairo_set_source_rgb(cr, 1.0, 0.75, 0.0);
 	cairo_set_line_width(cr, px(1));
 	cairo_rectangle(cr, px(1) / 2.0, px(1) / 2.0, width - px(1), height - px(1));
-	cairo_stroke(cr);
-
-	// the cross that puts the box away
-	cairo_set_source_rgb(cr, 1, 1, 1);
-	cairo_set_line_width(cr, px(1) + 1);
-	cairo_move_to(cr, width - corner - arm, corner - arm);
-	cairo_line_to(cr, width - corner + arm, corner + arm);
-	cairo_move_to(cr, width - corner + arm, corner - arm);
-	cairo_line_to(cr, width - corner - arm, corner + arm);
 	cairo_stroke(cr);
 
 	cairo_translate(cr, width / 2.0, height / 2.0);
@@ -1737,23 +1728,21 @@ static gboolean on_draw_wheel(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 		radius * WHEEL_DIMPLE_AT * sin(wheel_angle), radius * WHEEL_DIMPLE_SHARE, 0,
 		2.0 * G_PI);
 	cairo_fill(cr);
-	// the hub does not turn, and says the step
+	// the hub does not turn, and has the cross that puts the box away
 	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
 	cairo_arc(cr, 0, 0, radius * WHEEL_HUB_SHARE, 0, 2.0 * G_PI);
 	cairo_fill(cr);
-	if (step == NULL)
-		return TRUE;
-	cairo_set_source_rgb(cr, 0, 1, 1);
-	cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-	cairo_set_font_size(cr, px(WHEEL_STEP_SIZE));
-	cairo_text_extents(cr, step->value, &extents);
-	cairo_move_to(cr, -extents.width / 2.0 - extents.x_bearing,
-		-extents.height / 2.0 - extents.y_bearing);
-	cairo_show_text(cr, step->value);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_set_line_width(cr, px(1) + 1);
+	cairo_move_to(cr, -arm, -arm);
+	cairo_line_to(cr, arm, arm);
+	cairo_move_to(cr, arm, -arm);
+	cairo_line_to(cr, -arm, arm);
+	cairo_stroke(cr);
 	return TRUE;
 }
 
-// a finger, or the mouse, is put on the box: on the cross it puts the box
+// a finger, or the mouse, is put on the box: on the hub it puts the box
 // away, anywhere else it takes hold of the wheel
 static void on_wheel_held(GtkGestureDrag *gesture, gdouble x, gdouble y, gpointer unused) {
 	(void)gesture;
