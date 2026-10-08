@@ -108,6 +108,34 @@
 // ends. None of them is a control and none is kept: a client that
 // connects later is not told what was said before.
 //
+// A client that sends log is sent the logbook's newest entries, a hundred
+// at most, the newest first; with the beginning of a callsign after the
+// word, only the entries with stations whose callsign begins so, as the
+// front panel's search has it. First a line that says how many are coming
+// and what was searched for, then an entry to a line, as logbook.c writes
+// one:
+//
+//     log VU2
+//     LOG_LIST 2 VU2
+//     LOG 972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59
+//     LOG 961|2026-04-02|14:10|14074|FT8|VU2ESE|-14 MK97|-09 MK81
+//
+// The entries go as the client's socket takes them. From then on the client
+// is sent the list of its search afresh whenever an entry is added to the
+// logbook or taken out of it, by anyone: by FT8, by the logger, by the
+// front panel or by another client.
+//
+// An entry is never changed, but a bad one can be deleted, by its number,
+// which is the first field of its line. What is being searched for goes
+// with the request, as the author's rule for the panel has it, so that the
+// list that comes back is still of that search:
+//
+//     logdel 972 VU2
+//
+// An entry is written with the radio's controls of the group LOGGER, which
+// logger.c describes: CALL, SENT, RECV, EXCH and NR are set as any text is,
+// and "LOGGER SAVE" logs the entry, "LOGGER WIPE" clears them.
+//
 // A client that sends time is answered with the radio's time, in UTC, as
 // seconds since 1970, or 0 while the radio does not know the time:
 //
@@ -186,12 +214,14 @@
 #include <linux/sockios.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "control.h"
+#include "logbook.h"
 #include "messages.h"
 #include "radio_clock.h"
 #include "server.h"
@@ -207,6 +237,11 @@
 #define HEX_DIGITS "0123456789abcdef"
 #define MESSAGE_LINE_MAX (MESSAGE_TEXT_ROOM + 48)
 #define ANSWER_WORD "answer "
+#define LOG_WORD "log"
+#define LOG_DELETE_WORD "logdel "
+#define LOG_ENTRIES_MAX 100
+#define LOG_LINE_MAX (12 * LOGBOOK_FIELD_MAX)
+#define NOT_LISTING (-1)
 
 struct client {
 	int fd;
@@ -217,6 +252,12 @@ struct client {
 	int wants_spectrum;
 	int wants_messages;
 	unsigned long last_message;
+	// the logbook: what the client searches for, the next entry of the list
+	// to go to it, and how the logbook stood when the list was begun
+	int shows_logbook;
+	char log_searched_for[LOGBOOK_FIELD_MAX];
+	int log_next;
+	unsigned long log_changes;
 	uint8_t changed[CONTROLS_MAX];
 };
 
@@ -475,6 +516,69 @@ void server_send_messages(void) {
 	}
 }
 
+// the list of what a client searches the logbook for is begun
+static void list_logbook(struct client *c, const char *callsign) {
+	while (*callsign == ' ')
+		callsign++;
+	snprintf(c->log_searched_for, sizeof(c->log_searched_for), "%.*s",
+		LOGBOOK_FIELD_MAX - 1, callsign);
+	c->shows_logbook = 1;
+	c->log_next = 0;
+}
+
+// "972 VU2": the entry of that number is deleted, and the list of the
+// search that came with it begun again
+static void delete_from_logbook(struct client *c, const char *asked) {
+	const char *callsign = strchr(asked, ' ');
+
+	if (logbook_delete(atoi(asked)) < 0)
+		client_queue_line(c, "WARN log: the entry could not be deleted\n");
+	if (callsign == NULL)
+		callsign = "";
+	list_logbook(c, callsign);
+}
+
+// to each client that shows the logbook: the list it asked for, as much of
+// it as there is room to queue, and the list again when the logbook has
+// changed since
+void server_send_log(void) {
+	static struct logbook_row rows[LOG_ENTRIES_MAX];
+	char text[LOG_LINE_MAX];
+	char line[LOG_LINE_MAX + LABEL_ROOM];
+	struct client *c;
+	int count;
+
+	if (listener == NOBODY)
+		return;
+	for (c = clients; c < clients + SERVER_CLIENTS_MAX; c++) {
+		if (c->fd == NOBODY || !c->shows_logbook)
+			continue;
+		if (c->log_next == NOT_LISTING && c->log_changes != logbook_changes())
+			c->log_next = 0;
+		if (c->log_next == NOT_LISTING || c->out_count + (int)sizeof(line) > OUT_MAX)
+			continue;
+		count = logbook_find(c->log_searched_for, rows, LOG_ENTRIES_MAX);
+		if (count < 0) {
+			client_queue_line(c, "WARN log: the radio has no logbook\n");
+			count = 0;
+		}
+		if (c->log_next == 0) {
+			c->log_changes = logbook_changes();
+			snprintf(line, sizeof(line), "LOG_LIST %d %s\n", count, c->log_searched_for);
+			client_queue_line(c, line);
+		}
+		while (c->fd != NOBODY && c->log_next < count
+				&& c->out_count + (int)sizeof(line) <= OUT_MAX) {
+			logbook_line(&rows[c->log_next], text, sizeof(text));
+			snprintf(line, sizeof(line), "LOG %s\n", text);
+			client_queue_line(c, line);
+			c->log_next++;
+		}
+		if (c->log_next >= count)
+			c->log_next = NOT_LISTING;
+	}
+}
+
 static void send_all_settings(struct client *client) {
 	int i;
 
@@ -528,6 +632,8 @@ static void accept_client(void) {
 	clients[i].out_count = 0;
 	clients[i].wants_spectrum = 0;
 	clients[i].wants_messages = 0;
+	clients[i].shows_logbook = 0;
+	clients[i].log_next = NOT_LISTING;
 	memset(clients[i].changed, 0, sizeof(clients[i].changed));
 	send_all_settings(&clients[i]);
 }
@@ -573,6 +679,14 @@ static void handle_line(struct client *c, char *line) {
 	if (!strncmp(line, ANSWER_WORD, strlen(ANSWER_WORD))) {
 		if (answer_a_message != NULL)
 			answer_a_message(line + strlen(ANSWER_WORD));
+		return;
+	}
+	if (!strncmp(line, LOG_DELETE_WORD, strlen(LOG_DELETE_WORD))) {
+		delete_from_logbook(c, line + strlen(LOG_DELETE_WORD));
+		return;
+	}
+	if (!strcmp(line, LOG_WORD) || !strncmp(line, LOG_WORD " ", strlen(LOG_WORD " "))) {
+		list_logbook(c, line + strlen(LOG_WORD));
 		return;
 	}
 	value = strchr(line, ' ');

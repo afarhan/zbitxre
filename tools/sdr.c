@@ -1184,6 +1184,7 @@ static void main_loop(void) {
 		ft8_qso_poll();
 		panel_messages_poll();
 		server_send_messages();
+		server_send_log();
 		radio_poll(now_ms());
 
 		polls[0].fd = TERMINAL;

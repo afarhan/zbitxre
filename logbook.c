@@ -28,6 +28,21 @@
 // search did; capitals and small letters are the same to it. A file from
 // before zbitxv2 had the "deleted" column is read without it.
 //
+// logbook_line() writes an entry as the line of text it is shown as, by the
+// front panel and by the network's clients alike, the fields with a |
+// between them in the order zbitxv2's panel showed them:
+//
+//     972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59
+//
+// the entry's number in the logbook, the date and the time in UTC, the
+// frequency in kHz, the mode, the other station's callsign, what was sent
+// and what was received. The last two are the report, and the exchange
+// after it if there was one: "-14 MK97".
+//
+// logbook_changes() counts the entries added and deleted since the program
+// began, so that whoever shows the logbook can tell that what it shows is
+// no longer what is there.
+//
 // It needs the SQLite library, as zbitxv2 did.
 //
 // For the thread that owns the controls.
@@ -38,6 +53,13 @@
 #include <sqlite3.h>
 
 #include "logbook.h"
+
+#define TIME_DIGITS 4
+#define HOUR_DIGITS 2
+// room for every field at its longest, before the line is cut
+#define WHOLE_LINE_MAX (12 * LOGBOOK_FIELD_MAX)
+
+static unsigned long changes;
 
 #define STATEMENT_MAX 300
 #define COLUMNS "id, mode, freq, qso_date, qso_time, rst_sent, exch_sent, " \
@@ -121,6 +143,41 @@ int logbook_find(const char *callsign, struct logbook_row *rows, int room) {
 	return count;
 }
 
+// a report and its exchange, as they are shown together
+static void join(char *joined, int room, const char *report, const char *exchange) {
+	if (exchange[0] != 0)
+		snprintf(joined, room, "%s %s", report, exchange);
+	else
+		snprintf(joined, room, "%s", report);
+}
+
+// 0445 is shown as 04:45; anything else as it is
+static void show_time(char *shown, int room, const char *qso_time) {
+	if (strlen(qso_time) == TIME_DIGITS)
+		snprintf(shown, room, "%.2s:%s", qso_time, qso_time + HOUR_DIGITS);
+	else
+		snprintf(shown, room, "%s", qso_time);
+}
+
+// the entry as a line of text, cut to the room there is
+void logbook_line(const struct logbook_row *row, char *line, int room) {
+	char sent[2 * LOGBOOK_FIELD_MAX];
+	char received[2 * LOGBOOK_FIELD_MAX];
+	char at[LOGBOOK_FIELD_MAX];
+	char whole[WHOLE_LINE_MAX];
+
+	join(sent, sizeof(sent), row->rst_sent, row->exch_sent);
+	join(received, sizeof(received), row->rst_recv, row->exch_recv);
+	show_time(at, sizeof(at), row->qso_time);
+	snprintf(whole, sizeof(whole), "%d|%s|%s|%s|%s|%s|%s|%s", row->id,
+		row->qso_date, at, row->freq, row->mode, row->callsign_recv, sent, received);
+	snprintf(line, room, "%.*s", room - 1, whole);
+}
+
+unsigned long logbook_changes(void) {
+	return changes;
+}
+
 // takes the entry of that number out of the logbook; 0, or -1 if there
 // was no such entry or the logbook could not be written
 int logbook_delete(int id) {
@@ -137,6 +194,7 @@ int logbook_delete(int id) {
 	sqlite3_finalize(prepared);
 	if (!is_done || sqlite3_changes(db) != 1)
 		return -1;
+	changes++;
 	return 0;
 }
 
@@ -167,5 +225,6 @@ int logbook_add(const struct logbook_row *row, const char *callsign_sent) {
 	sqlite3_finalize(prepared);
 	if (!is_done)
 		return -1;
+	changes++;
 	return (int)sqlite3_last_insert_rowid(db);
 }

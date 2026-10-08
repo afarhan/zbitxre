@@ -155,10 +155,11 @@ $(BUILD)/play_cw_record: tests/play_cw_record.c $(DSP) $(STAND_INS) $(DSP_HEADER
 		$(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/play_cw_record.c $(DSP) $(STAND_INS) -lpthread -lm
 
-$(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c radio.h server.h \
-		settings.h control.h $(DSP) $(STAND_INS) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c $(DSP) \
-		$(STAND_INS) -lpthread -lm
+$(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c logbook.c radio.h \
+		server.h settings.h control.h logbook.h $(DSP) $(STAND_INS) $(DSP_HEADERS) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c logbook.c $(DSP) \
+		$(STAND_INS) -lpthread -lm -lsqlite3
 
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
 	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_keyer.c modems/cw_keyer.c -lm

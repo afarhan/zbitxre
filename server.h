@@ -23,6 +23,7 @@ void server_broadcast(const struct control *c, int origin);
 int server_wants_spectrum(void);
 void server_send_spectrum(int span_hz, const uint8_t *points, int count);
 void server_send_messages(void);
+void server_send_log(void);
 void server_on_answer(void (*answer)(const char *line));
 void server_say(const char *text);
 void server_warn(const char *text);

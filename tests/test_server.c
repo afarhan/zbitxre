@@ -62,8 +62,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <sqlite3.h>
+
 #include "board.h"
 #include "hw_stand_ins.h"
+#include "logbook.h"
 #include "messages.h"
 #include "gpio.h"
 #include "key.h"
@@ -139,7 +142,17 @@
 #define STALLED_QUIET_ROUNDS 5
 #define STALLED_LINES_AT_MOST 2
 
+#define LOGBOOK_PATH "build/test_server_sbitx.db"
+#define LOG_HEARD_MAX 16384
+#define LOG_LINE_ROOM 128
+#define LOG_REQUEST_ROOM 32
+#define QUIET_ROUNDS 2
+#define MANY_ENTRIES 120
+#define LISTED_AT_MOST 100
+
 static int checks_failed;
+static char log_list_line[LOG_LINE_ROOM];
+static char log_entry_line[LOG_LINE_ROOM];
 
 static void expect(int ok, const char *what) {
 	if (ok) {
@@ -195,6 +208,133 @@ static void hear(int fd, char *heard) {
 
 static int has(const char *heard, const char *line) {
 	return strstr(heard, line) != NULL;
+}
+
+// a logbook of its own for the test, empty, as zbitxv2 made one
+static void open_a_fresh_logbook(void) {
+	sqlite3 *db;
+
+	remove(LOGBOOK_PATH);
+	sqlite3_open(LOGBOOK_PATH, &db);
+	sqlite3_exec(db,
+		"CREATE TABLE logbook (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, mode TEXT, "
+		"freq TEXT, qso_date TEXT, qso_time TEXT, callsign_sent TEXT, rst_sent TEXT, "
+		"exch_sent TEXT DEFAULT \"\", callsign_recv TEXT, rst_recv TEXT, "
+		"exch_recv TEXT DEFAULT \"\", tx_id TEXT DEFAULT \"\", comments TEXT DEFAULT \"\");",
+		NULL, NULL, NULL);
+	sqlite3_close(db);
+	logbook_open(LOGBOOK_PATH);
+}
+
+static void log_an_entry(const char *callsign, const char *qso_time) {
+	struct logbook_row row;
+
+	memset(&row, 0, sizeof(row));
+	snprintf(row.mode, sizeof(row.mode), "CW");
+	snprintf(row.freq, sizeof(row.freq), "7015");
+	snprintf(row.qso_date, sizeof(row.qso_date), "2026-10-08");
+	snprintf(row.qso_time, sizeof(row.qso_time), "%s", qso_time);
+	snprintf(row.rst_sent, sizeof(row.rst_sent), "599");
+	snprintf(row.rst_recv, sizeof(row.rst_recv), "579");
+	snprintf(row.callsign_recv, sizeof(row.callsign_recv), "%s", callsign);
+	logbook_add(&row, "VU2ESE");
+}
+
+// how many times the word begins a line of what was heard
+static int lines_of(const char *heard, const char *word) {
+	const char *at = heard;
+	int count = 0;
+
+	while ((at = strstr(at, word)) != NULL) {
+		if (at == heard || at[-1] == '\n')
+			count++;
+		at += strlen(word);
+	}
+	return count;
+}
+
+// the logbook's list is collected until no more of it comes, and its
+// entries counted; the line that begins the list and the entry of VU2XZ
+// are kept to be looked at
+static int hear_the_log(int fd, char *heard) {
+	static char all[LOG_HEARD_MAX];
+	const char *at;
+	int quiet = 0;
+
+	all[0] = 0;
+	while (quiet < QUIET_ROUNDS) {
+		server_send_log();
+		hear(fd, heard);
+		if (heard[0] == 0)
+			quiet++;
+		else
+			quiet = 0;
+		if (strlen(all) + strlen(heard) < sizeof(all))
+			strcat(all, heard);
+	}
+	log_list_line[0] = 0;
+	log_entry_line[0] = 0;
+	at = strstr(all, "LOG_LIST");
+	if (at != NULL)
+		snprintf(log_list_line, sizeof(log_list_line), "%.*s", (int)strcspn(at, "\n"), at);
+	at = strstr(all, "|VU2XZ|");
+	while (at != NULL && at > all && at[-1] != '\n')
+		at--;
+	if (at != NULL)
+		snprintf(log_entry_line, sizeof(log_entry_line), "%.*s", (int)strcspn(at, "\n"), at);
+	return lines_of(all, "LOG ");
+}
+
+static void check_the_logbook(int one, int other) {
+	static char heard[HEARD_MAX];
+	char request[LOG_REQUEST_ROOM];
+	char callsign[LOGBOOK_FIELD_MAX];
+	int i;
+
+	open_a_fresh_logbook();
+	log_an_entry("G0XYZ", "0440");
+	log_an_entry("VU2XZ", "0445");
+	hear(one, heard);
+	hear(other, heard);
+
+	say(one, "log\n");
+	expect(hear_the_log(one, heard) == 2 && !strcmp(log_list_line, "LOG_LIST 2 "),
+		"a client that sends log is told how many entries come, and is sent them");
+	expect(!strcmp(log_entry_line, "LOG 2|2026-10-08|04:45|7015|CW|VU2XZ|599|579"),
+		"an entry is a line as the panel is sent it, its number first");
+	expect(hear_the_log(other, heard) == 0, "a client that did not ask is sent none");
+
+	say(one, "log vu2\n");
+	expect(hear_the_log(one, heard) == 1 && !strcmp(log_list_line, "LOG_LIST 1 vu2"),
+		"with the beginning of a callsign, only the entries with such stations");
+
+	log_an_entry("VU2ABC", "0450");
+	expect(hear_the_log(one, heard) == 2 && !strcmp(log_list_line, "LOG_LIST 2 vu2"),
+		"when an entry is added the list of the client's search is sent afresh");
+
+	say(other, "logdel 2 \n");
+	expect(hear_the_log(other, heard) == 2 && !strcmp(log_list_line, "LOG_LIST 2 "),
+		"logdel takes the entry out and lists what is left, for the search it came with");
+	expect(hear_the_log(one, heard) == 1,
+		"and the other client, which shows the logbook too, is sent its list again");
+	say(other, "logdel 2 \n");
+	hear(other, heard);
+	expect(has(heard, "WARN log: the entry could not be deleted"),
+		"an entry that is not there cannot be deleted, and the client is told");
+
+	for (i = 0; i < MANY_ENTRIES; i++) {
+		snprintf(callsign, sizeof(callsign), "W%dAAA", i);
+		log_an_entry(callsign, "0500");
+	}
+	hear_the_log(one, heard);
+	hear_the_log(other, heard);
+	snprintf(request, sizeof(request), "log\n");
+	say(one, request);
+	expect(hear_the_log(one, heard) == LISTED_AT_MOST
+			&& !strcmp(log_list_line, "LOG_LIST 100 "),
+		"of a long logbook the newest hundred go, though they do not fit the queue at once");
+	logbook_close();
+	remove(LOGBOOK_PATH);
 }
 
 static int is_passband(int low_hz, int high_hz) {
@@ -1033,6 +1173,8 @@ server_send_cw("CQ DE ");
 	hear(other, other_heard);
 	expect(has(other_heard, "AUDIO 75\n"),
 		"a client that goes is forgotten, and a new one is told of changes");
+
+	check_the_logbook(one, other);
 
 	expect(a_stalled_client_is_kept_up_to_date(),
 		"a client that stalls is not dropped, and is sent the last FREQ, not the backlog");

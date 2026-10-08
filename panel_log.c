@@ -19,16 +19,10 @@
 // after the operator has said yes, with the entry's number and the same
 // search, and is sent the list of that search afresh.
 //
-// An entry goes to the panel as a line of text, the fields with a | between
-// them, in the order the panel shows them, which is the order zbitxv2's
-// panel showed them in:
+// An entry goes to the panel as the line of text logbook.c makes of it, cut
+// to what the link carries:
 //
 //     972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59
-//
-// the entry's number in the logbook, the date and the time in UTC, the
-// frequency in kHz, the mode, the other station's callsign, what was sent
-// and what was received. The last two are the report, and the exchange
-// after it if there was one: "-14 MK97".
 //
 // The lines go in parts, each when the panel has taken the one before;
 // front_panel/link.c says what is in a part.
@@ -45,11 +39,6 @@
 #include "panel_log.h"
 
 #define NOTHING_TO_SEND (-1)
-#define TIME_DIGITS 4
-#define HOUR_DIGITS 2
-// room for every field at its longest, before the line is cut to what the
-// link carries
-#define WHOLE_LINE_MAX (12 * LOGBOOK_FIELD_MAX)
 
 static struct logbook_row rows[LINK_LOG_LINES_MAX];
 static int row_count;
@@ -57,36 +46,6 @@ static uint8_t part[LINK_COUNTED_MAX];
 static int next_to_send = NOTHING_TO_SEND;
 static int is_list_wanted;
 static char searched_for[LOGBOOK_FIELD_MAX];
-
-// a report and its exchange, as they are shown together
-static void join(char *joined, int room, const char *report, const char *exchange) {
-	if (exchange[0] != 0)
-		snprintf(joined, room, "%s %s", report, exchange);
-	else
-		snprintf(joined, room, "%s", report);
-}
-
-// 0445 is shown as 04:45; anything else as it is
-static void show_time(char *shown, int room, const char *qso_time) {
-	if (strlen(qso_time) == TIME_DIGITS)
-		snprintf(shown, room, "%.2s:%s", qso_time, qso_time + HOUR_DIGITS);
-	else
-		snprintf(shown, room, "%s", qso_time);
-}
-
-static void make_a_line(char *line, const struct logbook_row *row) {
-	char sent[2 * LOGBOOK_FIELD_MAX];
-	char received[2 * LOGBOOK_FIELD_MAX];
-	char at[LOGBOOK_FIELD_MAX];
-	char whole[WHOLE_LINE_MAX];
-
-	join(sent, sizeof(sent), row->rst_sent, row->exch_sent);
-	join(received, sizeof(received), row->rst_recv, row->exch_recv);
-	show_time(at, sizeof(at), row->qso_time);
-	snprintf(whole, sizeof(whole), "%d|%s|%s|%s|%s|%s|%s|%s", row->id,
-		row->qso_date, at, row->freq, row->mode, row->callsign_recv, sent, received);
-	snprintf(line, LINK_LOG_LINE_MAX + 1, "%.*s", LINK_LOG_LINE_MAX, whole);
-}
 
 static void read_the_logbook(void) {
 	char line[LINK_LOG_LINE_MAX + 1];
@@ -99,7 +58,7 @@ static void read_the_logbook(void) {
 	}
 	printf("log: %d entries with \"%s\"\n", row_count, searched_for);
 	for (i = 0; i < row_count; i++) {
-		make_a_line(line, &rows[i]);
+		logbook_line(&rows[i], line, sizeof(line));
 		printf("log: %s\n", line);
 	}
 	fflush(stdout);
@@ -116,7 +75,7 @@ static void send_a_part(void) {
 		return;
 	part[0] = (uint8_t)next_to_send;
 	while (next_to_send < row_count) {
-		make_a_line(line, &rows[next_to_send]);
+		logbook_line(&rows[next_to_send], line, sizeof(line));
 		length = (int)strlen(line) + 1;
 		if (used + length > (int)sizeof(part))
 			break;
