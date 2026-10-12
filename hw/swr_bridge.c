@@ -7,8 +7,15 @@
 // go to an ATtiny85 on the board, which measures them and answers on the
 // I2C bus the Si5351 is on, at address 8. This is read_power() of
 // zbitxv2's sbitx.c, less what it worked out from the reading: four bytes
-// are read from register 0, the forward voltage and then the reflected,
-// each sixteen bits with the low byte first, in the ATtiny's own counts.
+// are read, the forward voltage and then the reflected, each sixteen bits
+// with the low byte first, in the ATtiny's own counts.
+//
+// zbitxv2 named register 0 before it read, on a bus it made itself out of
+// two pins, and took no notice of whether the ATtiny acknowledged. It does
+// not: on the kernel's bus the write of the register's number is refused
+// and the whole transfer with it, which is how this was found, the power
+// reading nothing on the first try. The ATtiny has no registers; it is
+// simply read.
 //
 // The zbitx has no ATtiny. Its bridge goes to the front panel's own ADC,
 // and front_panel/meter.cpp reads it there; board.h's is_bridge_on_i2c
@@ -26,14 +33,13 @@
 #include "swr_bridge.h"
 
 #define BRIDGE_ADDRESS 0x08
-#define BRIDGE_REGISTER 0
 #define BRIDGE_BYTES 4
 #define BITS_A_BYTE 8
 
 int swr_bridge_read(int *forward, int *reflected) {
 	uint8_t bytes[BRIDGE_BYTES];
 
-	if (i2c_read(BRIDGE_ADDRESS, BRIDGE_REGISTER, bytes, BRIDGE_BYTES) < 0)
+	if (i2c_receive(BRIDGE_ADDRESS, bytes, BRIDGE_BYTES) < 0)
 		return -1;
 	*forward = (int16_t)(bytes[0] | (bytes[1] << BITS_A_BYTE));
 	*reflected = (int16_t)(bytes[2] | (bytes[3] << BITS_A_BYTE));

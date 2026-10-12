@@ -33,7 +33,11 @@
 // number. i2c_open_bus_of() tries each bus in turn and keeps the first on
 // which a chip answers at the address given; the radio asks for the Si5351.
 //
-// Not every device on the bus has registers. The front panel takes and gives
+// Not every device on the bus has registers. The sbitx's ATtiny85 has
+// none: asked to read, it gives its four bytes, and it does not
+// acknowledge a register's number written to it, so i2c_read() fails on
+// it. i2c_receive() reads so many bytes and writes nothing first. The
+// front panel takes and gives
 // whole frames. i2c_send() writes bytes as they are. i2c_receive_counted()
 // reads an answer whose first byte says how many bytes follow it, 1 to 32:
 // the kernel reads that byte and then as many more as it says, in the one
@@ -163,6 +167,20 @@ int i2c_send(uint8_t address, const uint8_t *bytes, int count) {
 	message.flags = 0;
 	message.len = count;
 	message.buf = frame;
+	return transfer(&message, 1);
+}
+
+int i2c_receive(uint8_t address, uint8_t *bytes, int count) {
+	struct i2c_msg message;
+
+	if (bus_fd == NOT_OPEN || bytes == NULL || count < 1 || count > I2C_BLOCK_MAX) {
+		errno = EINVAL;
+		return -1;
+	}
+	message.addr = address;
+	message.flags = I2C_M_RD;
+	message.len = count;
+	message.buf = bytes;
 	return transfer(&message, 1);
 }
 
