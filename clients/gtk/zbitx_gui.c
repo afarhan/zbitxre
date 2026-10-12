@@ -14,7 +14,11 @@
 // It is laid out as the zbitx's front panel is, place for place, so that
 // whoever knows one knows the other; front_panel/main.cpp has the panel's
 // plan, and the places here are its places, in its pixels: the panel is
-// 480 by 320, and every widget is 48 high. The window opens maximised, to
+// 480 by 320, and every widget is 48 high. The window's plan is 336 high,
+// seven rows of 48 and no part of an eighth: at 320 the list, which is 48
+// to a row, had four rows and two thirds of a fifth, and the column of
+// buttons stopped 32 short of the foot. The 16 more are the waterfall's,
+// and the bottom row is that much lower. The window opens maximised, to
 // fill the radio's screen, and the plan is stretched to whatever size the
 // window is, across and down each by its own measure, the letters sized to
 // go with it; restored from maximised it is 800 by 480, the size zbitxv2's
@@ -34,11 +38,11 @@
 //           comes. It is the whole width of the graph; the power and
 //           the SWR are laid over its right end only while there is
 //           power to show; under it the graph, 64
-//           high, and the waterfall, 96. The span is in the graph's top
+//           high, and the waterfall, 112. The span is in the graph's top
 //           left corner
 //           on the right, 144 wide: the list, down to the foot of the
-//           window
-//   y 272   six places under the waterfall for the mode's own
+//           window, five rows
+//   y 288   six places under the waterfall for the mode's own
 //
 // The top row is the frequency and the radio's core controls. Whatever
 // else the radio has, that belongs to the radio as a whole or to the mode
@@ -302,9 +306,9 @@
 #define TEXT_MAX 64
 #define GAP 6
 
-// the panel's plan, in the panel's pixels
+// the panel's plan, in the panel's pixels, and seven whole rows high
 #define PANEL_WIDTH 480
-#define PANEL_HEIGHT 320
+#define PANEL_HEIGHT 336
 #define ROW_HEIGHT 48
 #define TILE_WIDTH 48
 #define FREQ_LEFT 48
@@ -329,12 +333,12 @@
 #define GRAPH_WIDTH 288
 #define STATUS_HEIGHT 16
 #define GRAPH_HEIGHT 64
-#define FALL_HEIGHT 96
+#define FALL_HEIGHT 112
 #define METER_WIDTH 112
 #define LIST_LEFT 336
 #define LIST_WIDTH 144
 #define LIST_HEIGHT (PANEL_HEIGHT - MIDDLE_TOP)
-#define FOOTER_TOP 272
+#define FOOTER_TOP 288
 #define FOOTER_TILES 6
 #define BANDS 9
 #define ROW_MARGIN_SIDE 6
