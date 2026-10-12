@@ -303,7 +303,20 @@
     var value = space < 0 ? "" : line.slice(space + 1);
     if (name === "!") { takeFromService(value); return; }
     if (name === "SPECTRUM") { takeSpectrum(value); return; }
-    if (name === "MODULATION") { envelope = unhex(value); drawScope(); return; }
+    // While the pads are being keyed nothing is drawn that can wait: not
+    // the graph and waterfall, nor what is being sent, nor the meter. A
+    // touch on a pad waits its turn behind whatever the page is doing, and
+    // on a telephone the drawing was most of that; the author found the
+    // pads slow to answer.
+    if (name === "MODULATION") {
+      if (!keyedTimer) { envelope = unhex(value); drawScope(); }
+      return;
+    }
+    if (keyedTimer && (name === "SMETER" || name === "POWER" || name === "SWR"
+        || name === "BATTERY" || name === "CLOCK")) {
+      values[name] = value;
+      return;
+    }
     if (name === "CONTROL") { takeSchema(value); return; }
     if (name === "MESSAGE") { takeMessage(value); return; }
     if (name === "CW") { cwRead = (cwRead + value).slice(-80); say(cwRead); return; }
@@ -611,6 +624,8 @@
       keyedTimer = null;
       isMuted = isSpeaking;
       setLoudness();
+      // and what was not drawn meanwhile is
+      show();
     }, KEYED_LOOK_MS);
   }
 
@@ -626,15 +641,6 @@
     });
   }
 
-  // each dot and dash is felt as well as heard: the telephone buzzes for
-  // as long as the element lasts. The author's telephone plays a sound 0.4
-  // s after it is asked to, which no page can shorten, and a sidetone that
-  // late is no guide to the thumbs; the buzz comes at once
-  function felt(element) {
-    var dotMs = 1200 / (Number(values.WPM) || 18);
-    if (navigator.vibrate) { navigator.vibrate(Math.round(element === "." ? dotMs : 3 * dotMs)); }
-  }
-
   function keyed(code, gapMs) {
     send("CW_KEY " + code + (gapMs ? " " + gapMs : ""));
     keying();
@@ -648,7 +654,7 @@
     }
     if (isKeyerAsked || !player) { return; }
     isKeyerAsked = true;
-    player.openKeyer(keyed, felt).then(function (opened) {
+    player.openKeyer(keyed).then(function (opened) {
       keyer = opened;
       tellKeyer();
       note("keyer: " + keyer.delay() + "; the radio's sound: " + player.delay());
@@ -891,6 +897,8 @@
   function takeSpectrum(said) {
     var space = said.indexOf(" "), i;
     if (space < 0) { return; }
+    // while keying, nothing is drawn: see take()
+    if (keyedTimer) { return; }
     spanHz = Number(said.slice(0, space));
     points = unhex(said.slice(space + 1));
     envelope = null;

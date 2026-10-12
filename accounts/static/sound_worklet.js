@@ -426,6 +426,10 @@ class RadioKeyer extends AudioWorkletProcessor {
     super();
     this.isDotHeld = false;
     this.isDashHeld = false;
+    this.isDotTapped = false;
+    this.isDashTapped = false;
+    this.isDot = false;       // the pads as the keyer takes them at this sample:
+    this.isDash = false;      // held, or touched since it last looked
     this.wasDotHeld = false;
     this.wasDashHeld = false;
     this.isB = false;
@@ -449,8 +453,18 @@ class RadioKeyer extends AudioWorkletProcessor {
     var self = this;
     this.port.onmessage = function (message) {
       var said = message.data;
-      if (said.dot !== undefined) { self.isDotHeld = said.dot; }
-      if (said.dash !== undefined) { self.isDashHeld = said.dash; }
+      // a pad touched is kept as touched until the keyer has looked, so
+      // that a tap that came and went between two looks is not missed:
+      // the sound thread looks only as often as the telephone asks it for
+      // sound, which on a slow one is eight times a second
+      if (said.dot !== undefined) {
+        self.isDotHeld = said.dot;
+        self.isDotTapped = self.isDotTapped || said.dot;
+      }
+      if (said.dash !== undefined) {
+        self.isDashHeld = said.dash;
+        self.isDashTapped = self.isDashTapped || said.dash;
+      }
       if (said.wpm) { self.dotSamples = Math.round(sampleRate * 1.2 / said.wpm); }
       if (said.pitch) { self.turn = 2 * Math.PI * said.pitch / sampleRate; }
       if (said.level !== undefined) { self.level = said.level; }
@@ -471,8 +485,6 @@ class RadioKeyer extends AudioWorkletProcessor {
       if (this.gapMs > GAP_KNOWN_MOST_MS) { this.gapMs = 0; }
     }
     this.code += element;
-    // told at once, for the page to make the telephone buzz with it
-    this.port.postMessage({ began: element });
     this.sending = element;
     this.lastSent = element;
     this.spaceLeft = this.dotSamples;
@@ -489,8 +501,8 @@ class RadioKeyer extends AudioWorkletProcessor {
 
   // with no element being sent: the next one, if a pad or a memory asks
   wanted() {
-    var isDot = this.isDotHeld || this.isDotRemembered;
-    var isDash = this.isDashHeld || this.isDashRemembered;
+    var isDot = this.isDot || this.isDotRemembered;
+    var isDash = this.isDash || this.isDashRemembered;
     if (isDot && isDash) { return this.lastSent === "." ? "-" : "."; }
     if (isDot) { return "."; }
     if (isDash) { return "-"; }
@@ -499,11 +511,15 @@ class RadioKeyer extends AudioWorkletProcessor {
 
   // one sample; says whether the key is down
   step() {
-    var dotJustHeld = this.isDotHeld && !this.wasDotHeld;
-    var dashJustHeld = this.isDashHeld && !this.wasDashHeld;
-    var next;
-    this.wasDotHeld = this.isDotHeld;
-    this.wasDashHeld = this.isDashHeld;
+    var dotJustHeld, dashJustHeld, next;
+    this.isDot = this.isDotHeld || this.isDotTapped;
+    this.isDash = this.isDashHeld || this.isDashTapped;
+    this.isDotTapped = false;
+    this.isDashTapped = false;
+    dotJustHeld = this.isDot && !this.wasDotHeld;
+    dashJustHeld = this.isDash && !this.wasDashHeld;
+    this.wasDotHeld = this.isDot;
+    this.wasDashHeld = this.isDash;
     if (!this.sending) {
       next = this.wanted();
       if (!next) {
@@ -525,8 +541,8 @@ class RadioKeyer extends AudioWorkletProcessor {
       if (dotJustHeld) { this.isDotRemembered = true; }
       if (dashJustHeld) { this.isDashRemembered = true; }
       if (this.isB && this.markLeft > 0) {
-        if (this.sending === "." && this.isDashHeld) { this.isDashRemembered = true; }
-        if (this.sending === "-" && this.isDotHeld) { this.isDotRemembered = true; }
+        if (this.sending === "." && this.isDash) { this.isDashRemembered = true; }
+        if (this.sending === "-" && this.isDot) { this.isDotRemembered = true; }
       }
     }
     if (this.markLeft > 0) {
