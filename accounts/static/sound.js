@@ -22,8 +22,11 @@
 // packets, and covers the lost ones. It says how and why at its head. This
 // file starts it and passes the packets to it.
 //
-// A browser without sound worklets, or that will not run at 48000, gets
-// each packet played as it comes, as was done at first. It clicks when
+// The browser's sound is asked to run at 48000, which the worklet makes
+// its samples at; if it runs at another rate the worklet fits them to it.
+//
+// A browser without sound worklets gets each packet played as it comes,
+// as was done at first. It clicks when
 // packets are late or lost, and has a grain on it; it is better than
 // silence.
 
@@ -43,7 +46,7 @@ function radioSound() {
   gain.connect(context.destination);
 
   var worklet = null, isPlain = false;
-  if (context.audioWorklet && window.AudioWorkletNode && context.sampleRate === RATE_OUT) {
+  if (context.audioWorklet && window.AudioWorkletNode) {
     context.audioWorklet.addModule("/static/sound_worklet.js").then(function () {
       worklet = new AudioWorkletNode(context, "radio-sound",
         { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });

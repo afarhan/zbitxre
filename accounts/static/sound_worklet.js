@@ -34,11 +34,26 @@
 //   the most: a line that stalls often is listened to further behind.
 // - When there has been no running dry for some seconds target comes down
 //   again, a little at a time, to LEAST.
-// - When more is waiting than target asks for, one sample in a hundred is
-//   left out until it is not: the sound runs one part in a hundred fast,
-//   which is not heard, and what is heard is never far behind the radio. The
-//   same keeps this browser's clock and the radio's from drifting apart.
-//   When far too much is waiting, after a long stall, the oldest is thrown
+// - The radio's clock and this browser's are two clocks. The radio was
+//   measured making 8001.6 samples a second by the laptop's reckoning; left
+//   alone, the queue would slowly fill, or with the difference the other
+//   way slowly empty and run dry, however much was kept in hand. So the
+//   queue is not read a sample at a time but at a pace, a little over or
+//   under one, from a place between two samples, and what is played is on
+//   the straight line between them; the samples are six times as many as
+//   the sound needs, and between neighbours a straight line is as good as
+//   true. The pace is set once a second from the least that waited over
+//   the last LOOKS seconds: more than FLOOR, and the queue is read up to 3
+//   parts in a hundred fast; less, up to 1 slow. The pitch moves by as
+//   much, which is not heard.
+//
+//   This was first done by leaving out one sample in a hundred. That is a
+//   step in the wave 480 times a second, and the author heard it as a
+//   crackle and named the cause: clocks that differ, and buffers copied
+//   one sample out.
+// - The same pace fits the queue, which is at 48000, to a browser whose
+//   sound runs at some other rate.
+// - When far too much is waiting, after a long stall, the oldest is thrown
 //   away at once.
 // - When the service says packets were lost, the gap is filled with the
 //   packet before it, quieter each time it is used, the joins faded; a gap
@@ -50,8 +65,7 @@
 //
 // BRINGING THE SAMPLES UP TO 48000
 //
-// The sound comes at 8000 samples a second, a byte of mu-law each; this
-// runs only where the browser's sound is at 48000. Six samples are made of
+// The sound comes at 8000 samples a second, a byte of mu-law each. Six samples are made of
 // each one through one filter that runs on from packet to packet:
 // TAPS_A_PHASE * UP taps, a sinc cut at 4 kHz under a Blackman window. It
 // passes the speech, which the radio has held under 3.6 kHz, and stops the
@@ -62,10 +76,13 @@
 
 var RATE = 48000, UP = 6, TAPS_A_PHASE = 48;
 var LEAST = 0.12 * RATE, MOST = 0.8 * RATE, STEP_UP = 0.08 * RATE, STEP_DOWN = 0.01 * RATE;
-var SPARE = 0.03 * RATE;     // this much over target is let be
+var FLOOR = 0.05 * RATE;     // the least that should ever be waiting, as the pace aims
+var LOOKS = 8;               // the pace goes by the least that waited over so many looks
+var PACE_A_SECOND = 0.1;     // a second too much waiting quickens the pace by this
+var FASTEST = 1.03, SLOWEST = 0.99;
 var FAR_TOO_MUCH = RATE;     // this much over target is thrown away at once
-var WINDOW = 2 * RATE;       // how often the queue is looked at
-var CALM_WINDOWS = 5;        // so many windows without running dry bring target down
+var WINDOW = RATE;           // how often the queue is looked at, in samples played
+var CALM_WINDOWS = 10;       // so many looks without running dry bring target down
 var FADE = 240;              // samples over which sound comes and goes: 5 ms
 var FALL = 0.99;             // what is held when the queue is dry falls by this each sample
 var CONCEALED_MOST = 3, CONCEALED_GAIN = 0.6;
@@ -112,10 +129,12 @@ class RadioSound extends AudioWorkletProcessor {
     this.risen = FADE;      // how far the sound has come back up since it last began
     this.before = null;     // the packet before, as samples, to fill a gap with
     this.isAfterGap = false;
-    this.lowest = 0;        // the least that waited in this window
+    this.between = 0;       // how far the place being played is past the sample at `next`
+    this.pace = 1;          // how fast the queue is read: 1 is as the radio's clock goes
+    this.lowest = 0;        // the least that waited since the last look
+    this.lows = [];         // and at each of the last LOOKS looks
     this.looked = 0;        // samples played since the queue was last looked at
     this.calm = 0;
-    this.isHurried = false;
     this.ranDry = 0;
 
     var self = this;
@@ -159,6 +178,8 @@ class RadioSound extends AudioWorkletProcessor {
     if (this.waiting > this.target + FAR_TOO_MUCH) {
       this.discard(this.waiting - this.target);
       this.risen = 0;
+      this.lowest = this.waiting;
+      this.lows = [];
     }
   }
 
@@ -206,10 +227,16 @@ class RadioSound extends AudioWorkletProcessor {
     }
   }
 
-  // every WINDOW samples: is more waiting than need be, and has the line
-  // been steady long enough to listen nearer to it
+  // every WINDOW samples: is more waiting than need be, or less, and has
+  // the line been steady long enough to listen nearer to it
   look() {
-    this.isHurried = this.lowest > this.target + SPARE;
+    var least, i;
+    this.lows.push(this.lowest);
+    if (this.lows.length > LOOKS) { this.lows.shift(); }
+    least = this.lows[0];
+    for (i = 1; i < this.lows.length; i++) { least = Math.min(least, this.lows[i]); }
+    this.pace = Math.max(SLOWEST, Math.min(FASTEST,
+      1 + (least - FLOOR) / RATE * PACE_A_SECOND));
     this.calm++;
     if (this.calm >= CALM_WINDOWS && this.target > LEAST) {
       this.target = Math.max(LEAST, this.target - STEP_DOWN);
@@ -219,19 +246,26 @@ class RadioSound extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
-    var out = outputs[0][0], i, sample, weight;
+    var out = outputs[0][0], i, sample, weight, after, passed;
+    // sampleRate is the browser's, given to every worklet
+    var step = this.pace * RATE / sampleRate;
     for (i = 0; i < out.length; i++) {
       if (!this.isPlaying && this.waiting >= this.target) {
         this.isPlaying = true;
         this.risen = 0;
+        this.between = 0;
+        this.pace = 1;
+        step = RATE / sampleRate;
         this.lowest = this.waiting;
+        this.lows = [];
         this.looked = 0;
       }
-      if (this.isPlaying && this.waiting === 0) {
+      // two are needed, to play what lies between them
+      if (this.isPlaying && this.waiting < 2) {
         this.isPlaying = false;
         this.ranDry++;
         this.calm = 0;
-        this.isHurried = false;
+        this.discard(this.waiting);
         this.target = Math.min(MOST, this.target + STEP_UP);
       }
       if (!this.isPlaying) {
@@ -239,9 +273,13 @@ class RadioSound extends AudioWorkletProcessor {
         out[i] = this.held;
         continue;
       }
-      sample = this.queue[this.next];
-      this.discard(1);
-      if (this.isHurried && this.looked % 100 === 99 && this.waiting > 0) { this.discard(1); }
+      after = this.next + 1 === QUEUE ? 0 : this.next + 1;
+      sample = this.queue[this.next]
+        + (this.queue[after] - this.queue[this.next]) * this.between;
+      this.between += step;
+      passed = Math.floor(this.between);
+      this.between -= passed;
+      this.discard(Math.min(passed, this.waiting));
       if (this.risen < FADE) {
         weight = this.risen / FADE;
         this.held *= FALL;
@@ -253,7 +291,10 @@ class RadioSound extends AudioWorkletProcessor {
       }
       if (this.waiting < this.lowest) { this.lowest = this.waiting; }
       this.looked++;
-      if (this.looked >= WINDOW) { this.look(); }
+      if (this.looked >= WINDOW) {
+        this.look();
+        step = this.pace * RATE / sampleRate;
+      }
     }
     return true;
   }
