@@ -654,22 +654,41 @@
     var box = make("div", "pad", null, keyerBox);
     make("div", "sign", sign, box);
     make("div", "name", label, box);
+    var isHeld = false;
     function held(is) {
       var told = {};
+      if (is === isHeld) { return; }
+      isHeld = is;
       told[which] = is;
       box.className = "pad" + (is ? " held" : "");
       if (keyer) { keyer.tell(told); }
       if (is) { keying(); }
     }
-    box.addEventListener("pointerdown", function (e) {
+    // A pad is held while any finger that came down on it is still on
+    // the screen. The screen's own touches are listened to, and the
+    // browser is told at each to do nothing of its own with them: two
+    // fingers on a page are a browser's sign to zoom or to go back, and a
+    // browser that takes them so takes them away from the page, when both
+    // pads would light and at once go out. That is what the author saw,
+    // with only a dot or a dash sent. If a touch is taken away all the
+    // same, it is noted in the web server's log.
+    function touched(e) {
+      e.preventDefault();
+      held(e.targetTouches.length > 0);
+    }
+    box.addEventListener("touchstart", touched, { passive: false });
+    box.addEventListener("touchend", touched, { passive: false });
+    box.addEventListener("touchmove", function (e) { e.preventDefault(); }, { passive: false });
+    box.addEventListener("touchcancel", function (e) {
+      held(e.targetTouches.length > 0);
+      note("a touch on the " + which + " pad was taken away by the browser");
+    });
+    // and a mouse, on a computer
+    box.addEventListener("mousedown", function (e) {
       e.preventDefault();
       held(true);
-      // so that a thumb that slides off the pad still lets go of it
-      try { box.setPointerCapture(e.pointerId); } catch (unable) { /* held all the same */ }
     });
-    box.addEventListener("pointerup", function () { held(false); });
-    box.addEventListener("pointercancel", function () { held(false); });
-    box.addEventListener("lostpointercapture", function () { held(false); });
+    window.addEventListener("mouseup", function () { held(false); });
     box.addEventListener("contextmenu", function (e) { e.preventDefault(); });
   }
   // the two pads lie side by side with nothing between, as a paddle's two

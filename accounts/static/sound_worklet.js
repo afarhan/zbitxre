@@ -511,6 +511,14 @@ class RadioKeyer extends AudioWorkletProcessor {
         return false;
       }
       this.begin(next);
+      // two pads touched together: a screen tells of its touches a frame
+      // at a time, so two thumbs that land within a sixtieth of a second
+      // are told of in the same instant, which two contacts of a paddle
+      // never are. The one that did not go first is remembered, or a
+      // quick squeeze would send only the one. The author found it so:
+      // both pads lit and only a dot or a dash was sent.
+      if (dotJustHeld && next !== ".") { this.isDotRemembered = true; }
+      if (dashJustHeld && next !== "-") { this.isDashRemembered = true; }
     } else {
       if (dotJustHeld) { this.isDotRemembered = true; }
       if (dashJustHeld) { this.isDashRemembered = true; }
