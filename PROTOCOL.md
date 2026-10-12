@@ -430,10 +430,51 @@ A client that takes the sound by UDP, as the window is to, is not built yet:
 both it and the radio are behind routers, and it has to send to the service
 first for there to be a way back to it.
 
+A text message `lost 2` says that so many packets did not come before the
+next that did, so that a player can cover the gap.
+
+## Speech to transmit
+
+The same path, the other way: the author's design. Whoever works the radio
+from afar speaks, and the radio sends it.
+
+**Into the radio program.** Speech to transmit is sent to the radio program as
+RTP, by UDP, to port 5006 on the radio itself, `127.0.0.1`, and nowhere else:
+the same RTP the radio's sound is, payload type 0, 160 samples of mu-law to a
+packet. Any program on the radio may send it; the daemon does. While the radio
+is sending, speech that comes takes the microphone's place, from its first
+sample until that transmission ends, and a gap in it is silence, not the
+microphone. Speech that comes while the radio is receiving is thrown away.
+`MIC` sets its level, as it does the microphone's. Nothing in the speech says
+when to send: that is `TX`, as ever.
+
+**From the service to the daemon.** By UDP, to the address the radio's sound
+is coming from, which is the one way in through the owner's router, and so
+only while there is a stream. A packet is made as the sound's are:
+
+    8 bytes     the stream's id
+    172 bytes   an RTP packet, 160 bytes of mu-law after 12 of header
+    8 bytes     the tag
+
+The tag is made the same way with a key of its own,
+
+    HMAC-SHA256(the radio's stretched cookie, "zbitx-speech-1 <nonce>")
+
+the nonce being the stream's, from `AUDIO ON`. A packet of the radio's sound
+therefore cannot be sent back as speech. The service numbers the packets one
+after another for as long as the stream lasts, and the daemon drops one whose
+id or tag is wrong or whose number is not ahead of the last it took, which
+stops a packet that somebody kept from being sent again.
+
+**From the owner to the service.** The owner's page sends each 160 bytes of
+mu-law as a binary message on the WebSocket it works the radio by,
+`wss://my.sbitx.net/work?radio=<number>`, which is the owner's alone. A binary
+message of any other length is dropped.
+
 ## Not done yet
 
-Sound goes one way, from the radio, and to browsers only; the window does not
-play it yet, and nothing can be said into the radio from afar. The copy of the
+The window neither plays the radio's sound nor sends speech yet; both are for
+browsers only. The copy of the
 logbook is
 the newest hundred entries, which is all `log` gives. Files that are not
 controls, the radio's calibration in `hw_settings.ini` and the CW macros, are

@@ -40,6 +40,10 @@
 // that has said nothing for twenty to be gone, and tells the radio to stop
 // transmitting: a phone goes out of reach of its network without saying.
 //
+// In the voice modes TX opens this browser's microphone, and what the owner
+// says goes to the radio to be sent; "sending, and in the voice modes
+// speaking", below, says how.
+//
 // The radio's sound comes as it does to anyone listening from the globe,
 // over a second WebSocket, /listen: twenty milliseconds of mu-law to a
 // message, played by sound.js, which says how. VOL is the loudness in this browser and is not sent to the
@@ -405,10 +409,63 @@
     return "";
   }
 
+  /* sending, and in the voice modes speaking
+
+     In CW, FT8 and 2TONE the radio makes what it sends, and TX is a line
+     to it like any other. In the voice modes what is sent is what the
+     owner says, into this browser's microphone: sound.js opens it, and
+     each twenty milliseconds it hears is sent to the service as a binary
+     message on the connection the radio is worked by, from where it goes
+     to the radio; accounts/remote.py says how.
+
+     - The radio is told to send only when the microphone is open. If the
+       browser refuses it, the radio is not keyed: it would send whatever
+       its own microphone hears in an empty room.
+     - While speaking, the radio's sound is not played here. The radio
+       plays a monitor of what it sends, which would come back half a
+       second late and into the microphone.
+     - At the end, speech stops going at once and the radio is told to
+       stop SPEECH_TAIL_MS later: the last word is still on its way. */
+
+  var SPEECH_TAIL_MS = 300, MONITOR_TAIL_MS = 500;
+  var isSpeaking = false, isMuted = false, tailTimer = null;
+
+  function sendSpeech(bytes) {
+    if (isSpeaking && work && work.readyState === 1) { work.send(bytes); }
+  }
+
+  function startSending() {
+    if (modeGroup() !== "VOICE") { set("TX", "ON"); return; }
+    if (!player) { return; }
+    if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
+    player.openMicrophone(sendSpeech).then(function () {
+      isSpeaking = true;
+      isMuted = true;
+      setLoudness();
+      set("TX", "ON");
+    }, function (refused) {
+      say("the microphone could not be opened, and the radio is not sending: "
+        + refused.message, "warning");
+    });
+  }
+
+  function stopSending() {
+    if (!isSpeaking) { set("TX", "OFF"); return; }
+    isSpeaking = false;
+    tailTimer = setTimeout(function () {
+      set("TX", "OFF");
+      tailTimer = setTimeout(function () {
+        tailTimer = null;
+        isMuted = false;
+        setLoudness();
+      }, MONITOR_TAIL_MS);
+    }, SPEECH_TAIL_MS);
+  }
+
   function footerTapped(place) {
     var label = footer[place].value.textContent;
-    if (label === "TX") { set("TX", "ON"); }
-    else if (label === "RX") { set("TX", "OFF"); }
+    if (label === "TX") { startSending(); }
+    else if (label === "RX") { stopSending(); }
     else if (label && modeGroup() === "CW") { send("MACRO " + label); }
   }
 
@@ -980,7 +1037,7 @@
   var player = null, sound = null;
 
   function setLoudness() {
-    if (player) { player.setLoudness(Number(own.VOL) / 100); }
+    if (player) { player.setLoudness(isMuted ? 0 : Number(own.VOL) / 100); }
   }
 
   function listen() {

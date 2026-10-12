@@ -135,6 +135,30 @@ one address, beyond which a browser is sent the word "full" and no sound. A list
 packets and stays up to date. Clients that take UDP, the window among
 them, are to come.
 
+SPEECH TO TRANSMIT
+
+The owner working a radio from a browser speaks into the browser's
+microphone, and the radio is to send it. The author's design: the path of
+the radio's sound, in reverse. The page sends twenty milliseconds of
+mu-law at a time, 160 bytes, as binary messages on the WebSocket it works
+the radio by, which only the owner has. Each is sent on by UDP to the
+address the radio's sound is coming from, the one way back in through a
+home's router, in a packet made as the daemon's are:
+
+    8 bytes     the stream's id
+    172 bytes   an RTP packet: 12 of header, 160 of mu-law
+    8 bytes     a tag
+
+The tag's key is made as the sound's is, of other words: HMAC-SHA256 of
+"zbitx-speech-1 <nonce>" with the stretched cookie as its key, in hex. So
+a packet of the radio's sound, which anyone on its way can copy, cannot be
+sent to the radio as speech. The packets are numbered one after another
+for as long as the stream lasts, and the daemon drops one that is not
+ahead of the last, so that one copied on the way cannot be sent again.
+There is a stream only while somebody listens; the owner's page always
+does, and speech with no stream to go by is dropped. Nothing here says
+when the radio is to send: that is TX, a line like any other.
+
 WORKING A RADIO FROM A BROWSER
 
 The website has a client of its own, a page that works the radio as the
@@ -212,6 +236,7 @@ RTP_HEADER_BYTES = 12
 TAG_BYTES = 8
 PACKET_BYTES = STREAM_ID_BYTES + RTP_BYTES + TAG_BYTES
 SEQUENCE_AHEAD_MOST = 3000
+SPEECH_SOURCE = 0x7a627478
 LISTENER_WAITING_MOST = 4096
 LISTENERS_A_RADIO = 100
 LISTENERS_AN_ADDRESS = 6
@@ -238,6 +263,27 @@ def proof(secret, salt, side, name, challenge, nonce):
                     hashlib.sha256).hexdigest()
 
 
+class Stream:
+    """a radio's sound on its way to those listening, and the owner's
+    speech on its way back: the keys of the two, which differ, the number
+    of the last packet of sound taken, where the sound comes from, and the
+    number of the last packet of speech sent"""
+
+    def __init__(self, radio, cookie_key, nonce):
+        self.radio = radio
+        self.key = self.key_for("zbitx-audio-1", cookie_key, nonce)
+        self.speech_key = self.key_for("zbitx-speech-1", cookie_key, nonce)
+        self.last = None
+        self.address = None
+        self.said = secrets.randbelow(65536)
+        self.said_samples = 0
+
+    @staticmethod
+    def key_for(words, cookie_key, nonce):
+        return hmac.new(cookie_key.encode(), (words + " " + nonce).encode(),
+                        hashlib.sha256).hexdigest().encode()
+
+
 class Remote:
     def __init__(self, settings):
         self.settings = settings
@@ -250,9 +296,11 @@ class Remote:
         self.listeners = {}  # a radio's id -> the browsers' writers listening to it
         self.listener_from = {}  # a browser's writer -> the address it came from
         self.tuned = {}      # a radio's id -> "7074000 USB", while its sound is asked for
-        self.streams = {}    # a stream's id -> [the radio's id, the key, the last sequence]
+        self.streams = {}    # a stream's id -> its Stream
+        self.sound_port = None  # the UDP port, for sending speech back from
         self.stream_of = {}  # a radio's id -> its stream's id, while there is one
         self.heard = 0       # packets of sound taken, for the tests
+        self.spoken = 0      # and of speech sent
         self.heard_at_start = 0
         self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
@@ -416,9 +464,7 @@ class Remote:
             return
         stream = secrets.token_bytes(STREAM_ID_BYTES)
         nonce = secrets.token_hex(16)
-        key = hmac.new(self.cookie_keys[radio].encode(), ("zbitx-audio-1 " + nonce).encode(),
-                       hashlib.sha256).hexdigest().encode()
-        self.streams[stream] = [radio, key, None]
+        self.streams[stream] = Stream(radio, self.cookie_keys[radio], nonce)
         self.stream_of[radio] = stream
         self.heard_at_start = self.heard
         self.say("the sound of radio %d is asked for" % radio)
@@ -439,17 +485,17 @@ class Remote:
             if line is not None:
                 line.write(b"AUDIO OFF\n")
 
-    def take_packet(self, packet):
+    def take_packet(self, packet, address=None):
         """a packet from a radio's daemon: if it is a stream's, and its tag
         and its place in the order are right, its sound goes to the
-        listeners"""
+        listeners, and where it came from is kept, to send speech back to"""
         if len(packet) != PACKET_BYTES:
             return
         stream = self.streams.get(packet[:STREAM_ID_BYTES])
         if stream is None:
             return
-        radio, key, last = stream
-        tag = hmac.new(key, packet[:-TAG_BYTES], hashlib.sha256).digest()[:TAG_BYTES]
+        radio, last = stream.radio, stream.last
+        tag = hmac.new(stream.key, packet[:-TAG_BYTES], hashlib.sha256).digest()[:TAG_BYTES]
         if not hmac.compare_digest(tag, packet[-TAG_BYTES:]):
             return
         sequence = struct.unpack(">H", packet[STREAM_ID_BYTES + 2:STREAM_ID_BYTES + 4])[0]
@@ -458,13 +504,31 @@ class Remote:
         if last is not None and (sequence - last) % 65536 > 1:
             # so that a player may cover the gap and not click at it
             self.tell_listeners(radio, "lost %d" % ((sequence - last) % 65536 - 1))
-        stream[2] = sequence
+        stream.last = sequence
+        stream.address = address
         self.heard += 1
         sound = packet[STREAM_ID_BYTES + RTP_HEADER_BYTES:-TAG_BYTES]
         frame = bytes([0x82, 126]) + struct.pack(">H", len(sound)) + sound
         for listener in self.listeners.get(radio, ()):
             if listener.transport.get_write_buffer_size() < LISTENER_WAITING_MOST:
                 listener.write(frame)
+
+    def send_speech(self, radio, sound):
+        """twenty milliseconds of the owner's speech, as the page sent it,
+        go to the radio's daemon to be transmitted: by UDP, to where the
+        radio's sound is coming from, numbered and tagged"""
+        stream = self.streams.get(self.stream_of.get(radio))
+        if (stream is None or stream.address is None or self.sound_port is None
+                or len(sound) != RTP_BYTES - RTP_HEADER_BYTES):
+            return
+        stream.said = (stream.said + 1) % 65536
+        stream.said_samples = (stream.said_samples + len(sound)) % (1 << 32)
+        packet = (self.stream_of[radio]
+                  + struct.pack(">BBHII", 0x80, 0, stream.said, stream.said_samples, SPEECH_SOURCE)
+                  + sound)
+        tag = hmac.new(stream.speech_key, packet, hashlib.sha256).digest()[:TAG_BYTES]
+        self.sound_port.sendto(packet + tag, stream.address)
+        self.spoken += 1
 
     def tell_listeners(self, radio, word):
         for listener in self.listeners.get(radio, ()):
@@ -647,7 +711,9 @@ class Remote:
                 if message is None:
                     return
                 is_text, body = message
-                if is_text and body != ".":
+                if not is_text:
+                    self.send_speech(radio["id"], body)
+                elif body != ".":
                     radio_writer.write(body.encode() + b"\n")
                     await radio_writer.drain()
 
@@ -794,9 +860,9 @@ class Remote:
 
         class Sound(asyncio.DatagramProtocol):
             def datagram_received(self, data, address):
-                remote.take_packet(data)
+                remote.take_packet(data, address)
 
-        await asyncio.get_running_loop().create_datagram_endpoint(
+        self.sound_port, _ = await asyncio.get_running_loop().create_datagram_endpoint(
             Sound, local_addr=(host, port))
         self.web = await asyncio.start_server(self.meet_browser, web_host, web_port,
                                               limit=REQUEST_LONGEST)

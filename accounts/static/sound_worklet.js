@@ -301,3 +301,91 @@ class RadioSound extends AudioWorkletProcessor {
 }
 
 registerProcessor("radio-sound", RadioSound);
+
+// THE MICROPHONE, THE OTHER WAY
+//
+// When the owner speaks to transmit, the browser's microphone is brought
+// the other way: down from the browser's rate to 8000 samples a second,
+// made mu-law, and handed to the page 160 samples at a time, the twenty
+// milliseconds a packet holds, to be sent to the radio. accounts/remote.py
+// and rtp_microphone.c say what becomes of them.
+//
+// The microphone's samples are first put on 48000 a second, if the browser
+// runs at another rate, by the straight line between neighbours. Then one
+// in six is kept, after a low-pass filter of MIC_TAPS taps, a sinc cut at
+// 3.3 kHz under a Blackman window, so that what lies above 4 kHz in a
+// voice, its hiss, is not folded down among the speech.
+
+var MIC_TAPS = 192, MIC_CUTOFF_HZ = 3300, MIC_PACKET = 160;
+var ULAW_BIAS = 132, ULAW_CLIP = 32635;
+
+class RadioMicrophone extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    var n, t, middle = (MIC_TAPS - 1) / 2, wide = 2 * MIC_CUTOFF_HZ / RATE, sum = 0;
+    this.taps = new Float32Array(MIC_TAPS);
+    for (n = 0; n < MIC_TAPS; n++) {
+      t = (n - middle) * wide;
+      this.taps[n] = (t === 0 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t))
+        * (0.42 - 0.5 * Math.cos(2 * Math.PI * n / (MIC_TAPS - 1))
+          + 0.08 * Math.cos(4 * Math.PI * n / (MIC_TAPS - 1)));
+      sum += this.taps[n];
+    }
+    for (n = 0; n < MIC_TAPS; n++) { this.taps[n] /= sum; }
+    this.past = new Float32Array(MIC_TAPS);  // the last samples at 48000, going round
+    this.newest = 0;
+    this.untilKept = UP;
+    this.before = 0;       // the sample before this one, at the browser's rate
+    this.between = 0;      // how far past it the next sample at 48000 lies
+    this.packet = new Uint8Array(MIC_PACKET);
+    this.filled = 0;
+  }
+
+  // a sample as G.711 writes it: the sign, three bits for which of eight
+  // segments its size falls in, and four for where in the segment
+  ulaw(sample) {
+    var size = Math.round(sample * 32767), sign = 0, segment = 7, mask;
+    if (size < 0) { size = -size; sign = 0x80; }
+    if (size > ULAW_CLIP) { size = ULAW_CLIP; }
+    size += ULAW_BIAS;
+    for (mask = 0x4000; (size & mask) === 0 && segment > 0; mask >>= 1) { segment--; }
+    return ~(sign | (segment << 4) | ((size >> (segment + 3)) & 15)) & 255;
+  }
+
+  // a sample at 48000: every sixth, the filter's answer is kept
+  take(sample) {
+    var sum = 0, at, j;
+    this.newest = (this.newest + 1) % MIC_TAPS;
+    this.past[this.newest] = sample;
+    this.untilKept--;
+    if (this.untilKept > 0) { return; }
+    this.untilKept = UP;
+    at = this.newest;
+    for (j = 0; j < MIC_TAPS; j++) {
+      sum += this.taps[j] * this.past[at];
+      at = at === 0 ? MIC_TAPS - 1 : at - 1;
+    }
+    this.packet[this.filled++] = this.ulaw(sum);
+    if (this.filled === MIC_PACKET) {
+      var whole = this.packet.slice().buffer;
+      this.port.postMessage(whole, [whole]);
+      this.filled = 0;
+    }
+  }
+
+  process(inputs) {
+    var heard = inputs[0] && inputs[0][0], step = sampleRate / RATE, i;
+    if (!heard) { return true; }
+    for (i = 0; i < heard.length; i++) {
+      while (this.between < 1) {
+        this.take(this.before + (heard[i] - this.before) * this.between);
+        this.between += step;
+      }
+      this.between -= 1;
+      this.before = heard[i];
+    }
+    return true;
+  }
+}
+
+registerProcessor("radio-microphone", RadioMicrophone);

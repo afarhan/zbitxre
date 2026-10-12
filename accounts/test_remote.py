@@ -238,6 +238,13 @@ class Browser:
             return body.decode()
         return body
 
+    def speak(self, sound):
+        """a binary message of under 65536 bytes, masked as a browser's
+        must be"""
+        self.socket.sendall(bytes([0x82, 0x80 | 126]) + struct.pack(">H", len(sound))
+                            + bytes([1, 2, 3, 4])
+                            + bytes(byte ^ (1, 2, 3, 4)[at % 4] for at, byte in enumerate(sound)))
+
     def say(self, text):
         """a text message, masked as a browser's must be"""
         body = text.encode()
@@ -294,15 +301,20 @@ class RemoteTest(unittest.TestCase):
 
         self.radio = RadioProgram()
         self.key_file = os.path.join(self.folder, "remote.key")
+        # in place of the radio program's port for speech to transmit
+        self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.microphone.bind(("127.0.0.1", 0))
         self.daemon = subprocess.Popen(
             [DAEMON, "--server", "127.0.0.1", "--port", str(self.port),
-             "--radio-port", str(self.radio.port), "--key", self.key_file],
+             "--radio-port", str(self.radio.port), "--key", self.key_file,
+             "--microphone-port", str(self.microphone.getsockname()[1])],
             stdout=subprocess.DEVNULL)
         self.account = self.make_account("VU2ESE", "farhan@example.org")
 
     def tearDown(self):
         self.daemon.kill()
         self.daemon.wait()
+        self.microphone.close()
         self.radio.close()
         self.loop.call_soon_threadsafe(self.loop.stop)
         shutil.rmtree(self.folder, ignore_errors=True)
@@ -604,6 +616,65 @@ class RemoteTest(unittest.TestCase):
         page.close()
         self.wait_for(lambda: self.radio.controls.get("TX") == "OFF",
                       "the radio was left transmitting when the page went")
+
+    def test_what_the_owner_says_reaches_the_radio_to_be_transmitted(self):
+        radio = self.switch_on_and_add()
+        page = self.owners_page(self.account, radio["id"])
+        self.assertTrue(page.is_accepted, page.status)
+        self.microphone.settimeout(0.5)
+
+        # with nobody listening there is no way back to the radio, and
+        # what is said goes nowhere
+        page.speak(bytes([0x55]) * 160)
+        with self.assertRaises(socket.timeout):
+            self.microphone.recv(2000)
+
+        # the page listens, as it always does, and the sound begins to come
+        speaker = Speaker()
+        listener = self.listener(radio["id"])
+        self.assertEqual(listener.read(), "online")
+        self.hear(speaker, listener)
+
+        said = [bytes([number]) * 160 for number in (0x11, 0x22, 0x33)]
+        for sound in said:
+            page.speak(sound)
+        self.microphone.settimeout(5)
+        got = [self.microphone.recv(2000) for _ in said]
+        for packet, sound in zip(got, said):
+            self.assertEqual(len(packet), 172)
+            self.assertEqual(packet[:2], bytes([0x80, 0]), "not RTP of mu-law")
+            self.assertEqual(packet[12:], sound)
+        numbers = [struct.unpack(">H", packet[2:4])[0] for packet in got]
+        self.assertEqual([(number - numbers[0]) % 65536 for number in numbers], [0, 1, 2])
+
+        # what is not twenty milliseconds of mu-law is not sent on
+        page.speak(bytes(159))
+        page.speak(bytes(400))
+        # a packet of the radio's own sound, sent back at the daemon as
+        # speech, has the sound's tag and not the speech's, and is dropped;
+        # so is a true packet of speech sent a second time
+        stream_id = list(self.remote.streams)[0]
+        stream = self.remote.streams[stream_id]
+        body = stream_id + struct.pack(">BBHII", 0x80, 0, (numbers[2] + 1) % 65536, 0, 0) \
+            + bytes([0x66]) * 160
+        wrong = hmac.new(stream.key, body, hashlib.sha256).digest()[:8]
+        self.loop.call_soon_threadsafe(
+            self.remote.sound_port.sendto, body + wrong, stream.address)
+        again = stream_id + got[1]
+        self.loop.call_soon_threadsafe(
+            self.remote.sound_port.sendto,
+            again + hmac.new(stream.speech_key, again, hashlib.sha256).digest()[:8],
+            stream.address)
+        self.microphone.settimeout(0.7)
+        with self.assertRaises(socket.timeout):
+            self.microphone.recv(2000)
+
+        # and the page is still working the radio
+        page.say("AUDIO 31")
+        self.wait_for(lambda: self.radio.controls.get("AUDIO") == "31",
+                      "a line after the speech did not reach the radio")
+        page.close()
+        listener.close()
 
     def test_only_the_owner_signed_in_works_a_radio_from_a_browser(self):
         radio = self.switch_on_and_add()

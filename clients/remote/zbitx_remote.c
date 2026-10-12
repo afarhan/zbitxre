@@ -5,7 +5,7 @@
 // can reach it from anywhere.
 //
 //     zbitx_remote [--server my.sbitx.net] [--port 8081] [--radio-port 8081]
-//                  [--key data/remote.key]
+//                  [--key data/remote.key] [--microphone-port 5006]
 //
 // PROTOCOL.md, at the top of the repository, says what is spoken and why;
 // accounts/remote.py is the other end.
@@ -106,6 +106,23 @@
 // changes, and no oftener than once a second, a dial being turned changing
 // the frequency many times in one.
 //
+// SPEECH TO TRANSMIT
+//
+// The other way, when the owner speaks into a telephone afar and the radio
+// is to send it: the author's design is the same path in reverse. The
+// service sends the speech by UDP to where this program's sound comes from,
+// which is the one address a home's router will let it back in at, in
+// packets made the same way: the stream's id, an RTP packet of mu-law, and
+// a tag. The tag's key is made as the sound's is but of other words,
+// "zbitx-speech-1 <nonce>", so that a packet of the radio's sound, which
+// anyone on the way can copy, cannot be sent back as speech to transmit.
+// A packet with a wrong tag, or numbered at or behind one already taken,
+// is dropped; the second is what stops a true packet being sent again
+// later by someone who kept it. What passes is handed to the radio program
+// at the port where it listens for speech, on the radio itself;
+// rtp_microphone.c says what it does with it. So speech can come only
+// while the sound is going, which it is whenever the owner's page is open.
+//
 // HOW IT RUNS
 //
 // One thread and one loop around poll(). The connections that carry a
@@ -137,11 +154,14 @@
 #include <sys/types.h>
 
 #include "rtp_audio.h"
+#include "rtp_microphone.h"
 #include "sha256.h"
 
 #define DEFAULT_SERVER "my.sbitx.net"
 #define DEFAULT_PORT "8081"
 #define DEFAULT_RADIO_PORT "8081"
+// where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
+#define DEFAULT_MICROPHONE_PORT "5006"
 #define DEFAULT_KEY_FILE "data/remote.key"
 #define LOCAL_HOST "127.0.0.1"
 #define LINE_ROOM 1024
@@ -167,6 +187,8 @@
 #define REFUSED_RETRY_MS 15000
 #define STREAM_ID_BYTES 8
 #define TAG_BYTES 8
+// a packet of speech this far ahead of the last, or less, is taken
+#define SPEECH_AHEAD_MOST 3000
 #define SOUND_PACKET_BYTES (STREAM_ID_BYTES + RTP_PACKET_BYTES + TAG_BYTES)
 #define LOOPBACK "127.0.0.1"
 #define STEP_WAIT_MS 4000
@@ -213,6 +235,7 @@ struct session {
 static const char *server = DEFAULT_SERVER;
 static const char *port = DEFAULT_PORT;
 static const char *radio_port = DEFAULT_RADIO_PORT;
+static const char *microphone_port = DEFAULT_MICROPHONE_PORT;
 
 static const char *key_file = DEFAULT_KEY_FILE;
 
@@ -244,6 +267,11 @@ static int sound_in = NOT_OPEN;
 static int sound_out = NOT_OPEN;
 static uint8_t stream_id[STREAM_ID_BYTES];
 static char stream_key[SHA256_HEX_ROOM];
+static char speech_key[SHA256_HEX_ROOM];
+static int speech_out = NOT_OPEN;
+static struct sockaddr_in speech_port;
+static int is_speech_begun;
+static uint16_t speech_sequence;
 static struct session sessions[SESSIONS_MAX];
 
 static long now_ms(void) {
@@ -672,6 +700,7 @@ static int pass_on(int from_fd, int to_fd, struct waiting *w, short from_events,
 static void sound_off(void) {
 	close_fd(&sound_in);
 	close_fd(&sound_out);
+	close_fd(&speech_out);
 }
 
 // the group the radio program sends its sound to is joined, on loopback,
@@ -694,6 +723,9 @@ static void sound_on(const char *id_hex, const char *nonce) {
 	}
 	snprintf(text, sizeof(text), "zbitx-audio-1 %.64s", nonce);
 	hmac_sha256_hex(stretched, text, stream_key);
+	snprintf(text, sizeof(text), "zbitx-speech-1 %.64s", nonce);
+	hmac_sha256_hex(stretched, text, speech_key);
+	is_speech_begun = 0;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -720,8 +752,16 @@ static void sound_on(const char *id_hex, const char *nonce) {
 			|| setsockopt(sound_in, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0
 			|| bind(sound_in, (struct sockaddr *)&any, sizeof(any)) < 0
 			|| setsockopt(sound_in, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership,
-				sizeof(membership)) < 0)
+				sizeof(membership)) < 0) {
 		sound_off();
+		return;
+	}
+	// and one for handing speech to the radio program
+	speech_out = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+	memset(&speech_port, 0, sizeof(speech_port));
+	speech_port.sin_family = AF_INET;
+	speech_port.sin_port = htons((uint16_t)atoi(microphone_port));
+	inet_pton(AF_INET, LOOPBACK, &speech_port.sin_addr);
 }
 
 // every packet of sound that has come is sent on, with the stream's id
@@ -743,6 +783,43 @@ static void sound_pass_on(void) {
 			send(sound_out, packet, sizeof(packet), MSG_NOSIGNAL);
 		}
 		got = recv(sound_in, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, 0);
+	}
+}
+
+// every packet of speech the service has sent is handed to the radio
+// program, if its tag is right and it is ahead of the last
+static void speech_pass_on(void) {
+	uint8_t packet[SOUND_PACKET_BYTES + 1];
+	uint8_t hash[SHA256_BYTES];
+	uint16_t sequence;
+	uint8_t differing;
+	ssize_t got;
+	int i;
+
+	if (sound_out == NOT_OPEN || speech_out == NOT_OPEN)
+		return;
+	for (;;) {
+		got = recv(sound_out, packet, sizeof(packet), 0);
+		if (got < 0)
+			return;
+		if (got != SOUND_PACKET_BYTES || memcmp(packet, stream_id, STREAM_ID_BYTES) != 0)
+			continue;
+		hmac_sha256((const uint8_t *)speech_key, strlen(speech_key), packet,
+			STREAM_ID_BYTES + RTP_PACKET_BYTES, hash);
+		// compared without stopping at the first byte that differs, so that
+		// how long it takes says nothing of how nearly right a guess was
+		differing = 0;
+		for (i = 0; i < TAG_BYTES; i++)
+			differing |= (uint8_t)(hash[i] ^ packet[STREAM_ID_BYTES + RTP_PACKET_BYTES + i]);
+		if (differing)
+			continue;
+		sequence = (uint16_t)(packet[STREAM_ID_BYTES + 2] << 8 | packet[STREAM_ID_BYTES + 3]);
+		if (is_speech_begun && (uint16_t)(sequence - speech_sequence - 1) >= SPEECH_AHEAD_MOST)
+			continue;
+		is_speech_begun = 1;
+		speech_sequence = sequence;
+		sendto(speech_out, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, MSG_NOSIGNAL,
+			(struct sockaddr *)&speech_port, sizeof(speech_port));
 	}
 }
 
@@ -884,7 +961,7 @@ static void follow_the_owner(long now) {
 }
 
 static void wait_and_pass_on(void) {
-	struct pollfd polls[3 + 2 * SESSIONS_MAX];
+	struct pollfd polls[4 + 2 * SESSIONS_MAX];
 	struct session *s;
 	int count = 0;
 	int first;
@@ -902,6 +979,11 @@ static void wait_and_pass_on(void) {
 	}
 	if (sound_in != NOT_OPEN) {
 		polls[count].fd = sound_in;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	if (sound_out != NOT_OPEN) {
+		polls[count].fd = sound_out;
 		polls[count].events = POLLIN;
 		polls[count++].revents = 0;
 	}
@@ -928,6 +1010,7 @@ static void wait_and_pass_on(void) {
 	}
 	poll(polls, count, LOOP_WAIT_MS);
 	sound_pass_on();
+	speech_pass_on();
 	for (i = 0; i < SESSIONS_MAX; i++) {
 		s = &sessions[i];
 		if (s->service_fd == NOT_OPEN)
@@ -955,11 +1038,14 @@ int main(int argc, char **argv) {
 			radio_port = argv[i + 1];
 		else if (!strcmp(argv[i], "--key"))
 			key_file = argv[i + 1];
+		else if (!strcmp(argv[i], "--microphone-port"))
+			microphone_port = argv[i + 1];
 		else
 			i = argc;
 	}
 	if (i != argc) {
-		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]\n");
+		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]"
+			" [--microphone-port n]\n");
 		return EXIT_FAILURE;
 	}
 	signal(SIGPIPE, SIG_IGN);

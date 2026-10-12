@@ -191,6 +191,7 @@
 #include "sdr.h"
 #include "modem.h"
 #include "rtp_audio.h"
+#include "rtp_microphone.h"
 #include "kiss_fft.h"
 
 static int center_bin = 512;
@@ -1032,6 +1033,9 @@ static void sound_block(struct audio_block *block){
 		input_rx_halved[i] = block->from_receiver[i] / 2;
 		input_mic_halved[i] = block->from_microphone[i] / 2;
 	}
+	// speech from whoever works the radio from afar takes the microphone's
+	// place while it is sending; rtp_microphone.c says when and how
+	rtp_microphone_fill(input_mic_halved, block->frames, atomic_load(&in_tx));
 	sound_process(input_rx_halved, input_mic_halved,
 		block->to_speaker, block->to_transmitter, block->frames);
 	// what the speaker is given is given to whoever else listens on the
@@ -1435,6 +1439,7 @@ void sdr_request(char *request, char *response){
 	else if (!strcmp(cmd, "tx_gain")){
 		tx_gain = atoi(value);
 		audio_set_microphone(tx_gain);
+		rtp_microphone_set_gain(tx_gain);
 		strcpy(response, "ok");
 	}
 	else if (!strcmp(cmd, "tr_waits")){

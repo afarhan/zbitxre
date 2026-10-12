@@ -234,6 +234,7 @@
 #include "panel_cw.h"
 #include "radio_clock.h"
 #include "rtp_audio.h"
+#include "rtp_microphone.h"
 #include "ft8_qso.h"
 #include "logger.h"
 #include "messages.h"
@@ -375,6 +376,8 @@ static void report(void) {
 	printf("transmitter: peak %s\n", answer);
 	printf("sound sent out on the radio: loudest %d percent of full scale since last asked\n",
 		rtp_audio_peak_percent());
+	printf("speech taken in on the radio to transmit: %d packets since last asked\n",
+		rtp_microphone_packets());
 	printf("meter: power %.1f W, swr %.1f, battery %.2f V, smeter %d\n",
 		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
 		control_get_int("BATTERY") / HUNDREDTHS, control_get_int("SMETER"));
@@ -1253,6 +1256,7 @@ static void main_loop(void) {
 		radio_poll(now_ms());
 		meter_poll(now_ms());
 		rtp_audio_poll();
+		rtp_microphone_poll();
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -1292,6 +1296,9 @@ int main(int argc, char **argv) {
 
 	if (rtp_audio_open() < 0)
 		printf("the radio's sound is not being sent out on the radio: no socket for it\n");
+	if (rtp_microphone_open() < 0)
+		printf("speech from afar cannot be transmitted: port %d on the radio is taken\n",
+			RTP_MICROPHONE_PORT);
 	panel_open();
 	radio_open();
 	meter_open();

@@ -30,7 +30,7 @@ LINK_HEADERS = front_panel/link.h
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw/key.h \
 	hw/radio_clock.h hw/swr_bridge.h \
 	$(LINK_HEADERS)
-DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h rtp_audio.h modems/cw_keyer.h \
+DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h rtp_audio.h rtp_microphone.h modems/cw_keyer.h \
 	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
 	modems/ft8_callsign_hash.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
@@ -47,7 +47,7 @@ KISS_FFT    = $(BUILD)/kiss_fft.o
 # FT8's coding is ft8_lib's, in modems/ft8_lib as zbitxv2 had it, and is
 # built in the same way; modems/ft8_lib/README says what it is
 FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard modems/ft8_lib/*.c))
-DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
+DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c rtp_microphone.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
 	$(MODEMS) $(MODEM_LIST) $(FT8_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
 
@@ -57,7 +57,8 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
-	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio
+	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
+	$(BUILD)/test_rtp_microphone
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -98,6 +99,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_sbitxv3
 	$(BUILD)/test_sha256
 	$(BUILD)/test_rtp_audio
+	$(BUILD)/test_rtp_microphone
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -266,6 +268,10 @@ $(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/sha256.h
 
 $(BUILD)/test_rtp_audio: tests/test_rtp_audio.c rtp_audio.c rtp_audio.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_rtp_audio.c rtp_audio.c -lm
+
+$(BUILD)/test_rtp_microphone: tests/test_rtp_microphone.c rtp_microphone.c rtp_microphone.h \
+		rtp_audio.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_rtp_microphone.c rtp_microphone.c -lm
 
 $(BUILD)/test_sha256: tests/test_sha256.c clients/remote/sha256.c clients/remote/sha256.h \
 		| $(BUILD)

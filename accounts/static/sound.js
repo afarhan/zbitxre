@@ -6,6 +6,7 @@
 //   player.play(bytes);       each binary message from /listen
 //   player.lost(count);       when /listen says "lost <count>"
 //   player.setLoudness(0.6);  0 is silent, 1 is as the radio sent it
+//   player.openMicrophone(taken).then(...)   speech to transmit, see below
 //   player.close();
 //
 // WHAT COMES IN
@@ -45,15 +46,45 @@ function radioSound() {
   var gain = context.createGain();
   gain.connect(context.destination);
 
-  var worklet = null, isPlain = false;
+  var worklet = null, isPlain = false, loaded = null, microphone = null;
   if (context.audioWorklet && window.AudioWorkletNode) {
-    context.audioWorklet.addModule("/static/sound_worklet.js").then(function () {
+    loaded = context.audioWorklet.addModule("/static/sound_worklet.js");
+    loaded.then(function () {
       worklet = new AudioWorkletNode(context, "radio-sound",
         { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
       worklet.connect(gain);
     }, function () { isPlain = true; });
   } else {
     isPlain = true;
+  }
+
+  /* the microphone, for speech to transmit. The browser asks its owner
+     the first time. It is asked to take out the echo of what the page is
+     playing, to quieten the room, and to hold the voice at an even level,
+     which a telephone does well and a transmitter wants. Once open it
+     stays open, so that a transmission does not begin with the wait for
+     it; what it hears goes nowhere unless the page sends it. */
+
+  function openMicrophone(taken) {
+    if (microphone) { return Promise.resolve(); }
+    if (!loaded || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return Promise.reject(new Error("this browser cannot give a page its microphone"));
+    }
+    return loaded.then(function () {
+      return navigator.mediaDevices.getUserMedia({ audio: {
+        channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true
+      } });
+    }).then(function (stream) {
+      var silent = context.createGain();
+      silent.gain.value = 0;
+      silent.connect(context.destination);
+      microphone = new AudioWorkletNode(context, "radio-microphone",
+        { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      microphone.port.onmessage = function (message) { taken(new Uint8Array(message.data)); };
+      context.createMediaStreamSource(stream).connect(microphone);
+      // a node that leads nowhere is not run; this one leads to silence
+      microphone.connect(silent);
+    });
   }
 
   /* the plain way */
@@ -94,6 +125,9 @@ function radioSound() {
       if (worklet) { worklet.port.postMessage({ lost: count }); }
     },
     setLoudness: function (loudness) { gain.gain.value = loudness; },
+    // taken(bytes) is given each twenty milliseconds of speech, 160 bytes
+    // of mu-law, from when the promise is kept
+    openMicrophone: openMicrophone,
     close: function () { context.close(); }
   };
 }
