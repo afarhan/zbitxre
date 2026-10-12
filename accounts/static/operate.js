@@ -626,6 +626,15 @@
     });
   }
 
+  // each dot and dash is felt as well as heard: the telephone buzzes for
+  // as long as the element lasts. The author's telephone plays a sound 0.4
+  // s after it is asked to, which no page can shorten, and a sidetone that
+  // late is no guide to the thumbs; the buzz comes at once
+  function felt(element) {
+    var dotMs = 1200 / (Number(values.WPM) || 18);
+    if (navigator.vibrate) { navigator.vibrate(Math.round(element === "." ? dotMs : 3 * dotMs)); }
+  }
+
   function keyed(code, gapMs) {
     send("CW_KEY " + code + (gapMs ? " " + gapMs : ""));
     keying();
@@ -639,7 +648,7 @@
     }
     if (isKeyerAsked || !player) { return; }
     isKeyerAsked = true;
-    player.openKeyer(keyed).then(function (opened) {
+    player.openKeyer(keyed, felt).then(function (opened) {
       keyer = opened;
       tellKeyer();
       note("keyer: " + keyer.delay() + "; the radio's sound: " + player.delay());

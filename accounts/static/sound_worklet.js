@@ -471,6 +471,8 @@ class RadioKeyer extends AudioWorkletProcessor {
       if (this.gapMs > GAP_KNOWN_MOST_MS) { this.gapMs = 0; }
     }
     this.code += element;
+    // told at once, for the page to make the telephone buzz with it
+    this.port.postMessage({ began: element });
     this.sending = element;
     this.lastSent = element;
     this.spaceLeft = this.dotSamples;

@@ -131,20 +131,37 @@ function radioSound() {
   // will make a sound.
   var keyerContext = null;
 
-  function openKeyer(keyed) {
+  //
+  // What the author's telephone then said of itself, 2026-10-12: on either
+  // path, 128 ms held before the sound is handed over and 299 ms from there
+  // to the speaker. So the sidetone was some 0.4 s behind the thumb, and
+  // none of it the page's doing. The least delay is now asked for by its
+  // number, nought, which some telephones heed where the word for it gets
+  // them only their usual. And began(element) is called as each dot or
+  // dash begins, for the page to make the telephone buzz, which needs no
+  // sound path at all.
+  function openKeyer(keyed, began) {
     if (!loaded) {
       return Promise.reject(new Error("this browser cannot run a keyer in a page"));
     }
     try {
-      keyerContext = new Context({ latencyHint: "interactive" });
-    } catch (refused) {
-      return Promise.reject(refused);
+      keyerContext = new Context({ latencyHint: 0 });
+    } catch (unheeded) {
+      try {
+        keyerContext = new Context({ latencyHint: "interactive" });
+      } catch (refused) {
+        return Promise.reject(refused);
+      }
     }
     return keyerContext.audioWorklet.addModule("/static/sound_worklet.js").then(function () {
       var keyer = new AudioWorkletNode(keyerContext, "radio-keyer",
         { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
       keyer.port.onmessage = function (message) {
-        keyed(message.data.code, message.data.gapMs);
+        if (message.data.began) {
+          began(message.data.began);
+        } else {
+          keyed(message.data.code, message.data.gapMs);
+        }
       };
       keyer.connect(keyerContext.destination);
       return {
