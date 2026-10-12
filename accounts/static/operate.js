@@ -52,12 +52,42 @@
 //
 // TUNING
 //
-// The radio knows only FREQ. STEP and RIT are this page's own, as they are
-// the window's. A finger drawn along the graph or the waterfall tunes, a
-// step for every few pixels, and so does a mouse's wheel. With RIT on, it
-// is the receiver's offset that moves, and the dial stays: the large
-// figures are where the receiver listens and the small line where the
-// transmitter is to be. SPLIT and the second VFO are not here yet.
+// The radio knows only FREQ. STEP, RIT, SPLIT and VFO are this page's own,
+// as they are the window's, and work as the window's do:
+//
+//   VFO     A or B, each with a dial of its own, in the list of controls.
+//           Choosing the other keeps the dial of the one left and goes to
+//           the other's; one not yet used opens where the other is. The
+//           radio is told both dials, VFO_A and VFO_B, to keep, and the
+//           one it has kept for the VFO in waiting is taken up.
+//   RIT     while it is on, tuning moves the receiver's offset, up to 25
+//           kHz either way, and the dial stays; the receiver listens at the
+//           dial and the offset, and the transmitter is on the dial.
+//   SPLIT   while it is on, the transmitter is on the other VFO's dial.
+//           Turning it on goes to VFO A, so that it receives on A and
+//           sends on B. To set where it sends: VFO B, tune, VFO A.
+//
+// The frequency's two lines are the window's: the large one is where the
+// radio is working and the small one what is in waiting, the other VFO as
+// a rule, and with RIT or SPLIT on where the transmitter is to be, or
+// while sending where the receiver was.
+//
+// The radio is told, as FREQ, where the receiver listens; and when it goes
+// to transmit with RIT or SPLIT on, where the transmitter is to be, and
+// back again after. When this page keys the radio, the frequency is sent
+// before TX ON and after TX OFF, so nothing is sent off frequency. That
+// is TX in the voice modes and 2TONE, and TX in the list.
+//
+// When the radio keys itself, for a CW macro or in FT8, SPLIT and RIT do
+// nothing yet: it sends where the receiver listens. The page hears that
+// the radio is sending only after it has begun, a third of a second after
+// on the author's line, and to move the frequency then would be to move a
+// transmission that is under way; and CW comes and goes between words
+// faster than the page could follow. That is the radio's to do, and it
+// does not know of SPLIT or RIT yet.
+//
+// A finger drawn along the graph or the waterfall tunes, a step for every
+// few pixels, and so do a mouse's wheel and the tuning wheel.
 //
 // A tap on the graph goes to the next span, as in the window. In FT8 a tap
 // there puts the pitch we send at where it fell.
@@ -90,8 +120,10 @@
   var values = {};        // every control's value, as the radio tells them
   var schema = {};        // name -> { group, kind, min, max, step, choices }
   var order = [];         // the controls' names in the radio's order
-  var own = { STEP: stored("step", "1K"), RIT: "OFF", VOL: stored("vol", "60") };
+  var own = { STEP: stored("step", "1K"), RIT: "OFF", SPLIT: "OFF", VFO: "A",
+    VOL: stored("vol", "60") };
   var dialHz = 0, ritHz = 0;
+  var vfoHz = { A: 0, B: 0 };  // each VFO's dial; the one in use is dialHz
   var work = null, isConnected = false, retry = null;
   var points = [], spanHz = 0, envelope = null;
   var cwRead = "", marked = null, logQuery = "";
@@ -145,7 +177,14 @@
     sendFrequency();
     show();
   });
-  tile("SPLIT", 6, 1, "SPLIT", null).box.className += " dim";
+  tile("SPLIT", 6, 1, "SPLIT", function () {
+    own.SPLIT = own.SPLIT === "ON" ? "OFF" : "ON";
+    // it receives on A and sends on B
+    if (own.SPLIT === "ON") { chooseVfo("A"); }
+    if (!vfoHz[vfoInWaiting()]) { vfoHz[vfoInWaiting()] = dialHz; }
+    retune();
+    show();
+  });
   tile("DRIVE", 7, 1, "DRIVE", function () { adjust("DRIVE"); });
   tile("AGC", 8, 1, "AGC", function () { adjust("AGC"); });
   tile("IF", 9, 1, "IF", function () { adjust("IF"); });
@@ -217,6 +256,15 @@
   // tell a client its own changes back
   function set(name, value) {
     values[name] = String(value);
+    if (name === "TX") {
+      // the transmitter's frequency is in place before the radio sends,
+      // and the receiver's is not gone back to until it has stopped
+      if (value === "ON") { retune(); }
+      send("TX " + value);
+      if (value !== "ON") { retune(); }
+      show();
+      return;
+    }
     send(name + " " + value);
     show();
   }
@@ -263,7 +311,14 @@
     if (name === "LOG") { logRow(value); return; }
     if (name === "TIME") { return; }
     values[name] = value;
-    if (name === "FREQ") { dialHz = Number(value) - (own.RIT === "ON" ? ritHz : 0); }
+    if (name === "FREQ") { takeRadioFrequency(Number(value)); }
+    if (name === "VFO_" + vfoInWaiting() && Number(value) > 0) {
+      vfoHz[vfoInWaiting()] = Number(value);
+    }
+    // the radio has stopped sending of its own accord: back to where the
+    // receiver listens. When it begins of its own accord the frequency is
+    // left alone; the tuning notes above say why
+    if (name === "TX" && value !== "ON") { retune(); }
     showSoon();
   }
 
@@ -311,9 +366,57 @@
 
   /* tuning */
 
+  function vfoInWaiting() { return own.VFO === "A" ? "B" : "A"; }
+
+  // where the receiver listens: the dial, moved by the offset while RIT is on
+  function receiverHz() { return dialHz + (own.RIT === "ON" ? ritHz : 0); }
+
+  // where the transmitter is to be: the dial, or while SPLIT is on the
+  // other VFO's dial, if that VFO has been used
+  function transmitterHz() {
+    if (own.SPLIT !== "ON" || !vfoHz[vfoInWaiting()]) { return dialHz; }
+    return vfoHz[vfoInWaiting()];
+  }
+
+  // where the radio should be now
+  function workingHz() { return isSending() ? transmitterHz() : receiverHz(); }
+
+  // the radio is told where it should be, at once, if it is not there:
+  // for going to transmit and coming back, which cannot wait
+  function retune() {
+    if (!dialHz || Number(values.FREQ) === workingHz()) { return; }
+    if (freqTimer) { clearTimeout(freqTimer); freqTimer = null; }
+    values.FREQ = String(workingHz());
+    send("FREQ " + values.FREQ);
+  }
+
+  // the radio says it is somewhere else: a band chosen, or its own panel
+  // or another client tuning it. That is where the receiver listens, and
+  // the dial is worked back from it. While it sends on another frequency
+  // than it receives on, what it says is where it sends, and is let pass.
+  function takeRadioFrequency(hz) {
+    if (isSending() && transmitterHz() !== receiverHz()) { return; }
+    dialHz = hz - (own.RIT === "ON" ? ritHz : 0);
+    // a VFO never used is put here once, and does not follow after
+    if (!vfoHz[vfoInWaiting()]) { vfoHz[vfoInWaiting()] = dialHz; }
+  }
+
+  // a VFO chosen: the dial of the one left is kept and the other's taken
+  // up, and the radio is told both, to keep
+  function chooseVfo(vfo) {
+    if (vfo === own.VFO || !dialHz) { return; }
+    vfoHz[own.VFO] = dialHz;
+    if (!vfoHz[vfo]) { vfoHz[vfo] = dialHz; }
+    own.VFO = vfo;
+    dialHz = vfoHz[vfo];
+    send("VFO_A " + vfoHz.A);
+    send("VFO_B " + vfoHz.B);
+    retune();
+  }
+
   var freqTimer = null;
   function sendFrequency() {
-    values.FREQ = String(dialHz + (own.RIT === "ON" ? ritHz : 0));
+    values.FREQ = String(workingHz());
     if (freqTimer) { return; }
     // a finger drawn along the waterfall moves many steps a second; the
     // radio is told where it has got to ten times a second, not each step
@@ -355,7 +458,8 @@
     tiles.STEP.value.textContent = own.STEP;
     tiles.RIT.value.textContent = own.RIT;
     tiles.RIT.box.className = "tile" + (own.RIT === "ON" ? " on" : "");
-    tiles.SPLIT.value.textContent = "OFF";
+    tiles.SPLIT.value.textContent = own.SPLIT;
+    tiles.SPLIT.box.className = "tile" + (own.SPLIT === "ON" ? " on" : "");
     tiles.DRIVE.value.textContent = values.DRIVE || "";
     tiles.AGC.value.textContent = values.AGC || "";
     tiles.IF.value.textContent = values.IF || "";
@@ -367,14 +471,17 @@
       t.box.className = "tile button" + (values.BAND === band ? " in-use" : "");
     });
 
-    var listensAt = dialHz + (own.RIT === "ON" ? ritHz : 0);
+    var receiveHz = receiverHz(), transmitHz = transmitterHz(), other = vfoInWaiting();
     frequency.className = "tile" + (isSending() ? " sending" : "");
-    if (own.RIT === "ON") {
-      waiting.textContent = (isSending() ? "RX:" : "TX:") + dotted(isSending() ? listensAt : dialHz);
-      figures.textContent = (isSending() ? "TX:" : "RX:") + dotted(isSending() ? dialHz : listensAt);
+    if (receiveHz !== transmitHz && isSending()) {
+      waiting.textContent = "RX:" + dotted(receiveHz);
+      figures.textContent = "TX:" + dotted(transmitHz);
+    } else if (receiveHz !== transmitHz) {
+      waiting.textContent = "TX:" + dotted(transmitHz);
+      figures.textContent = "RX:" + dotted(receiveHz);
     } else {
-      waiting.textContent = NAME;
-      figures.textContent = (isSending() ? "TX:" : "A:") + dotted(dialHz);
+      waiting.textContent = other + ":" + dotted(vfoHz[other] || dialHz);
+      figures.textContent = (isSending() ? "TX" : own.VFO) + ":" + dotted(dialHz);
     }
 
     var labels = ["LOG", "SET", "TERM", ""];
@@ -484,17 +591,25 @@
   function buildList() {
     list.textContent = "";
     rows = [];
-    ["TX", "BW"].concat(order).forEach(function (name) {
+    ["TX", "VFO", "BW"].concat(order).forEach(function (name) {
       var control = schema[name];
-      if (name !== "BW" && (!control || control.kind === "action" || control.kind === "text"
-          || PLACED.indexOf(name) >= 0)) {
+      // BW is one of two controls, and VFO is this page's own
+      if (name !== "BW" && name !== "VFO" && (!control || control.kind === "action"
+          || control.kind === "text" || PLACED.indexOf(name) >= 0)) {
         return;
       }
       if (rows.some(function (r) { return r.name === name; })) { return; }
       var row = make("div", "row", null, list);
       make("div", "title", name, row);
       var r = { name: name, box: row, value: make("div", "value", "", row) };
-      row.addEventListener("click", function () { adjust(rowControl(name)); });
+      row.addEventListener("click", function () {
+        if (name === "VFO") {
+          chooseVfo(vfoInWaiting());
+          show();
+        } else {
+          adjust(rowControl(name));
+        }
+      });
       rows.push(r);
     });
   }
@@ -507,6 +622,7 @@
 
   function isRowShown(name) {
     var group = modeGroup(), control = schema[rowControl(name)];
+    if (name === "VFO") { return true; }
     if (!control) { return false; }
     if (name === "TX") { return group !== "VOICE" && group !== "2TONE" && group !== "FT8"; }
     if (name === "BW") { return group !== "FT8"; }
@@ -516,7 +632,7 @@
   function showList() {
     rows.forEach(function (r) {
       r.box.style.display = isRowShown(r.name) ? "flex" : "none";
-      r.value.textContent = values[rowControl(r.name)] || "";
+      r.value.textContent = r.name === "VFO" ? own.VFO : values[rowControl(r.name)] || "";
     });
   }
 
