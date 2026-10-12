@@ -24,7 +24,9 @@
 // go with it; restored from maximised it is 800 by 480, the size zbitxv2's
 // window opened at, and at any size everything keeps its place in the plan.
 //
-//   y 0     STEP | the frequency, 144 wide | RIT, SPLIT, DRIVE, AGC, IF, VOL
+//   y 0     STEP | the meter | the frequency, 96 wide | RIT, SPLIT, DRIVE,
+//           AGC, IF, VOL. On the panel the frequency is 144 wide and
+//           there is no meter
 //   y 48    a button for each band, 10M to 80M, and MODE
 //   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
 //           beside it, 288 wide: the status line, 16 high, for what the
@@ -107,16 +109,16 @@
 // same there. In FT8 the row is empty, and the column's third and fourth
 // buttons are CQ and HALT.
 //
-// In the graph's top right corner is the signal's strength as the radio
-// receives, the radio's SMETER, on a dial with a needle, as a radio's
-// meter has: the author asked for a dial in place of the six boxes
-// zbitxv2's window had. The scale is an arc, marked at S1, S3, S5, S7 and
-// S9, which is seven tenths of the way across, and from there to 20 dB
-// over S9 it is red. The needle's pivot is below the dial's box and is not
-// drawn, so that the dial covers little of the graph. Its box is right in
-// the corner, against the graph's top and its right edge, and there is no
-// figure beside it: the author wanted the dial alone. While the radio
-// transmits
+// Between STEP and the frequency is the meter, a place of its own on the
+// top row: the signal's strength as the radio receives, the radio's
+// SMETER, on a dial with a needle, as a radio's meter has. The author
+// asked for a dial in place of the six boxes zbitxv2's window had, and
+// then for it to be here and not over the graph's corner, the frequency's
+// box giving up a third of its width for it. The scale is an arc, marked
+// at S1, S3, S5, S7 and S9, which is seven tenths of the way across, and
+// from there to 20 dB over S9 it is red. The dial is drawn to the size its
+// place has, and the needle's pivot is at the foot of it or below. While
+// the radio transmits
 // the graph is not the spectrum, of which there is none, but the envelope
 // of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
 // it: the radio sends it in the spectrum's place, a fifth of a second
@@ -332,8 +334,9 @@
 #define PANEL_HEIGHT 336
 #define ROW_HEIGHT 48
 #define TILE_WIDTH 48
-#define FREQ_LEFT 48
-#define FREQ_WIDTH 144
+#define DIAL_LEFT 48
+#define FREQ_LEFT 96
+#define FREQ_WIDTH 96
 #define WHEEL_LEFT LIST_LEFT
 #define WHEEL_TOP MIDDLE_TOP
 #define WHEEL_SIZE 144
@@ -365,10 +368,10 @@
 #define ROW_MARGIN_SIDE 6
 #define TITLE_SIZE 11
 #define CORNER_SIZE 9
-#define WAITING_SIZE 12
+#define WAITING_SIZE 10
 #define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
-#define FREQUENCY_SIZE 17
+#define FREQUENCY_SIZE 13
 #define STATUS_SIZE 10
 #define SPAN_LEFT 3
 #define SPAN_BASELINE 11
@@ -410,15 +413,13 @@
 #define MODULATION_FULL_SCALE 255.0
 // the S meter's dial, in the panel's pixels, and what the radio's SMETER
 // is made of: the S units times a hundred, and the dB over
-#define SMETER_WIDTH 60
-#define SMETER_HEIGHT 26
-#define SMETER_RADIUS 34
-#define SMETER_ARC_TOP 9
+#define SMETER_ARC_SHARE 0.8
+#define SMETER_ARC_TOP 0.36
 #define SMETER_SWEEP (48.0 * G_PI / 180.0)
-#define SMETER_TICK 3
-#define SMETER_MARK_ROOM 2
-#define SMETER_MARK_SIZE 5
-#define SMETER_NEEDLE_FROM 0.35
+#define SMETER_TICK 0.09
+#define SMETER_MARK_ROOM 0.06
+#define SMETER_MARK_SIZE 0.17
+#define SMETER_NEEDLE_FROM 0.3
 #define SMETER_S9_AT 0.7
 #define SMETER_OVER_MOST_DB 20
 #define SMETER_PER_UNIT 100
@@ -626,6 +627,7 @@ static int vfo_in_use = VFO_A;
 static int span_hz;
 static int point_count;
 static uint8_t points[POINTS_MAX];
+static GtkWidget *dial_area;
 static int is_modulation_shown;
 static int modulation_count;
 static uint8_t modulation[POINTS_MAX];
@@ -1030,6 +1032,7 @@ static void show_meter(void) {
 			power % TENTHS, swr / TENTHS, swr % TENTHS);
 	gtk_label_set_text(GTK_LABEL(meter_label), text);
 	gtk_widget_set_visible(meter_label, text[0] != 0);
+	gtk_widget_queue_draw(dial_area);
 }
 
 static void put_again(GtkWidget *widget, int x, int y, int width, int height);
@@ -2521,19 +2524,25 @@ static double smeter_angle(double place) {
 	return -G_PI / 2 - SMETER_SWEEP + 2 * SMETER_SWEEP * place;
 }
 
+// a line along the dial's radius at an angle, from one distance out from
+// the pivot to another
+static void draw_smeter_ray(cairo_t *cr, double x, double y, double angle, double from,
+		double to) {
+	cairo_move_to(cr, x + from * cos(angle), y + from * sin(angle));
+	cairo_line_to(cr, x + to * cos(angle), y + to * sin(angle));
+	cairo_stroke(cr);
+}
+
 // a mark on the scale at an S unit: a tick outward from the arc, and its
 // figure over the tick
-static void draw_smeter_mark(cairo_t *cr, double x, double y, int units) {
+static void draw_smeter_mark(cairo_t *cr, double x, double y, double radius, int units) {
 	double angle = smeter_angle((double)units / S_UNITS_MOST * SMETER_S9_AT);
-	double radius = px(SMETER_RADIUS);
-	double outer = radius + px(SMETER_TICK);
-	double lettered = outer + px(SMETER_MARK_ROOM);
+	double outer = radius * (1.0 + SMETER_TICK);
+	double lettered = outer + radius * SMETER_MARK_ROOM;
 	cairo_text_extents_t size;
 	char text[TEXT_MAX];
 
-	cairo_move_to(cr, x + radius * cos(angle), y + radius * sin(angle));
-	cairo_line_to(cr, x + outer * cos(angle), y + outer * sin(angle));
-	cairo_stroke(cr);
+	draw_smeter_ray(cr, x, y, angle, radius, outer);
 	snprintf(text, sizeof(text), "%d", units);
 	cairo_text_extents(cr, text, &size);
 	cairo_move_to(cr, x + lettered * cos(angle) - size.width / 2 - size.x_bearing,
@@ -2541,53 +2550,45 @@ static void draw_smeter_mark(cairo_t *cr, double x, double y, int units) {
 	cairo_show_text(cr, text);
 }
 
-// the signal's strength, in the graph's top right corner: a dial, its
-// scale an arc with S9 seven tenths across and red beyond, and a needle
-// from a pivot that is below the box and out of sight
-static void draw_smeter(cairo_t *cr, int width) {
-	int strength = atoi(value_of("SMETER"));
-	double box_width = px(SMETER_WIDTH);
-	double box_height = px(SMETER_HEIGHT);
-	double left = width - box_width;
-	double top = 0;
-	double radius = px(SMETER_RADIUS);
-	double x = left + box_width / 2;
-	double y = top + px(SMETER_ARC_TOP) + radius;
-	double angle = smeter_angle(smeter_place(strength));
+// the signal's strength, in the meter's place on the top row: a dial, its
+// scale an arc with S9 seven tenths across and red beyond, and a needle.
+// The arc is as wide as the place allows and its radius follows from that
+static gboolean on_draw_meter(GtkWidget *widget, cairo_t *cr, gpointer unused) {
+	int width = gtk_widget_get_allocated_width(widget);
+	int height = gtk_widget_get_allocated_height(widget);
+	double radius = width * SMETER_ARC_SHARE / (2 * sin(SMETER_SWEEP));
+	double x = width / 2.0;
+	double y = height * SMETER_ARC_TOP + radius;
+	double angle = smeter_angle(smeter_place(atoi(value_of("SMETER"))));
 	int units;
 
-	cairo_save(cr);
-	cairo_rectangle(cr, left, top, box_width, box_height);
-	cairo_set_source_rgba(cr, 0.02, 0.04, 0.07, 0.85);
-	cairo_fill_preserve(cr);
-	cairo_set_source_rgb(cr, 0.2, 0.25, 0.3);
+	(void)unused;
+	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
+	cairo_rectangle(cr, 0, 0, width, height);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 0.25, 0.31, 0.38);
 	cairo_set_line_width(cr, 1.0);
-	cairo_stroke_preserve(cr);
+	cairo_rectangle(cr, 0.5, 0.5, width - 1, height - 1);
+	cairo_stroke(cr);
+	cairo_rectangle(cr, 1, 1, width - 2, height - 2);
 	cairo_clip(cr);
 
 	cairo_set_line_width(cr, px(1));
 	cairo_set_source_rgb(cr, 0.85, 0.88, 0.9);
 	cairo_arc(cr, x, y, radius, smeter_angle(0), smeter_angle(SMETER_S9_AT));
 	cairo_stroke(cr);
-	cairo_set_font_size(cr, px(SMETER_MARK_SIZE));
+	cairo_set_font_size(cr, radius * SMETER_MARK_SIZE);
 	for (units = 1; units <= S_UNITS_MOST; units += 2)
-		draw_smeter_mark(cr, x, y, units);
+		draw_smeter_mark(cr, x, y, radius, units);
 	cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
 	cairo_arc(cr, x, y, radius, smeter_angle(SMETER_S9_AT), smeter_angle(1));
 	cairo_stroke(cr);
-	cairo_move_to(cr, x + radius * cos(smeter_angle(1)), y + radius * sin(smeter_angle(1)));
-	cairo_line_to(cr, x + (radius + px(SMETER_TICK)) * cos(smeter_angle(1)),
-		y + (radius + px(SMETER_TICK)) * sin(smeter_angle(1)));
-	cairo_stroke(cr);
+	draw_smeter_ray(cr, x, y, smeter_angle(1), radius, radius * (1.0 + SMETER_TICK));
 
 	cairo_set_source_rgb(cr, 1.0, 0.9, 0.0);
-	cairo_move_to(cr, x + radius * SMETER_NEEDLE_FROM * cos(angle),
-		y + radius * SMETER_NEEDLE_FROM * sin(angle));
-	cairo_line_to(cr, x + (radius + px(SMETER_TICK)) * cos(angle),
-		y + (radius + px(SMETER_TICK)) * sin(angle));
-	cairo_stroke(cr);
-
-	cairo_restore(cr);
+	draw_smeter_ray(cr, x, y, angle, radius * SMETER_NEEDLE_FROM,
+		radius * (1.0 + SMETER_TICK));
+	return TRUE;
 }
 
 // in CW the pitch, where a station tuned in is heard, and in FT8 the pitch
@@ -2640,7 +2641,6 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 		draw_modulation(cr, width, graph_height);
 	} else {
 		draw_graph(cr, width, graph_height);
-		draw_smeter(cr, width);
 		cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
 		cairo_set_font_size(cr, px(CORNER_SIZE));
 		cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
@@ -2980,6 +2980,9 @@ static void create_frequency(void) {
 	g_signal_connect(frequency_box, "button-press-event",
 		G_CALLBACK(on_frequency_click), NULL);
 	put(frequency_box, FREQ_LEFT, 0, FREQ_WIDTH, ROW_HEIGHT);
+	dial_area = gtk_drawing_area_new();
+	g_signal_connect(dial_area, "draw", G_CALLBACK(on_draw_meter), NULL);
+	put(dial_area, DIAL_LEFT, 0, TILE_WIDTH, ROW_HEIGHT);
 }
 
 // the buttons that are always there: the bands, the column and the bottom
