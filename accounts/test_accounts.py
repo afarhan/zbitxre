@@ -417,6 +417,7 @@ class AccountsTest(unittest.TestCase):
         status, text = visitor.get("/map")
         self.assertEqual(status, 200)
         self.assertIn('<canvas id="globe">', text)
+        self.assertIn('<button id="view">flat map</button>', text)
         self.assertNotIn("http", text.replace("http-equiv", ""))
         for path, has in (("/map.js", "createBufferSource"), ("/map.css", "#globe"),
                           ("/static/land.json", "[[[")):

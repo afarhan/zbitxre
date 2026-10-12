@@ -126,10 +126,18 @@ kilometres across: not the radio's name, and not the finer square, which
 would come near to saying which house. A radio with no grid set is not on
 the globe.
 
-The globe is drawn by map.js, below, on a canvas, with nothing but the
-browser: each point of the coastlines is put where an eye far above the
-globe's middle would see it, and a point round the far side is put on the
-edge, which keeps the shape of a land that goes over the edge. The
+The author wanted the flat map as well as the globe, so the page has both:
+a word at the top goes from the one to the other, and the radio chosen and
+what is being listened to stay as they are. The flat map is the same
+coastlines laid out with longitude across and latitude up, drawn three
+times side by side so that it can be dragged round the world without
+coming to an edge. The first flat map was made of OpenStreetMap's pictures,
+fetched from OpenStreetMap; this one is drawn here like the globe.
+
+Both are drawn by map.js, below, on a canvas, with nothing but the
+browser. For the globe each point of the coastlines is put where an eye far
+above the globe's middle would see it, and a point round the far side is
+put on the edge, which keeps the shape of a land that goes over the edge. The
 coastlines are Natural Earth's, at its coarsest scale, which are in the
 public domain; static/land.json has them, a list of rings of longitude and
 latitude. Nothing on the page comes from another site.
@@ -366,13 +374,19 @@ MAP_SCRIPT = """
   var slider = document.getElementById("volume");
   var state = document.getElementById("state");
   var land = [], radios = [], chosen = null;
+  var view = document.getElementById("view");
   var lon0 = 20, lat0 = 20, zoom = 1, isPlaced = false;
   var wide = 0, high = 0, radius = 0;
+  var isFlat = false, shift = 0, degree = 1;
   var RAD = Math.PI / 180;
 
   // where a place on the globe is on the canvas, and whether it is on the
   // side that is seen
   function place(lon, lat) {
+    if (isFlat) {
+      return { x: wide / 2 + (lon + shift - lon0) * degree,
+        y: high / 2 - (lat - lat0) * degree, seen: true };
+    }
     var dl = (lon - lon0) * RAD, p = lat * RAD, p0 = lat0 * RAD;
     var x = Math.cos(p) * Math.sin(dl);
     var y = Math.cos(p0) * Math.sin(p) - Math.sin(p0) * Math.cos(p) * Math.cos(dl);
@@ -405,8 +419,10 @@ MAP_SCRIPT = """
     }
     pen.setTransform(scale, 0, 0, scale, 0, 0);
     radius = Math.min(wide, high) * 0.42 * zoom;
+    degree = wide / 360 * zoom;
     pen.fillStyle = "#05080c";
     pen.fillRect(0, 0, wide, high);
+    if (isFlat) { drawFlat(); drawRadios(); return; }
     var sea = pen.createRadialGradient(wide / 2 - radius * 0.3, high / 2 - radius * 0.3,
       radius * 0.1, wide / 2, high / 2, radius);
     sea.addColorStop(0, "#16354f"); sea.addColorStop(1, "#0a1a2a");
@@ -435,10 +451,43 @@ MAP_SCRIPT = """
       pen.beginPath(); lineSeen(ring); pen.stroke();
     }
     pen.restore();
+    drawRadios();
+  }
 
+  // the world laid flat, three times side by side, so that it has no edge
+  // to come to when it is dragged along
+  function drawFlat() {
+    var i, j, ring, top = place(0, 90).y, foot = place(0, -90).y;
+    pen.fillStyle = "#0e2438";
+    pen.fillRect(0, top, wide, foot - top);
+    for (shift = -360; shift <= 360; shift += 360) {
+      pen.beginPath();
+      for (i = 0; i < land.length; i++) {
+        ring = [];
+        for (j = 0; j < land[i].length; j++) { ring.push(land[i][j]); }
+        line(ring);
+        pen.closePath();
+      }
+      pen.fillStyle = "#2c5a3a"; pen.fill();
+      pen.strokeStyle = "#3f7a50"; pen.lineWidth = 0.6; pen.stroke();
+      pen.strokeStyle = "rgba(255,255,255,0.07)"; pen.lineWidth = 0.5;
+      pen.beginPath();
+      for (i = -180; i < 180; i += 30) { lineSeen([[i, -90], [i, 90]]); }
+      for (i = -60; i <= 60; i += 30) { lineSeen([[-180, i], [180, i]]); }
+      pen.stroke();
+    }
+    shift = 0;
+  }
+
+  function drawRadios() {
+    var i, at;
     pen.font = "13px sans-serif"; pen.textBaseline = "middle";
     for (i = 0; i < radios.length; i++) {
+      // on the flat map a radio is drawn in the copy of the world nearest
+      // the middle of the page
+      shift = isFlat ? Math.round((lon0 - radios[i].lon) / 360) * 360 : 0;
       at = place(radios[i].lon, radios[i].lat);
+      shift = 0;
       radios[i].at = at;
       if (!at.seen) { continue; }
       var isChosen = chosen && chosen.radio === radios[i].radio;
@@ -473,7 +522,13 @@ MAP_SCRIPT = """
     if (!held) { return; }
     var dx = e.clientX - held.x, dy = e.clientY - held.y;
     moved += Math.abs(dx) + Math.abs(dy);
-    lon0 -= dx * 90 / radius; lat0 += dy * 90 / radius;
+    if (isFlat) {
+      lon0 -= dx / degree; lat0 += dy / degree;
+    } else {
+      lon0 -= dx * 90 / radius; lat0 += dy * 90 / radius;
+    }
+    if (lon0 > 180) { lon0 -= 360; }
+    if (lon0 < -180) { lon0 += 360; }
     if (lat0 > 85) { lat0 = 85; }
     if (lat0 < -85) { lat0 = -85; }
     held = { x: e.clientX, y: e.clientY };
@@ -499,6 +554,13 @@ MAP_SCRIPT = """
     draw();
   }, { passive: false });
   window.addEventListener("resize", draw);
+  view.addEventListener("click", function () {
+    isFlat = !isFlat;
+    view.textContent = isFlat ? "globe" : "flat map";
+    zoom = 1;
+    if (isFlat) { lat0 = 15; }
+    draw();
+  });
 
   function choose(radio) {
     if (chosen && chosen.radio !== radio.radio) { stop(""); }
@@ -611,6 +673,7 @@ html, body { height: 100%; margin: 0; font-family: sans-serif; background: #0508
 #top { position: absolute; top: 0; left: 0; right: 0; height: 2.4em; line-height: 2.4em;
     padding: 0 0.8em; background: rgba(16,24,32,0.85); z-index: 2; }
 #top a { color: #7cf; text-decoration: none; margin-right: 1.2em; }
+#view { float: right; margin: 0.45em 1.6em 0 0; font-size: 0.9em; padding: 0.15em 0.9em; }
 #globe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none;
     cursor: grab; }
 #panel { display: none; position: absolute; left: 1em; bottom: 1em; z-index: 2;
@@ -631,7 +694,8 @@ MAP_PAGE = """<!doctype html>
 <title>Radios on line - my.sbitx.net</title>
 <link rel="stylesheet" href="/map.css">
 </head><body>
-<div id="top"><a href="/">my.sbitx.net</a><span id="count"></span></div>
+<div id="top"><a href="/">my.sbitx.net</a><span id="count"></span>
+<button id="view">flat map</button></div>
 <canvas id="globe"></canvas>
 <div id="panel"><p id="who"></p>
 <button id="listen">Listen</button><span id="state"></span>
