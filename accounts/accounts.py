@@ -109,41 +109,41 @@ The work is done by pow.js, the only script on the site, which is served
 from here and does nothing else. With scripts turned off the form cannot
 be sent, and says so.
 
-LISTENING TO A RADIO
+THE GLOBE, AND LISTENING TO ANY RADIO
 
-Beside each of the owner's radios is "listen", a page with a button and a
-slider. The author asked for a player in the browser. Its script,
-listen.js below, opens a WebSocket to /listen, which nginx hands to
-remote.py, and is sent the radio's sound as it comes, twenty milliseconds
-of mu-law to a message; remote.py says how the sound reaches it and who may
-listen. The script turns each message into samples and plays them one
-after another through the browser's Web Audio, a tenth of a second behind
-their arrival so that an uneven network does not break the sound up, and
-lets go of sound that has fallen more than half a second behind. The
-slider is the loudness here, in this browser, and nothing at the radio:
-the author's rule is that whoever listens from afar sets their own volume.
+/map is a page anyone may see and hear, signed in or not: the world as a
+globe, after radio.garden's, with the radios that are on line now, each a
+dot at the middle of its grid square with its owner's callsign. The globe
+is turned by dragging it and brought nearer with the wheel. A dot that is
+touched is chosen, and Listen plays what that radio is hearing. The author
+asked for listening to be open to everyone: what a radio transmits and
+receives is public anyway.
 
-A browser has no UDP, so this last stretch is TCP, inside the site's HTTPS.
+The page asks /map.json for the radios every half minute. What is told of
+a radio there is a number to ask for its sound by, the callsign, and the
+first four characters of the grid set on it, a square some hundred
+kilometres across: not the radio's name, and not the finer square, which
+would come near to saying which house. A radio with no grid set is not on
+the globe.
 
-THE MAP
+The globe is drawn by map.js, below, on a canvas, with nothing but the
+browser: each point of the coastlines is put where an eye far above the
+globe's middle would see it, and a point round the far side is put on the
+edge, which keeps the shape of a land that goes over the edge. The
+coastlines are Natural Earth's, at its coarsest scale, which are in the
+public domain; static/land.json has them, a list of rings of longitude and
+latitude. Nothing on the page comes from another site.
 
-/map is a page anyone may see, signed in or not: a map of the world with
-the radios that are on line now, each at the middle of its grid square with
-its owner's callsign beside it. The author asked for it, after
-pskreporter's. It asks /map.json for the radios every half minute. What is
-told of a radio there is the callsign and the first four characters of the
-grid set on it, a square some hundred kilometres across, and nothing else:
-not the radio's name, and not the finer square, which would come near to
-saying which house. A radio with no grid set is not on the map.
-
-The map is drawn by Leaflet, which is in static/ beside this file as its
-authors published it, with its licence, and is served from here; the
-pictures of the map itself are OpenStreetMap's, fetched by the visitor's
-browser from OpenStreetMap, which is the one thing on this site that comes
-from somewhere else. OpenStreetMap's servers are run by volunteers and have
-a policy for their use: the page must say whose pictures they are, which it
-does, and must say where it is when it asks for them, which is why the
-map's page alone lets other sites be told this site's name. The map's own script is map.js, below.
+The sound comes over a WebSocket to /listen, which nginx hands to
+remote.py: twenty milliseconds of mu-law to a message; remote.py says how
+the sound reaches it. The script turns each message into samples and plays
+them one after another through the browser's Web Audio, a tenth of a
+second behind their arrival so that an uneven network does not break the
+sound up, and lets go of sound that has fallen more than half a second
+behind. The slider is the loudness here, in this browser, and nothing at
+the radio: the author's rule is that whoever listens from afar sets their
+own volume. A browser has no UDP, so this last stretch is TCP, inside the
+site's HTTPS.
 
 MAIL
 
@@ -352,20 +352,169 @@ POW_SCRIPT = """
 })();
 """
 
-# the player's script. A table turns each byte of mu-law into a sample; the
-# samples of each message are a buffer played right after the one before
-LISTEN_SCRIPT = """
+# the globe's script: the coastlines and the radios are fetched; the globe is
+# drawn, turned and brought nearer; a radio is chosen and listened to
+MAP_SCRIPT = """
 "use strict";
 (function () {
-  var player = document.getElementById("player");
+  var canvas = document.getElementById("globe");
+  var pen = canvas.getContext("2d");
+  var count = document.getElementById("count");
+  var panel = document.getElementById("panel");
+  var who = document.getElementById("who");
   var button = document.getElementById("listen");
   var slider = document.getElementById("volume");
   var state = document.getElementById("state");
+  var land = [], radios = [], chosen = null;
+  var lon0 = 20, lat0 = 20, zoom = 1, isPlaced = false;
+  var wide = 0, high = 0, radius = 0;
+  var RAD = Math.PI / 180;
+
+  // where a place on the globe is on the canvas, and whether it is on the
+  // side that is seen
+  function place(lon, lat) {
+    var dl = (lon - lon0) * RAD, p = lat * RAD, p0 = lat0 * RAD;
+    var x = Math.cos(p) * Math.sin(dl);
+    var y = Math.cos(p0) * Math.sin(p) - Math.sin(p0) * Math.cos(p) * Math.cos(dl);
+    var front = Math.sin(p0) * Math.sin(p) + Math.cos(p0) * Math.cos(p) * Math.cos(dl);
+    if (front < 0) {
+      var far = Math.sqrt(x * x + y * y) || 1;
+      x /= far; y /= far;
+    }
+    return { x: wide / 2 + radius * x, y: high / 2 - radius * y, seen: front >= 0 };
+  }
+
+  function line(points) {
+    var seen = false, i, at;
+    for (i = 0; i < points.length; i++) {
+      points[i] = place(points[i][0], points[i][1]);
+      seen = seen || points[i].seen;
+    }
+    if (!seen) { return; }
+    for (i = 0; i < points.length; i++) {
+      at = points[i];
+      if (i === 0) { pen.moveTo(at.x, at.y); } else { pen.lineTo(at.x, at.y); }
+    }
+  }
+
+  function draw() {
+    var scale = window.devicePixelRatio || 1, i, j, at, ring;
+    wide = canvas.clientWidth; high = canvas.clientHeight;
+    if (canvas.width !== wide * scale || canvas.height !== high * scale) {
+      canvas.width = wide * scale; canvas.height = high * scale;
+    }
+    pen.setTransform(scale, 0, 0, scale, 0, 0);
+    radius = Math.min(wide, high) * 0.42 * zoom;
+    pen.fillStyle = "#05080c";
+    pen.fillRect(0, 0, wide, high);
+    var sea = pen.createRadialGradient(wide / 2 - radius * 0.3, high / 2 - radius * 0.3,
+      radius * 0.1, wide / 2, high / 2, radius);
+    sea.addColorStop(0, "#16354f"); sea.addColorStop(1, "#0a1a2a");
+    pen.beginPath(); pen.arc(wide / 2, high / 2, radius, 0, 2 * Math.PI);
+    pen.fillStyle = sea; pen.fill();
+
+    pen.save();
+    pen.beginPath(); pen.arc(wide / 2, high / 2, radius, 0, 2 * Math.PI); pen.clip();
+    pen.beginPath();
+    for (i = 0; i < land.length; i++) {
+      ring = [];
+      for (j = 0; j < land[i].length; j++) { ring.push(land[i][j]); }
+      line(ring);
+      pen.closePath();
+    }
+    pen.fillStyle = "#2c5a3a"; pen.fill();
+    pen.strokeStyle = "#3f7a50"; pen.lineWidth = 0.6; pen.stroke();
+
+    pen.strokeStyle = "rgba(255,255,255,0.07)"; pen.lineWidth = 0.5;
+    for (i = -150; i <= 180; i += 30) {
+      ring = []; for (j = -90; j <= 90; j += 5) { ring.push([i, j]); }
+      pen.beginPath(); lineSeen(ring); pen.stroke();
+    }
+    for (i = -60; i <= 60; i += 30) {
+      ring = []; for (j = -180; j <= 180; j += 5) { ring.push([j, i]); }
+      pen.beginPath(); lineSeen(ring); pen.stroke();
+    }
+    pen.restore();
+
+    pen.font = "13px sans-serif"; pen.textBaseline = "middle";
+    for (i = 0; i < radios.length; i++) {
+      at = place(radios[i].lon, radios[i].lat);
+      radios[i].at = at;
+      if (!at.seen) { continue; }
+      var isChosen = chosen && chosen.radio === radios[i].radio;
+      pen.beginPath(); pen.arc(at.x, at.y, isChosen ? 11 : 8, 0, 2 * Math.PI);
+      pen.fillStyle = isChosen ? "rgba(255,210,60,0.3)" : "rgba(80,255,140,0.25)"; pen.fill();
+      pen.beginPath(); pen.arc(at.x, at.y, isChosen ? 5 : 4, 0, 2 * Math.PI);
+      pen.fillStyle = isChosen ? "#ffd23c" : "#50ff8c"; pen.fill();
+      pen.fillStyle = "#ffffff";
+      pen.fillText(radios[i].callsign, at.x + 12, at.y);
+    }
+  }
+
+  // a line of the grid, of which only the part on the near side is drawn
+  function lineSeen(points) {
+    var down = false, i, at;
+    for (i = 0; i < points.length; i++) {
+      at = place(points[i][0], points[i][1]);
+      if (!at.seen) { down = false; continue; }
+      if (down) { pen.lineTo(at.x, at.y); } else { pen.moveTo(at.x, at.y); }
+      down = true;
+    }
+  }
+
+  /* turning it, bringing it nearer, choosing a radio */
+
+  var held = null, moved = 0;
+  canvas.addEventListener("pointerdown", function (e) {
+    held = { x: e.clientX, y: e.clientY }; moved = 0;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", function (e) {
+    if (!held) { return; }
+    var dx = e.clientX - held.x, dy = e.clientY - held.y;
+    moved += Math.abs(dx) + Math.abs(dy);
+    lon0 -= dx * 90 / radius; lat0 += dy * 90 / radius;
+    if (lat0 > 85) { lat0 = 85; }
+    if (lat0 < -85) { lat0 = -85; }
+    held = { x: e.clientX, y: e.clientY };
+    draw();
+  });
+  canvas.addEventListener("pointerup", function (e) {
+    var box = canvas.getBoundingClientRect(), best = null, near = 18, i, d;
+    held = null;
+    if (moved > 6) { return; }
+    for (i = 0; i < radios.length; i++) {
+      if (!radios[i].at || !radios[i].at.seen) { continue; }
+      d = Math.hypot(radios[i].at.x - (e.clientX - box.left),
+        radios[i].at.y - (e.clientY - box.top));
+      if (d < near) { near = d; best = radios[i]; }
+    }
+    if (best) { choose(best); }
+  });
+  canvas.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    zoom *= e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    if (zoom < 0.5) { zoom = 0.5; }
+    if (zoom > 8) { zoom = 8; }
+    draw();
+  }, { passive: false });
+  window.addEventListener("resize", draw);
+
+  function choose(radio) {
+    if (chosen && chosen.radio !== radio.radio) { stop(""); }
+    chosen = radio;
+    who.textContent = radio.callsign + "  " + radio.grid;
+    panel.className = "shown";
+    draw();
+  }
+
+  /* listening */
+
   var table = new Float32Array(256);
-  for (var i = 0; i < 256; i++) {
-    var u = ~i & 255;
+  for (var b = 0; b < 256; b++) {
+    var u = ~b & 255;
     var size = (((u & 15) << 3) + 132) << ((u & 112) >> 4);
-    table[i] = ((u & 128) ? (132 - size) : (size - 132)) / 32768;
+    table[b] = ((u & 128) ? (132 - size) : (size - 132)) / 32768;
   }
   var context = null, gain = null, socket = null, playAt = 0;
 
@@ -397,11 +546,12 @@ LISTEN_SCRIPT = """
     gain.connect(context.destination);
     playAt = 0;
     socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
-      + location.host + "/listen?radio=" + player.getAttribute("data-radio"));
+      + location.host + "/listen?radio=" + chosen.radio);
     socket.binaryType = "arraybuffer";
     socket.onmessage = function (message) {
       if (typeof message.data === "string") {
         state.textContent = message.data === "online" ? "listening" :
+          message.data === "full" ? "too many are listening to this radio just now" :
           "the radio is not on line; waiting for it";
       } else {
         play(new Uint8Array(message.data));
@@ -413,87 +563,91 @@ LISTEN_SCRIPT = """
   }
 
   button.addEventListener("click", function () {
-    if (socket) { stop("stopped"); } else { start(); }
+    if (socket) { stop("stopped"); } else if (chosen) { start(); }
   });
   slider.addEventListener("input", function () {
     if (gain) { gain.gain.value = slider.value / 100; }
   });
-})();
-"""
 
-# the map's script: the radios on line are asked for, and each is a dot at
-# the middle of its square with the callsign beside it
-MAP_SCRIPT = """
-"use strict";
-(function () {
-  var map = L.map("map", { worldCopyJump: true }).setView([20, 20], 2);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 9,
-    attribution: "&copy; OpenStreetMap contributors"
-  }).addTo(map);
-  var shown = L.layerGroup().addTo(map);
-  var count = document.getElementById("count");
-  function show(radios) {
-    shown.clearLayers();
-    for (var i = 0; i < radios.length; i++) {
-      var radio = radios[i];
-      L.rectangle([[radio.south, radio.west], [radio.north, radio.east]],
-        { color: "#c33", weight: 1, fillOpacity: 0.08, interactive: false }).addTo(shown);
-      L.circleMarker([radio.lat, radio.lon],
-        { radius: 6, color: "#900", fillColor: "#e33", fillOpacity: 0.9, weight: 1 })
-        .bindTooltip(radio.callsign + " " + radio.grid,
-          { permanent: true, direction: "right", offset: [8, 0] })
-        .addTo(shown);
-    }
-    count.textContent = radios.length === 1 ? "1 radio on line" :
-      radios.length + " radios on line";
-  }
-  function ask() {
+  /* what there is to show */
+
+  function get(path, then) {
     var request = new XMLHttpRequest();
     request.onload = function () {
-      if (request.status === 200) { show(JSON.parse(request.responseText)); }
+      if (request.status === 200) { then(JSON.parse(request.responseText)); }
     };
-    request.open("GET", "/map.json");
+    request.open("GET", path);
     request.send();
   }
-  ask();
-  setInterval(ask, 30000);
+
+  function askForRadios() {
+    get("/map.json", function (found) {
+      var wanted = parseInt(location.hash.slice(1), 10), i;
+      radios = found;
+      count.textContent = radios.length === 1 ? "1 radio on line" :
+        radios.length + " radios on line";
+      if (!isPlaced && radios.length > 0) {
+        lon0 = radios[0].lon; lat0 = radios[0].lat; isPlaced = true;
+        for (i = 0; i < radios.length; i++) {
+          if (radios[i].radio === wanted) {
+            lon0 = radios[i].lon; lat0 = radios[i].lat; choose(radios[i]);
+          }
+        }
+      }
+      draw();
+    });
+  }
+
+  get("/static/land.json", function (rings) { land = rings; draw(); });
+  askForRadios();
+  setInterval(askForRadios, 30000);
+  draw();
 })();
 """
 
 MAP_STYLE = """
-html, body { height: 100%; margin: 0; font-family: sans-serif; }
-#top { height: 2.4em; line-height: 2.4em; padding: 0 0.8em; background: #101820; color: #fff; }
+html, body { height: 100%; margin: 0; font-family: sans-serif; background: #05080c;
+    color: #fff; overflow: hidden; }
+#top { position: absolute; top: 0; left: 0; right: 0; height: 2.4em; line-height: 2.4em;
+    padding: 0 0.8em; background: rgba(16,24,32,0.85); z-index: 2; }
 #top a { color: #7cf; text-decoration: none; margin-right: 1.2em; }
-#map { position: absolute; top: 2.4em; bottom: 0; left: 0; right: 0; }
+#globe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none;
+    cursor: grab; }
+#panel { display: none; position: absolute; left: 1em; bottom: 1em; z-index: 2;
+    background: rgba(16,24,32,0.92); border: 1px solid #405060; border-radius: 6px;
+    padding: 0.8em 1em; min-width: 15em; }
+#panel.shown { display: block; }
+#who { font-size: 1.3em; font-weight: bold; margin: 0 0 0.5em 0; white-space: pre; }
+#panel button { font-size: 1em; padding: 0.4em 1.2em; }
+#panel label { display: block; margin-top: 0.8em; font-size: 0.9em; color: #9ab; }
+#panel input { width: 100%; }
+#state { margin-left: 0.8em; color: #9ab; }
+#hint { position: absolute; right: 1em; bottom: 1em; color: #678; font-size: 0.85em; z-index: 2; }
 """
 
 MAP_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Radios on line - my.sbitx.net</title>
-<link rel="stylesheet" href="/static/leaflet.css">
 <link rel="stylesheet" href="/map.css">
 </head><body>
 <div id="top"><a href="/">my.sbitx.net</a><span id="count"></span></div>
-<div id="map"></div>
-<script src="/static/leaflet.js"></script>
+<canvas id="globe"></canvas>
+<div id="panel"><p id="who"></p>
+<button id="listen">Listen</button><span id="state"></span>
+<label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
+</div>
+<div id="hint">drag to turn &middot; wheel to come nearer &middot; touch a radio to listen</div>
 <script src="/map.js"></script>
 </body></html>
 """
 
 # what is served from static/, by its name, and as what
 STATIC = {
-    "leaflet.js": "text/javascript; charset=utf-8",
-    "leaflet.css": "text/css; charset=utf-8",
+    "land.json": "application/json",
 }
 PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-# the map's page may also fetch OpenStreetMap's pictures, ask this site for
-# the radios, and be styled by Leaflet as it moves things about
-MAP_POLICY = ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-              "img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; "
-              "frame-ancestors 'none'; base-uri 'none'")
 
 STYLE = """
 body { font-family: sans-serif; max-width: 34em; margin: 6vh auto; padding: 0 1em;
@@ -976,19 +1130,21 @@ class Service:
         return None
 
     def on_the_map(self):
-        """the radios on line that have a grid, for anyone to see: each
-        owner's callsign and four-character square, once, and no more"""
-        seen = {}
+        """the radios on line that have a grid, for anyone to see and hear:
+        each one's number, its owner's callsign and its four-character
+        square, and no more"""
+        found = []
         with self.store.open() as db:
             for row in db.execute(
-                    "select accounts.callsign, radios.grid from radios join accounts "
-                    "on accounts.id = radios.account where radios.online = 1 "
-                    "and accounts.status = 'active' order by accounts.callsign"):
+                    "select radios.id, accounts.callsign, radios.grid from radios "
+                    "join accounts on accounts.id = radios.account where radios.online = 1 "
+                    "and accounts.status = 'active' order by accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 if square is not None:
-                    square["callsign"] = row["callsign"]
-                    seen[(row["callsign"], square["grid"])] = square
-        return list(seen.values())
+                    found.append({"radio": row["id"], "callsign": row["callsign"],
+                                  "grid": square["grid"], "lat": square["lat"],
+                                  "lon": square["lon"]})
+        return found
 
     def snapshot(self, account, radio):
         """the newest copy of one of the account's radios' settings and logbook"""
@@ -1080,13 +1236,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", keep)
         self.send_header("Content-Security-Policy", policy)
         self.send_header("X-Content-Type-Options", "nosniff")
-        # OpenStreetMap gives its pictures only to a page that says where
-        # it is, so the map's page tells other sites its site's name, and
-        # no more than that; the other pages tell them nothing
-        if policy == MAP_POLICY:
-            self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
-        else:
-            self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("Referrer-Policy", "same-origin")
         for name, value in headers:
             self.send_header(name, value)
         self.end_headers()
@@ -1108,14 +1258,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, page("Welcome", said(told, is_wrong)
                                 + "<p><a href=\"/signin\">Sign in</a> with your callsign, or "
                                 "<a href=\"/register\">register</a> one.</p>"
-                                "<p><a href=\"/map\">The radios on line now</a>, on a "
-                                "map.</p>"))
+                                "<p><a href=\"/map\">Listen to the radios that are on "
+                                "line now</a>, on the globe. Anyone may.</p>"))
             return
         guard = self.form_guard(self.session_secret())
         rows = ""
         for radio in self.service.radios(account["id"]):
             state = "on line" if radio["online"] else "off line"
-            state += " &middot; <a href=\"/radios/listen?radio=%d\">listen</a>" % radio["id"]
+            state += " &middot; <a href=\"/map#%d\">listen</a>" % radio["id"]
             kept = ""
             if self.service.snapshot(account, radio["id"]) is not None:
                 kept = ("<a href=\"/radios/settings?radio=%d\">settings</a> &middot; "
@@ -1141,7 +1291,7 @@ class Handler(BaseHTTPRequestHandler):
             radios = "<p>You have added no radio yet.</p>"
         body = (said(told, is_wrong)
                 + "<p>Address on record: %s &middot; <a href=\"/map\">the radios on line "
-                "now, on a map</a></p><h2>Your radios</h2>%s"
+                "now, on the globe</a></p><h2>Your radios</h2>%s"
                 "<h2>Add a radio</h2>"
                 "<p>On the radio, turn REMOTE on in its settings. It shows a cookie of "
                 "twelve letters. Give the radio a name and type the cookie here.</p>"
@@ -1229,28 +1379,6 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(account["callsign"]), PASSWORD_SHORTEST,
                                html.escape(secret), html.escape(account["callsign"]))))
 
-    def listen_page(self, account, number):
-        """the player for one of the owner's radios"""
-        mine = [radio for radio in self.service.radios(account["id"])
-                if str(radio["id"]) == number]
-        if not mine:
-            self.send(404, page("Not found", "<p>You have no such radio.</p>", account))
-            return
-        name = radio_id(account["callsign"], mine[0]["suffix"])
-        site = urllib.parse.urlsplit(self.service.settings.base_url)
-        sockets = ("wss://" if site.scheme == "https" else "ws://") + site.netloc
-        self.send(200, page("Listening to " + name,
-                            "<h2>%s</h2><div id=\"player\" data-radio=\"%d\">"
-                            "<p><button id=\"listen\">Listen</button> "
-                            "<span id=\"state\"></span></p>"
-                            "<label>Volume, here <input type=\"range\" id=\"volume\" "
-                            "min=\"0\" max=\"100\" value=\"60\"></label></div>"
-                            "<p>The radio's own volume is not changed by this.</p>"
-                            "<p><a href=\"/\">Back</a></p>"
-                            "<script src=\"/listen.js\"></script>"
-                            % (html.escape(name), mine[0]["id"]), account),
-                  policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
-
     def kept_page(self, account, number, what):
         """a radio's settings or its logbook, as they were last copied"""
         kept = None
@@ -1297,14 +1425,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/pow.js":
             self.send(200, POW_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map":
-            self.send(200, MAP_PAGE, policy=MAP_POLICY)
-        elif url.path == "/listen.js":
-            self.send(200, LISTEN_SCRIPT, "text/javascript; charset=utf-8")
-        elif url.path == "/radios/listen":
-            if account is None:
-                self.signin_form("Sign in first.")
-            else:
-                self.listen_page(account, query.get("radio", [""])[0])
+            site = urllib.parse.urlsplit(self.service.settings.base_url)
+            sockets = ("wss://" if site.scheme == "https" else "ws://") + site.netloc
+            self.send(200, MAP_PAGE, policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
         elif url.path == "/map.js":
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":

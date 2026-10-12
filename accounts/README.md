@@ -9,9 +9,10 @@ name is what a client is given to reach the radio from afar.
 
 There are two programs, and each one's header says how it works:
 
-- `accounts.py` is the website: registering, signing in, adding a radio, and
-  the pages that show an owner the copy kept of each radio's settings and
-  logbook.
+- `accounts.py` is the website: registering, signing in, adding a radio, the
+  pages that show an owner the copy kept of each radio's settings and
+  logbook, and the globe at `/map`, where anyone may see the radios that are
+  on line and listen to one.
 - `remote.py` is reached over plain TCP, on port 8081: a radio's daemon
   connects to it and stays, the owner's client connects to it, and it passes
   what they say from the one to the other. `PROTOCOL.md`, at the top of the

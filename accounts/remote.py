@@ -112,10 +112,16 @@ for each packet, and nothing is.
 
 Each packet's 160 bytes of sound are passed to everyone listening to that
 radio. Listeners today are web browsers, which cannot take UDP: a browser
-signed in to the website as the radio's owner opens a WebSocket here,
-through nginx, at /listen?radio=<number>, and is sent each packet's sound
-as a binary message, and the words "online" and "offline" as the radio
-comes and goes. A listener that falls behind is not queued for: it misses
+opens a WebSocket here, through nginx, at /listen?radio=<number>, from the
+website's globe, and is sent each packet's sound as a binary message, and
+the words "online" and "offline" as the radio comes and goes.
+
+Anyone may listen, signed in or not: the author's ruling, a radio's
+transmissions and receptions being public anyway. What is asked is that
+the page be the website's own, so that another site cannot use this one's
+radios as its own; that the radio be one that is shown on the globe; and
+that there be not too many: a hundred listeners to a radio, and six from
+one address, beyond which a browser is sent the word "full" and no sound. A listener that falls behind is not queued for: it misses
 packets and stays up to date. Clients that take UDP, the window among
 them, are to come.
 
@@ -177,6 +183,8 @@ TAG_BYTES = 8
 PACKET_BYTES = STREAM_ID_BYTES + RTP_BYTES + TAG_BYTES
 SEQUENCE_AHEAD_MOST = 3000
 LISTENER_WAITING_MOST = 4096
+LISTENERS_A_RADIO = 100
+LISTENERS_AN_ADDRESS = 6
 REQUEST_LONGEST = 8192
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WRONG_PROOFS = 100
@@ -207,6 +215,7 @@ class Remote:
         self.awaited = {}    # a session's token -> (the radio's id, the future it fulfils)
         self.wrong = {}      # an address -> when it gave wrong proofs
         self.listeners = {}  # a radio's id -> the browsers' writers listening to it
+        self.listener_from = {}  # a browser's writer -> the address it came from
         self.streams = {}    # a stream's id -> [the radio's id, the key, the last sequence]
         self.stream_of = {}  # a radio's id -> its stream's id, while there is one
         self.heard = 0       # packets of sound taken, for the tests
@@ -422,23 +431,24 @@ class Remote:
 
     def listener_of(self, headers, path):
         """the radio a browser may listen to: the one its address names, if
-        the browser is signed in to the website as that radio's owner and
-        the page asking is the website's own; None otherwise"""
+        the page asking is the website's own and the radio is an active
+        account's; None otherwise. Nobody need be signed in"""
         if headers.get("origin") != self.settings.base_url:
             return None
-        name = "__Host-sid" if self.settings.base_url.startswith("https://") else "sid"
-        secret = ""
-        for part in headers.get("cookie", "").split(";"):
-            key, _, value = part.strip().partition("=")
-            if key == name:
-                secret = value
-        account = self.service.session_account(secret)
         number = path.partition("?radio=")[2]
-        if account is None or not number.isdigit():
+        if not number.isdigit():
             return None
         with self.store.open() as db:
-            return db.execute("select * from radios where id = ? and account = ?",
-                              (int(number), account["id"])).fetchone()
+            return db.execute(
+                "select radios.* from radios join accounts on accounts.id = radios.account "
+                "where radios.id = ? and accounts.status = 'active'",
+                (int(number),)).fetchone()
+
+    def has_room(self, radio, address):
+        from_there = sum(1 for listeners in self.listeners.values()
+                         for listener in listeners if self.listener_from.get(listener) == address)
+        return (len(self.listeners.get(radio, ())) < LISTENERS_A_RADIO
+                and from_there < LISTENERS_AN_ADDRESS)
 
     async def meet_browser(self, reader, writer):
         """a browser's WebSocket, RFC 6455: its request is answered, and it
@@ -462,7 +472,13 @@ class Remote:
             writer.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                          b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept
                          + b"\r\n\r\n")
+            address = headers.get("x-real-ip", "")
+            if not self.has_room(found["id"], address):
+                writer.write(bytes([0x81, 4]) + b"full")
+                await writer.drain()
+                return
             radio = found["id"]
+            self.listener_from[writer] = address
             self.listeners.setdefault(radio, set()).add(writer)
             word = b"online" if radio in self.lines else b"offline"
             writer.write(bytes([0x81, len(word)]) + word)
@@ -482,6 +498,7 @@ class Remote:
                 ConnectionError, IndexError):
             pass
         finally:
+            self.listener_from.pop(writer, None)
             if radio is not None:
                 self.listeners[radio].discard(writer)
                 if not self.listeners[radio]:

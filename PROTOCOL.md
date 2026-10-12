@@ -410,10 +410,14 @@ everyone listening to that radio. A listener that falls behind misses packets;
 none is queued for it.
 
 A web browser listens over a WebSocket, a browser having no UDP:
-`wss://my.sbitx.net/listen?radio=<the radio's number>`, from a page of the
-website, signed in as the radio's owner. Each binary message is one packet's
-160 bytes of mu-law; a text message, `online` or `offline`, says whether the
-radio is there. This stretch is inside the website's HTTPS.
+`wss://my.sbitx.net/listen?radio=<the radio's number>`, from the website's
+globe, `https://my.sbitx.net/map`, which shows the radios that are on line and
+gives each one's number. Anyone may listen, signed in or not: the author's
+ruling, a radio's transmissions and receptions being public anyway. Each binary
+message is one packet's 160 bytes of mu-law; a text message, `online` or
+`offline`, says whether the radio is there, and `full` that a hundred are
+listening to it already, or six from the one address. This stretch is inside
+the website's HTTPS.
 
 A client that takes the sound by UDP, as the window is to, is not built yet:
 both it and the radio are behind routers, and it has to send to the service

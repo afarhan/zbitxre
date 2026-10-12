@@ -393,24 +393,9 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertNotIn("VU2XZ", text)
 
-    def test_the_player_is_for_the_radios_owner(self):
-        first = self.make_account()
-        self.add_radio(first)
-        radio = self.service.radio_called("vu2ese-home")["id"]
-        status, text = first.get("/radios/listen?radio=%d" % radio)
-        self.assertEqual(status, 200)
-        self.assertIn('data-radio="%d"' % radio, text)
-        self.assertIn("Listening to vu2ese-home", text)
-        second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
-        self.assertEqual(second.get("/radios/listen?radio=%d" % radio)[0], 404)
-        _, text = Browser(self.port).get("/radios/listen?radio=%d" % radio)
-        self.assertIn("Sign in first", text)
-        status, text = Browser(self.port).get("/listen.js")
-        self.assertIn("createBufferSource", text)
+    # the globe
 
-    # the map
-
-    def test_the_map_shows_the_radios_on_line_and_only_their_callsign_and_square(self):
+    def test_the_globe_shows_the_radios_on_line_and_only_their_callsign_and_square(self):
         browser = self.make_account()
         self.add_radio(browser, "home")
         self.add_radio(browser, "attic", "bbbb-cccc-dddd")
@@ -421,26 +406,29 @@ class AccountsTest(unittest.TestCase):
             db.execute("update radios set online = 1, grid = '' where suffix = 'car'")
         status, text = Browser(self.port).get("/map.json")
         self.assertEqual(status, 200)
-        radios = json.loads(text)
-        self.assertEqual(radios, [{"grid": "MK97", "lat": 17.5, "lon": 79.0, "south": 17,
-                                   "north": 18, "west": 78, "east": 80,
-                                   "callsign": "VU2ESE"}])
-        for hidden in ("home", "fj", "abcd", self.service.radio_called(
-                "vu2ese-home")["client_password"]):
+        home = self.service.radio_called("vu2ese-home")
+        self.assertEqual(json.loads(text), [{"radio": home["id"], "callsign": "VU2ESE",
+                                             "grid": "MK97", "lat": 17.5, "lon": 79.0}])
+        for hidden in ("home", "fj", "abcd", home["client_password"]):
             self.assertNotIn(hidden, text)
 
-    def test_the_map_and_what_draws_it_need_no_sign_in(self):
+    def test_the_globe_and_what_draws_it_need_no_sign_in_and_nothing_from_elsewhere(self):
         visitor = Browser(self.port)
         status, text = visitor.get("/map")
         self.assertEqual(status, 200)
-        self.assertIn('<div id="map">', text)
-        for path, has in (("/map.js", "tile.openstreetmap.org"), ("/map.css", "#map"),
-                          ("/static/leaflet.js", "Leaflet 1.9.4"),
-                          ("/static/leaflet.css", ".leaflet-pane")):
+        self.assertIn('<canvas id="globe">', text)
+        self.assertNotIn("http", text.replace("http-equiv", ""))
+        for path, has in (("/map.js", "createBufferSource"), ("/map.css", "#globe"),
+                          ("/static/land.json", "[[[")):
             status, text = visitor.get(path)
             self.assertEqual(status, 200, path)
             self.assertIn(has, text, path)
-        for path in ("/static/../accounts.py", "/static/accounts.db", "/static/"):
+        rings = json.loads(text)
+        self.assertGreater(len(rings), 100)
+        self.assertTrue(all(-180 <= lon <= 180 and -90 <= lat <= 90
+                            for ring in rings for lon, lat in ring))
+        for path in ("/static/../accounts.py", "/static/accounts.db", "/static/",
+                     "/static/leaflet.js"):
             self.assertEqual(visitor.get(path)[0], 404, path)
 
     def test_a_secret_is_stretched_as_the_radio_stretches_it(self):

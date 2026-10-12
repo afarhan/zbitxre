@@ -198,15 +198,16 @@ class Speaker:
 
 
 class Browser:
-    """a browser's WebSocket to the service, as nginx hands it on"""
+    """a browser's WebSocket to the service, as nginx hands it on; nobody is
+    signed in"""
 
-    def __init__(self, port, origin, cookie, radio):
+    def __init__(self, port, origin, radio, address="203.0.113.7"):
         self.socket = socket.create_connection(("127.0.0.1", port), timeout=5)
         self.socket.sendall((
             "GET /listen?radio=%d HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
             "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            "Sec-WebSocket-Version: 13\r\nOrigin: %s\r\nCookie: sid=%s\r\n\r\n"
-            % (radio, origin, cookie)).encode())
+            "Sec-WebSocket-Version: 13\r\nOrigin: %s\r\nX-Real-IP: %s\r\n\r\n"
+            % (radio, origin, address)).encode())
         self.waiting = b""
         answer = b""
         while b"\r\n\r\n" not in answer:
@@ -446,11 +447,9 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(third.read(), "CONNECTED vu2ese-home")
         third.close()
 
-    def listener(self, account, radio):
-        with self.service.store.open() as db:
-            cookie = self.service.new_session(db, account["id"])
+    def listener(self, radio, address="203.0.113.7"):
         port = self.remote.web.sockets[0].getsockname()[1]
-        return Browser(port, self.service.settings.base_url, cookie, radio)
+        return Browser(port, self.service.settings.base_url, radio, address)
 
     def hear(self, speaker, browser):
         """sound is played until the browser has one packet of it; the
@@ -487,13 +486,13 @@ class RemoteTest(unittest.TestCase):
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, 0, "sound was sent with nobody listening")
 
-        first = self.listener(self.account, radio["id"])
+        first = self.listener(radio["id"])
         self.assertTrue(first.is_accepted, first.status)
         self.assertEqual(first.read(), "online")
         played, heard = self.hear(speaker, first)
         self.assertEqual(heard, played)
 
-        second = self.listener(self.account, radio["id"])
+        second = self.listener(radio["id"])
         self.assertEqual(second.read(), "online")
         played, heard = self.hear(speaker, second)
         self.assertEqual(heard, played)
@@ -527,19 +526,31 @@ class RemoteTest(unittest.TestCase):
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
 
-    def test_only_the_owner_signed_in_may_listen(self):
+    def test_anyone_may_listen_from_the_websites_own_page_and_not_too_many(self):
         radio = self.switch_on_and_add()
-        other = self.make_account("VU2XYZ", "xyz@example.org")
-        stranger = self.listener(other, radio["id"])
-        self.assertIn("403", stranger.status)
         port = self.remote.web.sockets[0].getsockname()[1]
-        nobody = Browser(port, self.service.settings.base_url, "no-such-session", radio["id"])
-        self.assertIn("403", nobody.status)
-        with self.service.store.open() as db:
-            cookie = self.service.new_session(db, self.account["id"])
-        elsewhere = Browser(port, "https://elsewhere.example", cookie, radio["id"])
+        elsewhere = Browser(port, "https://elsewhere.example", radio["id"])
         self.assertIn("403", elsewhere.status)
+        no_such = self.listener(radio["id"] + 50)
+        self.assertIn("403", no_such.status)
         self.assertFalse(self.remote.streams)
+
+        six = [self.listener(radio["id"]) for _ in range(6)]
+        for one in six:
+            self.assertEqual(one.read(), "online")
+        seventh = self.listener(radio["id"])
+        self.assertEqual(seventh.read(), "full")
+        from_another_house = self.listener(radio["id"], "198.51.100.9")
+        self.assertEqual(from_another_house.read(), "online")
+        for one in six + [from_another_house]:
+            one.close()
+        self.wait_for(lambda: not self.remote.streams, "the stream was not ended")
+
+    def test_a_suspended_owners_radio_is_not_listened_to(self):
+        radio = self.switch_on_and_add()
+        with self.service.store.open() as db:
+            db.execute("update accounts set status = 'suspended'")
+        self.assertIn("403", self.listener(radio["id"]).status)
 
     def test_a_radio_removed_on_the_website_shows_its_cookie_again(self):
         radio = self.switch_on_and_add()
