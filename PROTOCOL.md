@@ -362,11 +362,68 @@ protocol, the first part of this file, beginning with every control's value,
 as if it had just connected to the radio itself. A radio that is not on line,
 or does not answer within ten seconds, is an `ERROR connect` with the reason.
 
-At most four visitors are on one radio at once.
+One client works a radio at a time. A second that asks for a radio while
+another is on it is sent `ERROR connect that radio is being worked by another
+client`. Any number may listen to it.
+
+## The radio's sound
+
+**On the radio.** The radio program sends what its speaker plays out on the
+radio itself, always, as RTP of payload type 0: mu-law, 8000 samples a second,
+one channel, 160 samples and twenty milliseconds to a packet, fifty packets a
+second. It goes to the multicast group 239.255.73.88, port 5004, on the
+loopback interface with a time to live of 0, so it never leaves the radio.
+Any program on the radio may listen: `ffplay "rtp://239.255.73.88:5004?localaddr=127.0.0.1"`.
+The sound is taken before the sound card's volume, so its level does not
+follow the radio's volume control; whoever listens sets their own.
+`rtp_audio.c` is this.
+
+**From the radio to the service.** Only while somebody is listening. The
+service says so on the connection the daemon keeps:
+
+    AUDIO ON 3f9a1c2b4d5e6f70 8d2e...       the service: the stream's id, 16 hex
+                                            digits, and a nonce, 32
+    AUDIO OFF                               the service, when the last listener goes
+
+After `AUDIO ON` the daemon sends each RTP packet it hears to the service by
+UDP, to port 8081:
+
+| Bytes | |
+|---|---|
+| 8 | the stream's id |
+| 172 | the RTP packet as it was heard: 12 of header, 160 of sound |
+| 8 | a tag |
+
+There is no connection in UDP on which a challenge could have been answered,
+so every packet carries its proof. The tag is the first 8 bytes of
+HMAC-SHA256 of the 180 bytes before it. Its key is good for this stream alone
+and is never sent: it is the 64 hex digits of
+
+    HMAC-SHA256(the radio's stretched cookie, "zbitx-audio-1 <nonce>")
+
+The service drops a packet whose id is no stream's, whose tag is wrong, or
+whose RTP sequence number is not ahead of the last it took. Nothing is looked
+up anywhere for a packet but in the service's own memory.
+
+**To those listening.** The service passes each packet's 160 bytes of sound to
+everyone listening to that radio. A listener that falls behind misses packets;
+none is queued for it.
+
+A web browser listens over a WebSocket, a browser having no UDP:
+`wss://my.sbitx.net/listen?radio=<the radio's number>`, from a page of the
+website, signed in as the radio's owner. Each binary message is one packet's
+160 bytes of mu-law; a text message, `online` or `offline`, says whether the
+radio is there. This stretch is inside the website's HTTPS.
+
+A client that takes the sound by UDP, as the window is to, is not built yet:
+both it and the radio are behind routers, and it has to send to the service
+first for there to be a way back to it.
 
 ## Not done yet
 
-Sound is not carried: the protocol has none today. The copy of the logbook is
+Sound goes one way, from the radio, and to browsers only; the window does not
+play it yet, and nothing can be said into the radio from afar. The copy of the
+logbook is
 the newest hundred entries, which is all `log` gives. Files that are not
 controls, the radio's calibration in `hw_settings.ini` and the CW macros, are
 not backed up; that needs a request for sending a file. And a kept copy of the

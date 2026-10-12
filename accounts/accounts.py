@@ -109,6 +109,22 @@ The work is done by pow.js, the only script on the site, which is served
 from here and does nothing else. With scripts turned off the form cannot
 be sent, and says so.
 
+LISTENING TO A RADIO
+
+Beside each of the owner's radios is "listen", a page with a button and a
+slider. The author asked for a player in the browser. Its script,
+listen.js below, opens a WebSocket to /listen, which nginx hands to
+remote.py, and is sent the radio's sound as it comes, twenty milliseconds
+of mu-law to a message; remote.py says how the sound reaches it and who may
+listen. The script turns each message into samples and plays them one
+after another through the browser's Web Audio, a tenth of a second behind
+their arrival so that an uneven network does not break the sound up, and
+lets go of sound that has fallen more than half a second behind. The
+slider is the loudness here, in this browser, and nothing at the radio:
+the author's rule is that whoever listens from afar sets their own volume.
+
+A browser has no UDP, so this last stretch is TCP, inside the site's HTTPS.
+
 THE MAP
 
 /map is a page anyone may see, signed in or not: a map of the world with
@@ -336,6 +352,75 @@ POW_SCRIPT = """
 })();
 """
 
+# the player's script. A table turns each byte of mu-law into a sample; the
+# samples of each message are a buffer played right after the one before
+LISTEN_SCRIPT = """
+"use strict";
+(function () {
+  var player = document.getElementById("player");
+  var button = document.getElementById("listen");
+  var slider = document.getElementById("volume");
+  var state = document.getElementById("state");
+  var table = new Float32Array(256);
+  for (var i = 0; i < 256; i++) {
+    var u = ~i & 255;
+    var size = (((u & 15) << 3) + 132) << ((u & 112) >> 4);
+    table[i] = ((u & 128) ? (132 - size) : (size - 132)) / 32768;
+  }
+  var context = null, gain = null, socket = null, playAt = 0;
+
+  function play(bytes) {
+    var now = context.currentTime;
+    if (playAt > now + 0.5) { return; }
+    if (playAt < now + 0.02) { playAt = now + 0.1; }
+    var buffer = context.createBuffer(1, bytes.length, 8000);
+    var samples = buffer.getChannelData(0);
+    for (var i = 0; i < bytes.length; i++) { samples[i] = table[bytes[i]]; }
+    var source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gain);
+    source.start(playAt);
+    playAt += buffer.duration;
+  }
+
+  function stop(said) {
+    if (socket) { socket.onclose = null; socket.close(); socket = null; }
+    if (context) { context.close(); context = null; }
+    button.textContent = "Listen";
+    state.textContent = said;
+  }
+
+  function start() {
+    context = new (window.AudioContext || window.webkitAudioContext)();
+    gain = context.createGain();
+    gain.gain.value = slider.value / 100;
+    gain.connect(context.destination);
+    playAt = 0;
+    socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
+      + location.host + "/listen?radio=" + player.getAttribute("data-radio"));
+    socket.binaryType = "arraybuffer";
+    socket.onmessage = function (message) {
+      if (typeof message.data === "string") {
+        state.textContent = message.data === "online" ? "listening" :
+          "the radio is not on line; waiting for it";
+      } else {
+        play(new Uint8Array(message.data));
+      }
+    };
+    socket.onclose = function () { stop("the connection was lost"); };
+    button.textContent = "Stop";
+    state.textContent = "connecting";
+  }
+
+  button.addEventListener("click", function () {
+    if (socket) { stop("stopped"); } else { start(); }
+  });
+  slider.addEventListener("input", function () {
+    if (gain) { gain.gain.value = slider.value / 100; }
+  });
+})();
+"""
+
 # the map's script: the radios on line are asked for, and each is a dot at
 # the middle of its square with the callsign beside it
 MAP_SCRIPT = """
@@ -441,6 +526,9 @@ class Settings:
         remote = ini["remote"] if ini.has_section("remote") else {}
         self.remote_host, _, remote_port = remote.get("listen", "0.0.0.0:8081").rpartition(":")
         self.remote_port = int(remote_port)
+        self.listen_host, _, listen_port = remote.get(
+            "listen_web", "127.0.0.1:8102").rpartition(":")
+        self.listen_port = int(listen_port)
         self.host, _, port = server.get("listen", "127.0.0.1:8100").rpartition(":")
         self.port = int(port)
         self.base_url = server.get("base_url", "http://127.0.0.1:8100").rstrip("/")
@@ -1027,6 +1115,7 @@ class Handler(BaseHTTPRequestHandler):
         rows = ""
         for radio in self.service.radios(account["id"]):
             state = "on line" if radio["online"] else "off line"
+            state += " &middot; <a href=\"/radios/listen?radio=%d\">listen</a>" % radio["id"]
             kept = ""
             if self.service.snapshot(account, radio["id"]) is not None:
                 kept = ("<a href=\"/radios/settings?radio=%d\">settings</a> &middot; "
@@ -1140,6 +1229,28 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(account["callsign"]), PASSWORD_SHORTEST,
                                html.escape(secret), html.escape(account["callsign"]))))
 
+    def listen_page(self, account, number):
+        """the player for one of the owner's radios"""
+        mine = [radio for radio in self.service.radios(account["id"])
+                if str(radio["id"]) == number]
+        if not mine:
+            self.send(404, page("Not found", "<p>You have no such radio.</p>", account))
+            return
+        name = radio_id(account["callsign"], mine[0]["suffix"])
+        site = urllib.parse.urlsplit(self.service.settings.base_url)
+        sockets = ("wss://" if site.scheme == "https" else "ws://") + site.netloc
+        self.send(200, page("Listening to " + name,
+                            "<h2>%s</h2><div id=\"player\" data-radio=\"%d\">"
+                            "<p><button id=\"listen\">Listen</button> "
+                            "<span id=\"state\"></span></p>"
+                            "<label>Volume, here <input type=\"range\" id=\"volume\" "
+                            "min=\"0\" max=\"100\" value=\"60\"></label></div>"
+                            "<p>The radio's own volume is not changed by this.</p>"
+                            "<p><a href=\"/\">Back</a></p>"
+                            "<script src=\"/listen.js\"></script>"
+                            % (html.escape(name), mine[0]["id"]), account),
+                  policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
+
     def kept_page(self, account, number, what):
         """a radio's settings or its logbook, as they were last copied"""
         kept = None
@@ -1187,6 +1298,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, POW_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map":
             self.send(200, MAP_PAGE, policy=MAP_POLICY)
+        elif url.path == "/listen.js":
+            self.send(200, LISTEN_SCRIPT, "text/javascript; charset=utf-8")
+        elif url.path == "/radios/listen":
+            if account is None:
+                self.signin_form("Sign in first.")
+            else:
+                self.listen_page(account, query.get("radio", [""])[0])
         elif url.path == "/map.js":
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":

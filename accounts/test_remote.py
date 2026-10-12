@@ -26,6 +26,7 @@ import os
 import secrets
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -170,6 +171,74 @@ class Client:
                 return lines
 
     def close(self):
+        self.file.close()
+        self.socket.close()
+
+
+class Speaker:
+    """in place of the radio program's sound: RTP packets to the group on
+    loopback, as rtp_audio.c sends them, each with sound that says which
+    packet it is"""
+
+    def __init__(self):
+        self.out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                            socket.inet_aton("127.0.0.1"))
+        self.out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 0)
+        self.sequence = 1000
+
+    def play(self):
+        """one packet; returns its 160 bytes of sound"""
+        self.sequence += 1
+        sound = bytes([self.sequence % 251]) * 160
+        header = struct.pack(">BBHII", 0x80, 0, self.sequence & 0xffff,
+                             self.sequence * 160, 0x5b17)
+        self.out.sendto(header + sound, ("239.255.73.88", 5004))
+        return sound
+
+
+class Browser:
+    """a browser's WebSocket to the service, as nginx hands it on"""
+
+    def __init__(self, port, origin, cookie, radio):
+        self.socket = socket.create_connection(("127.0.0.1", port), timeout=5)
+        self.socket.sendall((
+            "GET /listen?radio=%d HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            "Sec-WebSocket-Version: 13\r\nOrigin: %s\r\nCookie: sid=%s\r\n\r\n"
+            % (radio, origin, cookie)).encode())
+        self.waiting = b""
+        answer = b""
+        while b"\r\n\r\n" not in answer:
+            more = self.socket.recv(1)
+            if not more:
+                break
+            answer += more
+        self.status = answer.split(b"\r\n")[0].decode()
+        self.is_accepted = b"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" in answer
+
+    def take(self, count):
+        while len(self.waiting) < count:
+            more = self.socket.recv(4096)
+            if not more:
+                raise ConnectionError("closed")
+            self.waiting += more
+        taken, self.waiting = self.waiting[:count], self.waiting[count:]
+        return taken
+
+    def read(self):
+        """the next message: a text as str, sound as bytes"""
+        head = self.take(2)
+        length = head[1]
+        if length == 126:
+            length = struct.unpack(">H", self.take(2))[0]
+        body = self.take(length)
+        if head[0] & 0x0f == 1:
+            return body.decode()
+        return body
+
+    def close(self):
+        self.socket.sendall(bytes([0x88, 0x80, 0, 0, 0, 0]))
         self.socket.close()
 
 
@@ -361,6 +430,116 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(new.read(), "CONNECTED vu2ese-home")
         new.close()
         self.assertEqual(self.status(), "ONLINE vu2ese-home")
+
+    def test_a_second_client_is_told_the_radio_is_in_use(self):
+        radio = self.switch_on_and_add()
+        first = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertEqual(first.read(), "CONNECTED vu2ese-home")
+        second = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertEqual(second.read(),
+                         "ERROR connect that radio is being worked by another client")
+        second.close()
+        first.close()
+        self.wait_for(lambda: self.remote.sessions.get(radio["id"]) == 0,
+                      "the first client did not leave")
+        third = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertEqual(third.read(), "CONNECTED vu2ese-home")
+        third.close()
+
+    def listener(self, account, radio):
+        with self.service.store.open() as db:
+            cookie = self.service.new_session(db, account["id"])
+        port = self.remote.web.sockets[0].getsockname()[1]
+        return Browser(port, self.service.settings.base_url, cookie, radio)
+
+    def hear(self, speaker, browser):
+        """sound is played until the browser has one packet of it; the
+        packet after that is played, and what the browser then has is
+        returned with what was played"""
+        browser.socket.settimeout(0.3)
+        ends = time.time() + 15
+        while time.time() < ends:
+            speaker.play()
+            try:
+                if isinstance(browser.read(), bytes):
+                    break
+            except socket.timeout:
+                pass
+        else:
+            self.fail("no sound reached the browser")
+        browser.socket.settimeout(5)
+        time.sleep(0.3)
+        browser.socket.setblocking(False)
+        try:
+            browser.socket.recv(65536)
+        except BlockingIOError:
+            pass
+        browser.waiting = b""
+        browser.socket.settimeout(5)
+        played = speaker.play()
+        return played, browser.read()
+
+    def test_the_radios_sound_reaches_every_browser_listening_and_only_while_one_is(self):
+        radio = self.switch_on_and_add()
+        speaker = Speaker()
+        for _ in range(10):
+            speaker.play()
+        time.sleep(0.5)
+        self.assertEqual(self.remote.heard, 0, "sound was sent with nobody listening")
+
+        first = self.listener(self.account, radio["id"])
+        self.assertTrue(first.is_accepted, first.status)
+        self.assertEqual(first.read(), "online")
+        played, heard = self.hear(speaker, first)
+        self.assertEqual(heard, played)
+
+        second = self.listener(self.account, radio["id"])
+        self.assertEqual(second.read(), "online")
+        played, heard = self.hear(speaker, second)
+        self.assertEqual(heard, played)
+        # the first listener has had every packet the second was played;
+        # the last it has is the last that was played
+        first.socket.settimeout(0.5)
+        last = None
+        try:
+            while True:
+                last = first.read()
+        except socket.timeout:
+            pass
+        self.assertEqual(last, played)
+
+        # a packet nobody tagged, to the stream that is open, goes nowhere
+        stream = list(self.remote.streams)[0]
+        forged = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        before = self.remote.heard
+        forged.sendto(stream + struct.pack(">BBHII", 0x80, 0, 60000, 0, 0) + bytes(160)
+                      + bytes(8), ("127.0.0.1", self.port))
+        time.sleep(0.3)
+        self.assertEqual(self.remote.heard, before)
+
+        first.close()
+        second.close()
+        self.wait_for(lambda: not self.remote.streams, "the stream was not ended")
+        time.sleep(0.5)
+        before = self.remote.heard
+        for _ in range(10):
+            speaker.play()
+        time.sleep(0.5)
+        self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
+
+    def test_only_the_owner_signed_in_may_listen(self):
+        radio = self.switch_on_and_add()
+        other = self.make_account("VU2XYZ", "xyz@example.org")
+        stranger = self.listener(other, radio["id"])
+        self.assertIn("403", stranger.status)
+        port = self.remote.web.sockets[0].getsockname()[1]
+        nobody = Browser(port, self.service.settings.base_url, "no-such-session", radio["id"])
+        self.assertIn("403", nobody.status)
+        with self.service.store.open() as db:
+            cookie = self.service.new_session(db, self.account["id"])
+        elsewhere = Browser(port, "https://elsewhere.example", cookie, radio["id"])
+        self.assertIn("403", elsewhere.status)
+        self.assertFalse(self.remote.streams)
 
     def test_a_radio_removed_on_the_website_shows_its_cookie_again(self):
         radio = self.switch_on_and_add()

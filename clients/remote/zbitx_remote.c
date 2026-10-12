@@ -83,6 +83,22 @@
 // is sent the spectrum only if it asks for it. There may be SESSIONS_MAX
 // visitors at once.
 //
+// THE RADIO'S SOUND
+//
+// The radio program sends what its speaker plays out on the radio itself,
+// as RTP to a multicast group; rtp_audio.c says how. While somebody afar is
+// listening, and only then, the service says so on the connection that is
+// kept, "AUDIO ON <the stream's id> <a nonce>". This program then joins the
+// group, and sends each RTP packet it hears to my.sbitx.net by UDP, on the
+// same port number: the stream's id, the packet as it came, and a tag. UDP
+// has no connection on which a challenge was answered, so every packet
+// carries its own proof. The tag is the first eight bytes of the keyed
+// hash of the id and the packet, and the key is made of the stretched
+// cookie and the nonce, so that it is never sent and is good for this
+// stream alone; PROTOCOL.md has it exactly. At "AUDIO OFF", or when the
+// connection is lost or REMOTE is turned off, it leaves the group and
+// sends no more.
+//
 // HOW IT RUNS
 //
 // One thread and one loop around poll(). The connections that carry a
@@ -105,6 +121,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/random.h>
@@ -112,6 +129,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
+#include "rtp_audio.h"
 #include "sha256.h"
 
 #define DEFAULT_SERVER "my.sbitx.net"
@@ -138,6 +156,10 @@
 #define STRETCH_ROUNDS 50000
 #define SALT_BEGINS "zbitx-1 "
 #define REFUSED_RETRY_MS 15000
+#define STREAM_ID_BYTES 8
+#define TAG_BYTES 8
+#define SOUND_PACKET_BYTES (STREAM_ID_BYTES + RTP_PACKET_BYTES + TAG_BYTES)
+#define LOOPBACK "127.0.0.1"
 #define STEP_WAIT_MS 4000
 #define LOOP_WAIT_MS 200
 #define RADIO_RETRY_MS 2000
@@ -205,6 +227,10 @@ static long last_heard_ms;
 static long retry_ms;
 static long retry_after_ms = RETRY_FIRST_MS;
 static char status_said[STATUS_ROOM];
+static int sound_in = NOT_OPEN;
+static int sound_out = NOT_OPEN;
+static uint8_t stream_id[STREAM_ID_BYTES];
+static char stream_key[SHA256_HEX_ROOM];
 static struct session sessions[SESSIONS_MAX];
 
 static long now_ms(void) {
@@ -626,10 +652,89 @@ static int pass_on(int from_fd, int to_fd, struct waiting *w, short from_events,
 	return 1;
 }
 
+/* the radio's sound, to the service while somebody listens */
+
+static void sound_off(void) {
+	close_fd(&sound_in);
+	close_fd(&sound_out);
+}
+
+// the group the radio program sends its sound to is joined, on loopback,
+// and a socket is made for sending it on
+static void sound_on(const char *id_hex, const char *nonce) {
+	struct addrinfo hints;
+	struct addrinfo *found;
+	struct sockaddr_in any;
+	struct ip_mreq membership;
+	char text[TEXT_ROOM];
+	unsigned int byte;
+	int one = 1;
+	int i;
+
+	sound_off();
+	for (i = 0; i < STREAM_ID_BYTES; i++) {
+		if (sscanf(id_hex + 2 * i, "%2x", &byte) != 1)
+			return;
+		stream_id[i] = (uint8_t)byte;
+	}
+	snprintf(text, sizeof(text), "zbitx-audio-1 %.64s", nonce);
+	hmac_sha256_hex(stretched, text, stream_key);
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (getaddrinfo(server, port, &hints, &found) != 0)
+		return;
+	sound_out = socket(found->ai_family, found->ai_socktype | SOCK_NONBLOCK,
+		found->ai_protocol);
+	if (sound_out < 0 || connect(sound_out, found->ai_addr, found->ai_addrlen) < 0) {
+		freeaddrinfo(found);
+		sound_off();
+		return;
+	}
+	freeaddrinfo(found);
+
+	sound_in = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+	memset(&any, 0, sizeof(any));
+	any.sin_family = AF_INET;
+	any.sin_port = htons(RTP_AUDIO_PORT);
+	inet_pton(AF_INET, RTP_AUDIO_GROUP, &membership.imr_multiaddr);
+	inet_pton(AF_INET, LOOPBACK, &membership.imr_interface);
+	if (sound_in < 0
+			|| setsockopt(sound_in, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0
+			|| bind(sound_in, (struct sockaddr *)&any, sizeof(any)) < 0
+			|| setsockopt(sound_in, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership,
+				sizeof(membership)) < 0)
+		sound_off();
+}
+
+// every packet of sound that has come is sent on, with the stream's id
+// before it and its tag after
+static void sound_pass_on(void) {
+	uint8_t packet[SOUND_PACKET_BYTES];
+	uint8_t hash[SHA256_BYTES];
+	ssize_t got;
+
+	if (sound_in == NOT_OPEN)
+		return;
+	memcpy(packet, stream_id, STREAM_ID_BYTES);
+	got = recv(sound_in, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, 0);
+	while (got > 0) {
+		if (got == RTP_PACKET_BYTES) {
+			hmac_sha256((const uint8_t *)stream_key, strlen(stream_key), packet,
+				STREAM_ID_BYTES + RTP_PACKET_BYTES, hash);
+			memcpy(packet + STREAM_ID_BYTES + RTP_PACKET_BYTES, hash, TAG_BYTES);
+			send(sound_out, packet, sizeof(packet), MSG_NOSIGNAL);
+		}
+		got = recv(sound_in, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, 0);
+	}
+}
+
 /* the connection kept to my.sbitx.net */
 
 static void line_close(long now) {
 	close_fd(&line_fd);
+	sound_off();
 	state = WAITING_TO_RETRY;
 	retry_ms = now + retry_after_ms;
 	retry_after_ms *= 2;
@@ -677,12 +782,17 @@ static void line_open(long now) {
 static void line_poll(long now) {
 	char line[LINE_ROOM];
 	char token[LINE_ROOM];
+	char nonce[LINE_ROOM];
 	int got = take_line(&line_lines, line_fd, line, sizeof(line));
 
 	while (got > 0) {
 		last_heard_ms = now;
 		if (sscanf(line, "SESSION %64s", token) == 1)
 			session_open(token);
+		if (sscanf(line, "AUDIO ON %16s %64s", token, nonce) == 2)
+			sound_on(token, nonce);
+		if (!strcmp(line, "AUDIO OFF"))
+			sound_off();
 		got = take_line(&line_lines, line_fd, line, sizeof(line));
 	}
 	// the grid set on the radio, once the connection is made and again
@@ -709,6 +819,7 @@ static void line_poll(long now) {
 
 static void switch_off(void) {
 	close_fd(&line_fd);
+	sound_off();
 	sessions_close();
 	state = OFF;
 	retry_after_ms = RETRY_FIRST_MS;
@@ -747,7 +858,7 @@ static void follow_the_owner(long now) {
 }
 
 static void wait_and_pass_on(void) {
-	struct pollfd polls[2 + 2 * SESSIONS_MAX];
+	struct pollfd polls[3 + 2 * SESSIONS_MAX];
 	struct session *s;
 	int count = 0;
 	int first;
@@ -760,6 +871,11 @@ static void wait_and_pass_on(void) {
 	}
 	if (line_fd != NOT_OPEN) {
 		polls[count].fd = line_fd;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	if (sound_in != NOT_OPEN) {
+		polls[count].fd = sound_in;
 		polls[count].events = POLLIN;
 		polls[count++].revents = 0;
 	}
@@ -785,6 +901,7 @@ static void wait_and_pass_on(void) {
 		count += 2;
 	}
 	poll(polls, count, LOOP_WAIT_MS);
+	sound_pass_on();
 	for (i = 0; i < SESSIONS_MAX; i++) {
 		s = &sessions[i];
 		if (s->service_fd == NOT_OPEN)

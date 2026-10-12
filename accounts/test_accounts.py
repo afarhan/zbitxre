@@ -393,6 +393,21 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertNotIn("VU2XZ", text)
 
+    def test_the_player_is_for_the_radios_owner(self):
+        first = self.make_account()
+        self.add_radio(first)
+        radio = self.service.radio_called("vu2ese-home")["id"]
+        status, text = first.get("/radios/listen?radio=%d" % radio)
+        self.assertEqual(status, 200)
+        self.assertIn('data-radio="%d"' % radio, text)
+        self.assertIn("Listening to vu2ese-home", text)
+        second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        self.assertEqual(second.get("/radios/listen?radio=%d" % radio)[0], 404)
+        _, text = Browser(self.port).get("/radios/listen?radio=%d" % radio)
+        self.assertIn("Sign in first", text)
+        status, text = Browser(self.port).get("/listen.js")
+        self.assertIn("createBufferSource", text)
+
     # the map
 
     def test_the_map_shows_the_radios_on_line_and_only_their_callsign_and_square(self):

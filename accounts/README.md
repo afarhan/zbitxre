@@ -17,6 +17,10 @@ There are two programs, and each one's header says how it works:
   what they say from the one to the other. `PROTOCOL.md`, at the top of the
   repository, is the account of that.
 
+`remote.py` also takes a radio's sound from its daemon, by UDP on port 8081,
+and gives it to the browsers listening at `/listen`, a WebSocket that nginx
+hands it on a port of its own.
+
 Both need Python 3 and nothing else, and they share one database.
 `remote_client.py` is a client for a terminal, to try the service with.
 
@@ -40,7 +44,7 @@ with no settings file there is none, so give it one:
 
 `setup/` has the files: `settings.ini`, a systemd unit for each program, and
 the lines for nginx. Port 8081 has to be let through the firewall for
-`remote.py`. The service runs as a user of its own, `sbitx-accounts`, with the
+`remote.py`, for TCP and for UDP. The service runs as a user of its own, `sbitx-accounts`, with the
 program in `/opt/sbitx-accounts`, the settings in `/etc/sbitx-accounts` and
 the database in `/var/lib/sbitx-accounts`.
 

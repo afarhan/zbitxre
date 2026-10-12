@@ -77,6 +77,48 @@ and is from then on talking to its radio, in the radio's own protocol. If
 the radio is not on line, or does not answer, it is sent "ERROR connect"
 and the reason.
 
+ONE CLIENT WORKS A RADIO, AND MANY MAY LISTEN
+
+The author's rule. A radio has one client at a time through here: a second
+that asks for it while the first is on is told the radio is in use. Its
+sound is another matter and may go to as many as want it.
+
+THE RADIO'S SOUND
+
+The radio program sends what its speaker plays out on the radio as RTP, and
+its daemon hears that; rtp_audio.c and zbitx_remote.c say how. While
+somebody is listening, and only then, this service tells the daemon, on the
+connection it keeps,
+
+    AUDIO ON <16 hex digits, the stream's id> <32 hex digits, a nonce>
+
+and the daemon sends each RTP packet here by UDP, to the same port number,
+as it hears it:
+
+    8 bytes     the stream's id
+    172 bytes   the RTP packet: 12 of header, 160 of mu-law, 20 ms of sound
+    8 bytes     a tag
+
+UDP has no connection to have answered a challenge on, so each packet
+carries its proof. The tag is the first 8 bytes of HMAC-SHA256 of the id
+and the RTP packet, with a key made for this stream alone and never sent:
+HMAC-SHA256 of "zbitx-audio-1 <nonce>" with the radio's stretched cookie as
+its key, in hex. A packet with a tag that is wrong, or an id that is not a
+stream's, or an RTP sequence number at or behind one already taken, is
+dropped. When the last listener goes the daemon is told "AUDIO OFF". The
+stream's key and its listeners are kept in this program's memory and
+nowhere else; the author asked that nothing be looked up in the database
+for each packet, and nothing is.
+
+Each packet's 160 bytes of sound are passed to everyone listening to that
+radio. Listeners today are web browsers, which cannot take UDP: a browser
+signed in to the website as the radio's owner opens a WebSocket here,
+through nginx, at /listen?radio=<number>, and is sent each packet's sound
+as a binary message, and the words "online" and "offline" as the radio
+comes and goes. A listener that falls behind is not queued for: it misses
+packets and stays up to date. Clients that take UDP, the window among
+them, are to come.
+
 NOTHING IS SENT THAT NOBODY ASKED FOR
 
 The author's rule. A radio that is on line and not in use costs a line a
@@ -104,10 +146,12 @@ and is read and written as it comes, without a thread of its own.
 
 import argparse
 import asyncio
+import base64
 import hmac
 import hashlib
 import os
 import re
+import struct
 import secrets
 import sys
 import time
@@ -125,6 +169,16 @@ COPY_MOST_S = 30
 LOG_WAIT_S = 5
 LINE_LONGEST = 512
 SESSIONS_A_RADIO = 4
+CLIENTS_A_RADIO = 1
+STREAM_ID_BYTES = 8
+RTP_BYTES = 172
+RTP_HEADER_BYTES = 12
+TAG_BYTES = 8
+PACKET_BYTES = STREAM_ID_BYTES + RTP_BYTES + TAG_BYTES
+SEQUENCE_AHEAD_MOST = 3000
+LISTENER_WAITING_MOST = 4096
+REQUEST_LONGEST = 8192
+WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WRONG_PROOFS = 100
 WINDOW_S = 15 * 60
 PIPE_BYTES = 4096
@@ -152,6 +206,11 @@ class Remote:
         self.sessions = {}   # a radio's id -> how many sessions it has open
         self.awaited = {}    # a session's token -> (the radio's id, the future it fulfils)
         self.wrong = {}      # an address -> when it gave wrong proofs
+        self.listeners = {}  # a radio's id -> the browsers' writers listening to it
+        self.streams = {}    # a stream's id -> [the radio's id, the key, the last sequence]
+        self.stream_of = {}  # a radio's id -> its stream's id, while there is one
+        self.heard = 0       # packets of sound taken, for the tests
+        self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
             db.execute("update radios set online = 0")
 
@@ -274,6 +333,10 @@ class Remote:
             db.execute("update radios set online = 1 where id = ?", (radio,))
         writer.write(b"OK\n")
         self.say("%s is on line" % name)
+        self.cookie_keys[radio] = accounts.stretch(device["cookie"], device["callsign"])
+        self.tell_listeners(radio, "online")
+        if self.listeners.get(radio):
+            self.start_stream(radio)
         copying = asyncio.ensure_future(self.keep_a_copy(radio))
         try:
             while True:
@@ -289,10 +352,136 @@ class Remote:
             copying.cancel()
             if self.lines.get(radio) is writer:
                 del self.lines[radio]
+                self.forget_stream(radio)
+                self.tell_listeners(radio, "offline")
                 with self.store.open() as db:
                     db.execute("update radios set online = 0, last_seen = ? where id = ?",
                                (accounts.now(), radio))
                 self.say("%s is off line" % name)
+
+    # the radio's sound
+
+    def start_stream(self, radio):
+        """the radio's daemon is asked for its sound, on a stream with an id
+        and a key of its own"""
+        line = self.lines.get(radio)
+        if line is None or radio in self.stream_of:
+            return
+        stream = secrets.token_bytes(STREAM_ID_BYTES)
+        nonce = secrets.token_hex(16)
+        key = hmac.new(self.cookie_keys[radio].encode(), ("zbitx-audio-1 " + nonce).encode(),
+                       hashlib.sha256).hexdigest().encode()
+        self.streams[stream] = [radio, key, None]
+        self.stream_of[radio] = stream
+        line.write(("AUDIO ON %s %s\n" % (stream.hex(), nonce)).encode())
+
+    def forget_stream(self, radio):
+        stream = self.stream_of.pop(radio, None)
+        if stream is not None:
+            del self.streams[stream]
+
+    def stop_stream(self, radio):
+        if radio in self.stream_of:
+            self.forget_stream(radio)
+            line = self.lines.get(radio)
+            if line is not None:
+                line.write(b"AUDIO OFF\n")
+
+    def take_packet(self, packet):
+        """a packet from a radio's daemon: if it is a stream's, and its tag
+        and its place in the order are right, its sound goes to the
+        listeners"""
+        if len(packet) != PACKET_BYTES:
+            return
+        stream = self.streams.get(packet[:STREAM_ID_BYTES])
+        if stream is None:
+            return
+        radio, key, last = stream
+        tag = hmac.new(key, packet[:-TAG_BYTES], hashlib.sha256).digest()[:TAG_BYTES]
+        if not hmac.compare_digest(tag, packet[-TAG_BYTES:]):
+            return
+        sequence = struct.unpack(">H", packet[STREAM_ID_BYTES + 2:STREAM_ID_BYTES + 4])[0]
+        if last is not None and not 0 < (sequence - last) % 65536 < SEQUENCE_AHEAD_MOST:
+            return
+        stream[2] = sequence
+        self.heard += 1
+        sound = packet[STREAM_ID_BYTES + RTP_HEADER_BYTES:-TAG_BYTES]
+        frame = bytes([0x82, 126]) + struct.pack(">H", len(sound)) + sound
+        for listener in self.listeners.get(radio, ()):
+            if listener.transport.get_write_buffer_size() < LISTENER_WAITING_MOST:
+                listener.write(frame)
+
+    def tell_listeners(self, radio, word):
+        for listener in self.listeners.get(radio, ()):
+            listener.write(bytes([0x81, len(word)]) + word.encode())
+
+    def listener_of(self, headers, path):
+        """the radio a browser may listen to: the one its address names, if
+        the browser is signed in to the website as that radio's owner and
+        the page asking is the website's own; None otherwise"""
+        if headers.get("origin") != self.settings.base_url:
+            return None
+        name = "__Host-sid" if self.settings.base_url.startswith("https://") else "sid"
+        secret = ""
+        for part in headers.get("cookie", "").split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == name:
+                secret = value
+        account = self.service.session_account(secret)
+        number = path.partition("?radio=")[2]
+        if account is None or not number.isdigit():
+            return None
+        with self.store.open() as db:
+            return db.execute("select * from radios where id = ? and account = ?",
+                              (int(number), account["id"])).fetchone()
+
+    async def meet_browser(self, reader, writer):
+        """a browser's WebSocket, RFC 6455: its request is answered, and it
+        is then a listener until it closes"""
+        radio = None
+        try:
+            request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HELLO_WAIT_S)
+            lines = request.decode("latin-1").split("\r\n")
+            path = (lines[0].split(" ") + ["", ""])[1]
+            headers = {}
+            for line in lines[1:]:
+                name, _, value = line.partition(":")
+                headers[name.strip().lower()] = value.strip()
+            found = self.listener_of(headers, path)
+            key = headers.get("sec-websocket-key", "")
+            if found is None or not path.startswith("/listen?") or not key:
+                writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+                return
+            accept = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode()).digest())
+            writer.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                         b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept
+                         + b"\r\n\r\n")
+            radio = found["id"]
+            self.listeners.setdefault(radio, set()).add(writer)
+            word = b"online" if radio in self.lines else b"offline"
+            writer.write(bytes([0x81, len(word)]) + word)
+            self.start_stream(radio)
+            # what the browser sends is read only to learn that it has closed
+            while True:
+                head = await reader.readexactly(2)
+                length = head[1] & 0x7f
+                if length == 126:
+                    length = struct.unpack(">H", await reader.readexactly(2))[0]
+                elif length == 127:
+                    break
+                await reader.readexactly(4 + length)
+                if head[0] & 0x0f == 8:
+                    break
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
+                ConnectionError, IndexError):
+            pass
+        finally:
+            if radio is not None:
+                self.listeners[radio].discard(writer)
+                if not self.listeners[radio]:
+                    self.stop_stream(radio)
+            writer.close()
 
     def keep_the_grid(self, radio, said):
         """a grid locator of four or six characters is kept with the radio,
@@ -379,6 +568,9 @@ class Remote:
         if radio["id"] not in self.lines:
             writer.write(b"ERROR connect that radio is not on line\n")
             return
+        if self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
+            writer.write(b"ERROR connect that radio is being worked by another client\n")
+            return
         streams = await self.open_session(radio["id"])
         if streams is None:
             writer.write(b"ERROR connect the radio did not answer\n")
@@ -409,9 +601,24 @@ class Remote:
         except ConnectionError:
             return
 
-    async def serve(self, host, port):
+    async def serve(self, host, port, web_host="127.0.0.1", web_port=0):
+        """the TCP port radios and clients come to, the UDP port of the same
+        number that radios send their sound to, and the port nginx brings
+        browsers' WebSockets to"""
         server = await asyncio.start_server(self.meet, host, port, limit=LINE_LONGEST * 4)
-        self.say("listening on %s:%d" % (host, server.sockets[0].getsockname()[1]))
+        port = server.sockets[0].getsockname()[1]
+        remote = self
+
+        class Sound(asyncio.DatagramProtocol):
+            def datagram_received(self, data, address):
+                remote.take_packet(data)
+
+        await asyncio.get_running_loop().create_datagram_endpoint(
+            Sound, local_addr=(host, port))
+        self.web = await asyncio.start_server(self.meet_browser, web_host, web_port,
+                                              limit=REQUEST_LONGEST)
+        self.say("listening on %s:%d, and for browsers on %s:%d" % (
+            host, port, web_host, self.web.sockets[0].getsockname()[1]))
         return server
 
 
@@ -422,7 +629,8 @@ def main(argv):
     settings = accounts.Settings(args.settings)
 
     async def run():
-        server = await Remote(settings).serve(settings.remote_host, settings.remote_port)
+        server = await Remote(settings).serve(settings.remote_host, settings.remote_port,
+                                              settings.listen_host, settings.listen_port)
         async with server:
             await server.serve_forever()
 
