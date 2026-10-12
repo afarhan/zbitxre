@@ -575,39 +575,60 @@
   }
 
   /* the keyer, in CW: KEY brings up two pads over the lower half of the
-     page, DOT under the left thumb and DASH under the right, which are a
-     paddle's two contacts. The keyer itself and its sidetone are in the
+     page, DOT and DASH side by side, which are a paddle's two contacts. The keyer itself and its sidetone are in the
      browser's sound thread, sound_worklet.js, at the radio's WPM and PITCH
      and in iambic A, or B if the radio's CW_INPUT is IAMBICB. Each
      character it finishes is sent to the radio as CW_KEY, its dots and
      dashes and the milliseconds the key was up before it, and the radio
-     sends it. The radio's sound is not played while keying, nor for a
-     little after: its own sidetone would be heard a third of a second
-     behind the telephone's. ESC, between the pads, stops what the radio
-     still has to send. */
+     sends it. ESC, beside the pads, stops what the radio still has to
+     send.
 
-  var KEYED_QUIET_MS = 2000;
-  var keyer = null, isKeyerAsked = false, keyedTimer = null;
+     The radio's sound is not played from the first touch on a pad until
+     the pads have been still for KEYED_QUIET_MS and the radio has stopped
+     sending: the radio's own sidetone comes back a third of a second and
+     more behind the telephone's, and the author found the two together
+     very disconcerting. It was first turned down only when a character
+     had been sent, and turned up two seconds after the last, whether or
+     not the radio had finished. */
+
+  var KEYED_QUIET_MS = 1500, KEYED_LOOK_MS = 250;
+  var keyer = null, isKeyerAsked = false, keyedTimer = null, keyedAt = 0;
+
+  function keying() {
+    keyedAt = Date.now();
+    if (!isMuted) {
+      isMuted = true;
+      setLoudness();
+    }
+    if (keyedTimer) { return; }
+    keyedTimer = setInterval(function () {
+      if (Date.now() - keyedAt < KEYED_QUIET_MS || isSending()) {
+        // the radio is counted as sending until it has been quiet a while
+        if (isSending()) { keyedAt = Math.max(keyedAt, Date.now() - KEYED_QUIET_MS + 600); }
+        return;
+      }
+      clearInterval(keyedTimer);
+      keyedTimer = null;
+      isMuted = isSpeaking;
+      setLoudness();
+    }, KEYED_LOOK_MS);
+  }
 
   function tellKeyer() {
     if (!keyer) { return; }
     keyer.tell({
       wpm: Number(values.WPM) || 18, pitch: Number(values.PITCH) || 600,
-      level: (Number(values.SIDETONE) || 30) / 100 * Number(own.VOL) / 100,
+      // SIDETONE is set for the radio's own speaker; here twice that,
+      // by this page's VOL, never none: it is all there is to key by
+      level: Math.max(0.05, Math.min(1, (Number(values.SIDETONE) || 30) / 50
+        * Number(own.VOL) / 100)),
       isB: values.CW_INPUT === "IAMBICB"
     });
   }
 
   function keyed(code, gapMs) {
     send("CW_KEY " + code + (gapMs ? " " + gapMs : ""));
-    isMuted = true;
-    setLoudness();
-    if (keyedTimer) { clearTimeout(keyedTimer); }
-    keyedTimer = setTimeout(function () {
-      keyedTimer = null;
-      isMuted = isSpeaking;
-      setLoudness();
-    }, KEYED_QUIET_MS);
+    keying();
   }
 
   function showKeyer(on) {
@@ -621,6 +642,7 @@
     player.openKeyer(keyed).then(function (opened) {
       keyer = opened;
       tellKeyer();
+      note("keyer: " + keyer.delay() + "; the radio's sound: " + player.delay());
     }, function (refused) {
       isKeyerAsked = false;
       showKeyer(false);
@@ -637,6 +659,7 @@
       told[which] = is;
       box.className = "pad" + (is ? " held" : "");
       if (keyer) { keyer.tell(told); }
+      if (is) { keying(); }
     }
     box.addEventListener("pointerdown", function (e) {
       e.preventDefault();
@@ -649,14 +672,16 @@
     box.addEventListener("lostpointercapture", function () { held(false); });
     box.addEventListener("contextmenu", function (e) { e.preventDefault(); });
   }
-  pad("DOT", "\u2022", "dot");
-  var keyerMiddle = make("div", "middle", null, keyerBox);
-  make("button", "", "ESC", keyerMiddle).addEventListener("click", function () {
+  // the two pads lie side by side with nothing between, as a paddle's two
+  // sides do, which the author asked for; ESC and the cross are to their left
+  var keyerSide = make("div", "side", null, keyerBox);
+  make("button", "", "ESC", keyerSide).addEventListener("click", function () {
     send("CW_DO ESC");
   });
-  make("button", "", "\u2715", keyerMiddle).addEventListener("click", function () {
+  make("button", "", "\u2715", keyerSide).addEventListener("click", function () {
     showKeyer(false);
   });
+  pad("DOT", "\u2022", "dot");
   pad("DASH", "\u2014", "dash");
 
   function footerTapped(place) {

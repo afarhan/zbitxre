@@ -120,19 +120,45 @@ function radioSound() {
      by the loudness set above: the page turns that down while keying, so
      as not to play the radio's own sidetone late. */
 
+  // The sidetone has a sound path of its own, apart from the radio's
+  // sound. The author found the first keyer's sidetone so late behind his
+  // thumb that he took it for the radio's coming back. It was made here,
+  // but through the path the radio's sound plays by, which is asked to run
+  // at 48000 whatever the telephone's own rate is and so may be one the
+  // telephone has to convert and hold back. This one asks for nothing but
+  // the least delay the telephone can give, at the telephone's own rate.
+  // It is opened from the touch on KEY, which a browser wants before it
+  // will make a sound.
+  var keyerContext = null;
+
   function openKeyer(keyed) {
     if (!loaded) {
       return Promise.reject(new Error("this browser cannot run a keyer in a page"));
     }
-    return loaded.then(function () {
-      var keyer = new AudioWorkletNode(context, "radio-keyer",
+    try {
+      keyerContext = new Context({ latencyHint: "interactive" });
+    } catch (refused) {
+      return Promise.reject(refused);
+    }
+    return keyerContext.audioWorklet.addModule("/static/sound_worklet.js").then(function () {
+      var keyer = new AudioWorkletNode(keyerContext, "radio-keyer",
         { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
       keyer.port.onmessage = function (message) {
         keyed(message.data.code, message.data.gapMs);
       };
-      keyer.connect(context.destination);
-      return { tell: function (what) { keyer.port.postMessage(what); } };
+      keyer.connect(keyerContext.destination);
+      return {
+        tell: function (what) { keyer.port.postMessage(what); },
+        // how late what it makes is heard, as far as the browser knows
+        delay: function () { return delayOf(keyerContext); }
+      };
     });
+  }
+
+  function delayOf(one) {
+    return one.sampleRate + " Hz, " + Math.round((one.baseLatency || 0) * 1000) + " ms held, "
+      + (one.outputLatency === undefined ? "?" : Math.round(one.outputLatency * 1000))
+      + " ms to the speaker";
   }
 
   return {
@@ -152,6 +178,10 @@ function radioSound() {
     // of mu-law, from when the promise is kept
     openMicrophone: openMicrophone,
     openKeyer: openKeyer,
-    close: function () { context.close(); }
+    delay: function () { return delayOf(context); },
+    close: function () {
+      context.close();
+      if (keyerContext) { keyerContext.close(); }
+    }
   };
 }

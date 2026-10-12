@@ -67,8 +67,8 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
 #keyer .pad.held { background: #604800; box-shadow: inset 0 0 0 3px #ffc000; }
 #keyer .pad .sign { font-size: 16vh; line-height: 1; }
 #keyer .pad .name { font-size: 3.4vh; color: #00ffff; margin-top: 1vh; }
-#keyer .middle { width: 12vw; display: flex; flex-direction: column; }
-#keyer .middle button { flex: 1; font-size: 4.6vh; background: #101820; color: #fff;
+#keyer .side { width: 10vw; display: flex; flex-direction: column; }
+#keyer .side button { flex: 1; font-size: 4.6vh; background: #101820; color: #fff;
     border: 0; box-shadow: inset 0 0 0 1px #405060; }
 #wheel-box { grid-column: 8 / span 3; grid-row: 3 / span 5; z-index: 2; }
 #wheel-box.gone { display: none; }
