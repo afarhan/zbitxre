@@ -393,6 +393,41 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertNotIn("VU2XZ", text)
 
+    # the map
+
+    def test_the_map_shows_the_radios_on_line_and_only_their_callsign_and_square(self):
+        browser = self.make_account()
+        self.add_radio(browser, "home")
+        self.add_radio(browser, "attic", "bbbb-cccc-dddd")
+        self.add_radio(browser, "car", "cccc-dddd-eeee")
+        with self.service.store.open() as db:
+            db.execute("update radios set online = 1, grid = 'MK97fj' where suffix = 'home'")
+            db.execute("update radios set online = 0, grid = 'JN58td' where suffix = 'attic'")
+            db.execute("update radios set online = 1, grid = '' where suffix = 'car'")
+        status, text = Browser(self.port).get("/map.json")
+        self.assertEqual(status, 200)
+        radios = json.loads(text)
+        self.assertEqual(radios, [{"grid": "MK97", "lat": 17.5, "lon": 79.0, "south": 17,
+                                   "north": 18, "west": 78, "east": 80,
+                                   "callsign": "VU2ESE"}])
+        for hidden in ("home", "fj", "abcd", self.service.radio_called(
+                "vu2ese-home")["client_password"]):
+            self.assertNotIn(hidden, text)
+
+    def test_the_map_and_what_draws_it_need_no_sign_in(self):
+        visitor = Browser(self.port)
+        status, text = visitor.get("/map")
+        self.assertEqual(status, 200)
+        self.assertIn('<div id="map">', text)
+        for path, has in (("/map.js", "tile.openstreetmap.org"), ("/map.css", "#map"),
+                          ("/static/leaflet.js", "Leaflet 1.9.4"),
+                          ("/static/leaflet.css", ".leaflet-pane")):
+            status, text = visitor.get(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn(has, text, path)
+        for path in ("/static/../accounts.py", "/static/accounts.db", "/static/"):
+            self.assertEqual(visitor.get(path)[0], 404, path)
+
     def test_a_secret_is_stretched_as_the_radio_stretches_it(self):
         # what clients/remote/sha256.c makes of the same, by its own test
         self.assertEqual(accounts.stretch("abcdjklmwxyz", "VU2ESE")[:16], "450331079366c98f")

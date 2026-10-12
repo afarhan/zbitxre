@@ -109,6 +109,23 @@ The work is done by pow.js, the only script on the site, which is served
 from here and does nothing else. With scripts turned off the form cannot
 be sent, and says so.
 
+THE MAP
+
+/map is a page anyone may see, signed in or not: a map of the world with
+the radios that are on line now, each at the middle of its grid square with
+its owner's callsign beside it. The author asked for it, after
+pskreporter's. It asks /map.json for the radios every half minute. What is
+told of a radio there is the callsign and the first four characters of the
+grid set on it, a square some hundred kilometres across, and nothing else:
+not the radio's name, and not the finer square, which would come near to
+saying which house. A radio with no grid set is not on the map.
+
+The map is drawn by Leaflet, which is in static/ beside this file as its
+authors published it, with its licence, and is served from here; the
+pictures of the map itself are OpenStreetMap's, fetched by the visitor's
+browser from OpenStreetMap, which is the one thing on this site that comes
+from somewhere else. The map's own script is map.js, below.
+
 MAIL
 
 Mail is sent through the SMTP server named in the settings, over TLS. If
@@ -141,6 +158,7 @@ import contextlib
 import hashlib
 import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -315,6 +333,80 @@ POW_SCRIPT = """
 })();
 """
 
+# the map's script: the radios on line are asked for, and each is a dot at
+# the middle of its square with the callsign beside it
+MAP_SCRIPT = """
+"use strict";
+(function () {
+  var map = L.map("map", { worldCopyJump: true }).setView([20, 20], 2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 9,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+  var shown = L.layerGroup().addTo(map);
+  var count = document.getElementById("count");
+  function show(radios) {
+    shown.clearLayers();
+    for (var i = 0; i < radios.length; i++) {
+      var radio = radios[i];
+      L.rectangle([[radio.south, radio.west], [radio.north, radio.east]],
+        { color: "#c33", weight: 1, fillOpacity: 0.08, interactive: false }).addTo(shown);
+      L.circleMarker([radio.lat, radio.lon],
+        { radius: 6, color: "#900", fillColor: "#e33", fillOpacity: 0.9, weight: 1 })
+        .bindTooltip(radio.callsign + " " + radio.grid,
+          { permanent: true, direction: "right", offset: [8, 0] })
+        .addTo(shown);
+    }
+    count.textContent = radios.length === 1 ? "1 radio on line" :
+      radios.length + " radios on line";
+  }
+  function ask() {
+    var request = new XMLHttpRequest();
+    request.onload = function () {
+      if (request.status === 200) { show(JSON.parse(request.responseText)); }
+    };
+    request.open("GET", "/map.json");
+    request.send();
+  }
+  ask();
+  setInterval(ask, 30000);
+})();
+"""
+
+MAP_STYLE = """
+html, body { height: 100%; margin: 0; font-family: sans-serif; }
+#top { height: 2.4em; line-height: 2.4em; padding: 0 0.8em; background: #101820; color: #fff; }
+#top a { color: #7cf; text-decoration: none; margin-right: 1.2em; }
+#map { position: absolute; top: 2.4em; bottom: 0; left: 0; right: 0; }
+"""
+
+MAP_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radios on line - my.sbitx.net</title>
+<link rel="stylesheet" href="/static/leaflet.css">
+<link rel="stylesheet" href="/map.css">
+</head><body>
+<div id="top"><a href="/">my.sbitx.net</a><span id="count"></span></div>
+<div id="map"></div>
+<script src="/static/leaflet.js"></script>
+<script src="/map.js"></script>
+</body></html>
+"""
+
+# what is served from static/, by its name, and as what
+STATIC = {
+    "leaflet.js": "text/javascript; charset=utf-8",
+    "leaflet.css": "text/css; charset=utf-8",
+}
+PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
+               "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+# the map's page may also fetch OpenStreetMap's pictures, ask this site for
+# the radios, and be styled by Leaflet as it moves things about
+MAP_POLICY = ("default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+              "img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; "
+              "frame-ancestors 'none'; base-uri 'none'")
+
 STYLE = """
 body { font-family: sans-serif; max-width: 34em; margin: 6vh auto; padding: 0 1em;
     color: #222; background: #fff; line-height: 1.45; }
@@ -436,6 +528,18 @@ def stretch(secret, salt):
                                     STRETCH_ROUNDS).hex()
         stretched[(secret, salt)] = known
     return known
+
+
+def square_of(grid):
+    """the four-character square of a grid locator: its name, its middle and
+    its edges, in degrees; None if it is not a locator"""
+    grid = grid.upper()
+    if not GRID_FORM.match(grid):
+        return None
+    west = (ord(grid[0]) - ord("A")) * 20 - 180 + int(grid[2]) * 2
+    south = (ord(grid[1]) - ord("A")) * 10 - 90 + int(grid[3])
+    return {"grid": grid[:4], "lat": south + 0.5, "lon": west + 1.0,
+            "south": south, "north": south + 1, "west": west, "east": west + 2}
 
 
 def radio_id(callsign, suffix):
@@ -780,6 +884,21 @@ class Service:
                 return radio
         return None
 
+    def on_the_map(self):
+        """the radios on line that have a grid, for anyone to see: each
+        owner's callsign and four-character square, once, and no more"""
+        seen = {}
+        with self.store.open() as db:
+            for row in db.execute(
+                    "select accounts.callsign, radios.grid from radios join accounts "
+                    "on accounts.id = radios.account where radios.online = 1 "
+                    "and accounts.status = 'active' order by accounts.callsign"):
+                square = square_of(row["grid"])
+                if square is not None:
+                    square["callsign"] = row["callsign"]
+                    seen[(row["callsign"], square["grid"])] = square
+        return list(seen.values())
+
     def snapshot(self, account, radio):
         """the newest copy of one of the account's radios' settings and logbook"""
         with self.store.open() as db:
@@ -859,16 +978,16 @@ class Handler(BaseHTTPRequestHandler):
 
     # what is sent back
 
-    def send(self, status, content, kind="text/html; charset=utf-8", headers=()):
-        data = content.encode()
+    def send(self, status, content, kind="text/html; charset=utf-8", headers=(),
+             policy=PAGE_POLICY, keep="no-store"):
+        data = content
+        if isinstance(content, str):
+            data = content.encode()
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy",
-                         "default-src 'none'; style-src 'self'; script-src 'self'; "
-                         "form-action 'self'; "
-                         "frame-ancestors 'none'; base-uri 'none'")
+        self.send_header("Cache-Control", keep)
+        self.send_header("Content-Security-Policy", policy)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
         for name, value in headers:
@@ -891,7 +1010,9 @@ class Handler(BaseHTTPRequestHandler):
         if account is None:
             self.send(200, page("Welcome", said(told, is_wrong)
                                 + "<p><a href=\"/signin\">Sign in</a> with your callsign, or "
-                                "<a href=\"/register\">register</a> one.</p>"))
+                                "<a href=\"/register\">register</a> one.</p>"
+                                "<p><a href=\"/map\">The radios on line now</a>, on a "
+                                "map.</p>"))
             return
         guard = self.form_guard(self.session_secret())
         rows = ""
@@ -921,7 +1042,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             radios = "<p>You have added no radio yet.</p>"
         body = (said(told, is_wrong)
-                + "<p>Address on record: %s</p><h2>Your radios</h2>%s"
+                + "<p>Address on record: %s &middot; <a href=\"/map\">the radios on line "
+                "now, on a map</a></p><h2>Your radios</h2>%s"
                 "<h2>Add a radio</h2>"
                 "<p>On the radio, turn REMOTE on in its settings. It shows a cookie of "
                 "twelve letters. Give the radio a name and type the cookie here.</p>"
@@ -1054,6 +1176,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, STYLE, "text/css; charset=utf-8")
         elif url.path == "/pow.js":
             self.send(200, POW_SCRIPT, "text/javascript; charset=utf-8")
+        elif url.path == "/map":
+            self.send(200, MAP_PAGE, policy=MAP_POLICY)
+        elif url.path == "/map.js":
+            self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
+        elif url.path == "/map.css":
+            self.send(200, MAP_STYLE, "text/css; charset=utf-8")
+        elif url.path == "/map.json":
+            self.send(200, json.dumps(self.service.on_the_map()), "application/json")
+        elif url.path.startswith("/static/") and url.path[len("/static/"):] in STATIC:
+            name = url.path[len("/static/"):]
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "static", name), "rb") as file:
+                self.send(200, file.read(), STATIC[name], keep="public, max-age=86400")
         elif url.path == "/":
             self.home(account)
         elif url.path == "/register":
