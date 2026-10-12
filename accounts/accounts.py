@@ -758,6 +758,25 @@ STATIC = {
     "sound_worklet.js": "text/javascript; charset=utf-8",
 }
 
+
+
+def static_address(name):
+    """where a page finds a file of static/: its path, and after it a mark
+    that changes when the file does.
+
+    The mark is there because of a day lost on 2026-10-12. These files were
+    first served to be kept for a day, and the author's laptop and phone
+    kept the first operate.js: its player was mended three times that
+    afternoon, and neither browser asked for it again, so he went on
+    hearing the first one's buzz. Telling browsers afterwards not to keep
+    the file does nothing for a copy they already hold. A page that names
+    the file by what is in it is given the new one the moment there is
+    one."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "static", name), "rb") as file:
+        return "/static/%s?v=%s" % (name, hashlib.sha256(file.read()).hexdigest()[:12])
+
+
 OPERATE_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1,
@@ -765,10 +784,10 @@ OPERATE_PAGE = """<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>%s</title>
-<link rel="stylesheet" href="/static/operate.css">
+<link rel="stylesheet" href="%s">
 </head><body data-radio="%d" data-name="%s" data-sockets="%s">
-<script src="/static/sound.js"></script>
-<script src="/static/operate.js"></script>
+<script src="%s"></script>
+<script src="%s"></script>
 </body></html>
 """
 PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
@@ -1519,8 +1538,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = radio_id(account["callsign"], mine[0]["suffix"])
         sockets = self.service.settings.sockets
-        self.send(200, OPERATE_PAGE % (html.escape(name), mine[0]["id"], html.escape(name),
-                                       html.escape(sockets)),
+        self.send(200, OPERATE_PAGE % (html.escape(name), static_address("operate.css"),
+                                       mine[0]["id"], html.escape(name),
+                                       html.escape(sockets), static_address("sound.js"),
+                                       static_address("operate.js")),
                   policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
 
     def kept_page(self, account, number, what):

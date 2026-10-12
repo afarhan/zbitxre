@@ -400,6 +400,12 @@ class AccountsTest(unittest.TestCase):
         status, text = first.get("/operate?radio=%d" % radio)
         self.assertEqual(status, 200)
         self.assertIn('data-radio="%d" data-name="vu2ese-home"' % radio, text)
+        # each file is named with a mark of what is in it, so that a browser
+        # holding an older one asks for this one, and the address is served
+        marked = re.findall(r'(?:src|href)="(/static/[a-z_.]+\?v=[0-9a-f]{12})"', text)
+        self.assertEqual(len(marked), 3, text)
+        for address in marked:
+            self.assertEqual(first.get(address)[0], 200, address)
         second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         self.assertEqual(second.get("/operate?radio=%d" % radio)[0], 404)
         _, text = Browser(self.port).get("/operate?radio=%d" % radio)
