@@ -623,10 +623,16 @@ MAP_SCRIPT = """
             + hz.slice(-6, -3) + "." + hz.slice(-3) + " MHz   " + words[2];
           return;
         }
-        if (message.data !== "online") { tuned.textContent = ""; }
-        state.textContent = message.data === "online" ? "listening" :
-          message.data === "full" ? "too many are listening to this radio just now" :
-          "the radio is not on line; waiting for it";
+        // a word this script does not know is let pass: the service may
+        // come to say more than this page, loaded before it did, knows of
+        if (message.data === "online") {
+          state.textContent = "listening";
+        } else if (message.data === "offline") {
+          state.textContent = "the radio is not on line; waiting for it";
+          tuned.textContent = "";
+        } else if (message.data === "full") {
+          state.textContent = "too many are listening to this radio just now";
+        }
       } else {
         play(new Uint8Array(message.data));
       }
