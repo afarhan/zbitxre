@@ -58,6 +58,10 @@
 // SAVE", as the panel's LOG screen does; "LOGGER WIPE" clears them.
 // logger.c says what an entry needs.
 //
+// What the speaker plays is also sent out on the radio itself, as RTP, for
+// other programs to hear: rtp_audio.c says what and to where. "report"
+// prints how loud the loudest of it was since it was last asked.
+//
 // What is measured, the signal's strength as the radio receives and the
 // forward power and the SWR as it transmits, and the battery, is not
 // printed as it changes, five times a second; "report" prints it. radio.c
@@ -229,6 +233,7 @@
 #include "panel_messages.h"
 #include "panel_cw.h"
 #include "radio_clock.h"
+#include "rtp_audio.h"
 #include "ft8_qso.h"
 #include "logger.h"
 #include "messages.h"
@@ -368,6 +373,8 @@ static void report(void) {
 		printf("the panel does not answer\n");
 	sdr_request(asked, answer);
 	printf("transmitter: peak %s\n", answer);
+	printf("sound sent out on the radio: loudest %d percent of full scale since last asked\n",
+		rtp_audio_peak_percent());
 	printf("meter: power %.1f W, swr %.1f, battery %.2f V, smeter %d\n",
 		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
 		control_get_int("BATTERY") / HUNDREDTHS, control_get_int("SMETER"));
@@ -1245,6 +1252,7 @@ static void main_loop(void) {
 		server_send_log();
 		radio_poll(now_ms());
 		meter_poll(now_ms());
+		rtp_audio_poll();
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -1282,6 +1290,8 @@ int main(int argc, char **argv) {
 	}
 	printf("radio open on the %s\n", board_in_use()->name);
 
+	if (rtp_audio_open() < 0)
+		printf("the radio's sound is not being sent out on the radio: no socket for it\n");
 	panel_open();
 	radio_open();
 	meter_open();

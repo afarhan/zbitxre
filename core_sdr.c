@@ -190,6 +190,7 @@
 #include "si5351.h"
 #include "sdr.h"
 #include "modem.h"
+#include "rtp_audio.h"
 #include "kiss_fft.h"
 
 static int center_bin = 512;
@@ -1033,6 +1034,9 @@ static void sound_block(struct audio_block *block){
 	}
 	sound_process(input_rx_halved, input_mic_halved,
 		block->to_speaker, block->to_transmitter, block->frames);
+	// what the speaker is given is given to whoever else listens on the
+	// radio; rtp_audio.c says who and how
+	rtp_audio_take(block->to_speaker, block->frames);
 }
 
 static void set_rx_filter(){
