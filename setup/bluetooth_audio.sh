@@ -26,16 +26,21 @@ PORT=5004
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
+# stopping needs no earphone: the player is stopped whether or not the
+# earphone it was playing into is still there
+if [ "$1" = stop ]; then
+	pkill -f "ffplay .*rtp://$GROUP:$PORT" && echo "stopped"
+	exit 0
+fi
+
 sink=$(pactl list short sinks 2>/dev/null | awk '$2 ~ /^bluez_output/ { print $2; exit }')
 if [ -z "$sink" ]; then
-	echo "no Bluetooth sound output is connected: pair and connect one from the desktop first"
+	echo "no Bluetooth sound output is connected: connect the earphone from the desktop's"
+	echo "Bluetooth menu, or switch it on, and run this again"
 	exit 1
 fi
 
 case "${1:-start}" in
-stop)
-	pkill -f "ffplay .*rtp://$GROUP:$PORT" && echo "stopped"
-	;;
 start)
 	if pgrep -f "ffplay .*rtp://$GROUP:$PORT" > /dev/null; then
 		echo "already playing into $sink"
