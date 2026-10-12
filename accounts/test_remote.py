@@ -526,6 +526,32 @@ class RemoteTest(unittest.TestCase):
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
 
+    def words_heard(self, browser, seconds=4):
+        """the words, not the sound, that a browser is sent in a while"""
+        browser.socket.settimeout(0.3)
+        said = []
+        ends = time.time() + seconds
+        while time.time() < ends:
+            try:
+                message = browser.read()
+            except socket.timeout:
+                continue
+            if isinstance(message, str):
+                said.append(message)
+        return said
+
+    def test_a_listener_is_told_where_the_radio_is_tuned_and_when_it_moves(self):
+        radio = self.switch_on_and_add()
+        first = self.listener(radio["id"])
+        self.assertEqual(self.words_heard(first), ["online", "tuned 7074000 USB"])
+        self.radio.set("FREQ", "14074000")
+        self.radio.set("MODE", "CW")
+        self.assertEqual(self.words_heard(first)[-1], "tuned 14074000 CW")
+        second = self.listener(radio["id"])
+        self.assertEqual(self.words_heard(second, 1), ["online", "tuned 14074000 CW"])
+        first.close()
+        second.close()
+
     def test_anyone_may_listen_from_the_websites_own_page_and_not_too_many(self):
         radio = self.switch_on_and_add()
         port = self.remote.web.sockets[0].getsockname()[1]

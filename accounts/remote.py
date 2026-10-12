@@ -116,6 +116,12 @@ opens a WebSocket here, through nginx, at /listen?radio=<number>, from the
 website's globe, and is sent each packet's sound as a binary message, and
 the words "online" and "offline" as the radio comes and goes.
 
+With the sound, the daemon says where the radio is tuned and in what mode,
+"TUNED 7074000 USB", when the sound begins and when either changes, and
+each listener is sent it, "tuned 7074000 USB", for the player to show: the
+author asked for the frequency and the mode there. It is what the radio is
+doing on the air, and as public as the sound.
+
 Anyone may listen, signed in or not: the author's ruling, a radio's
 transmissions and receptions being public anyway. What is asked is that
 the page be the website's own, so that another site cannot use this one's
@@ -192,6 +198,7 @@ WINDOW_S = 15 * 60
 PIPE_BYTES = 4096
 PIPE_WAITING_MOST = 32 * 1024
 CONTROL_LINE = re.compile(r"^[A-Z][A-Z0-9_]* ?")
+TUNED_LINE = re.compile(r"^TUNED [0-9]{3,9} [A-Z0-9]{1,8}$")
 # what a radio sends that is not a control's value
 NOT_CONTROLS = ("SPECTRUM", "MODULATION", "MESSAGE", "CW", "SAY", "WARN", "QSO", "LOG",
                 "LOG_LIST", "TIME", "ERROR", "CONTROL")
@@ -216,6 +223,7 @@ class Remote:
         self.wrong = {}      # an address -> when it gave wrong proofs
         self.listeners = {}  # a radio's id -> the browsers' writers listening to it
         self.listener_from = {}  # a browser's writer -> the address it came from
+        self.tuned = {}      # a radio's id -> "7074000 USB", while its sound is asked for
         self.streams = {}    # a stream's id -> [the radio's id, the key, the last sequence]
         self.stream_of = {}  # a radio's id -> its stream's id, while there is one
         self.heard = 0       # packets of sound taken, for the tests
@@ -356,6 +364,9 @@ class Remote:
                     await writer.drain()
                 elif line.split(" ")[0] == "GRID":
                     self.keep_the_grid(radio, line.partition(" ")[2])
+                elif TUNED_LINE.match(line):
+                    self.tuned[radio] = line[len("TUNED "):]
+                    self.tell_listeners(radio, "tuned " + self.tuned[radio])
                 else:
                     break
         finally:
@@ -388,6 +399,7 @@ class Remote:
         line.write(("AUDIO ON %s %s\n" % (stream.hex(), nonce)).encode())
 
     def forget_stream(self, radio):
+        self.tuned.pop(radio, None)
         stream = self.stream_of.pop(radio, None)
         if stream is not None:
             del self.streams[stream]
@@ -482,6 +494,9 @@ class Remote:
             self.listeners.setdefault(radio, set()).add(writer)
             word = b"online" if radio in self.lines else b"offline"
             writer.write(bytes([0x81, len(word)]) + word)
+            if radio in self.tuned:
+                word = ("tuned " + self.tuned[radio]).encode()
+                writer.write(bytes([0x81, len(word)]) + word)
             self.start_stream(radio)
             # what the browser sends is read only to learn that it has closed
             while True:

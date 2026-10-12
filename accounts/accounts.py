@@ -115,7 +115,9 @@ THE GLOBE, AND LISTENING TO ANY RADIO
 globe, after radio.garden's, with the radios that are on line now, each a
 dot at the middle of its grid square with its owner's callsign. The globe
 is turned by dragging it and brought nearer with the wheel. A dot that is
-touched is chosen, and Listen plays what that radio is hearing. The author
+touched is chosen, and Listen plays what that radio is hearing, with the
+frequency it is tuned to and its mode shown above the button, as the
+author asked, and kept up as the radio is tuned. The author
 asked for listening to be open to everyone: what a radio transmits and
 receives is public anyway.
 
@@ -373,6 +375,7 @@ MAP_SCRIPT = """
   var button = document.getElementById("listen");
   var slider = document.getElementById("volume");
   var state = document.getElementById("state");
+  var tuned = document.getElementById("tuned");
   var land = [], radios = [], chosen = null;
   var view = document.getElementById("view");
   var lon0 = 20, lat0 = 20, zoom = 1, isPlaced = false;
@@ -599,6 +602,7 @@ MAP_SCRIPT = """
     if (context) { context.close(); context = null; }
     button.textContent = "Listen";
     state.textContent = said;
+    tuned.textContent = "";
   }
 
   function start() {
@@ -612,6 +616,14 @@ MAP_SCRIPT = """
     socket.binaryType = "arraybuffer";
     socket.onmessage = function (message) {
       if (typeof message.data === "string") {
+        var words = message.data.split(" ");
+        if (words[0] === "tuned") {
+          var hz = ("000000" + words[1]).slice(-Math.max(7, words[1].length));
+          tuned.textContent = hz.slice(0, -6).replace(/^0+(?=\\d)/, "") + "."
+            + hz.slice(-6, -3) + "." + hz.slice(-3) + " MHz   " + words[2];
+          return;
+        }
+        if (message.data !== "online") { tuned.textContent = ""; }
         state.textContent = message.data === "online" ? "listening" :
           message.data === "full" ? "too many are listening to this radio just now" :
           "the radio is not on line; waiting for it";
@@ -680,7 +692,9 @@ html, body { height: 100%; margin: 0; font-family: sans-serif; background: #0508
     background: rgba(16,24,32,0.92); border: 1px solid #405060; border-radius: 6px;
     padding: 0.8em 1em; min-width: 15em; }
 #panel.shown { display: block; }
-#who { font-size: 1.3em; font-weight: bold; margin: 0 0 0.5em 0; white-space: pre; }
+#who { font-size: 1.3em; font-weight: bold; margin: 0 0 0.3em 0; white-space: pre; }
+#tuned { font-family: monospace; font-size: 1.15em; color: #ffd23c; margin: 0 0 0.6em 0;
+    min-height: 1.3em; white-space: pre; }
 #panel button { font-size: 1em; padding: 0.4em 1.2em; }
 #panel label { display: block; margin-top: 0.8em; font-size: 0.9em; color: #9ab; }
 #panel input { width: 100%; }
@@ -697,7 +711,7 @@ MAP_PAGE = """<!doctype html>
 <div id="top"><a href="/">my.sbitx.net</a><span id="count"></span>
 <button id="view">flat map</button></div>
 <canvas id="globe"></canvas>
-<div id="panel"><p id="who"></p>
+<div id="panel"><p id="who"></p><p id="tuned"></p>
 <button id="listen">Listen</button><span id="state"></span>
 <label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
 </div>

@@ -385,6 +385,12 @@ service says so on the connection the daemon keeps:
                                             digits, and a nonce, 32
     AUDIO OFF                               the service, when the last listener goes
 
+While the sound is on, the daemon also says where the radio is tuned, in Hz,
+and its mode, when the sound begins and when either changes, no oftener than
+once a second:
+
+    TUNED 7074000 USB                       the daemon
+
 After `AUDIO ON` the daemon sends each RTP packet it hears to the service by
 UDP, to port 8081:
 
@@ -415,7 +421,8 @@ globe, `https://my.sbitx.net/map`, which shows the radios that are on line and
 gives each one's number. Anyone may listen, signed in or not: the author's
 ruling, a radio's transmissions and receptions being public anyway. Each binary
 message is one packet's 160 bytes of mu-law; a text message, `online` or
-`offline`, says whether the radio is there, and `full` that a hundred are
+`offline`, says whether the radio is there, `tuned 7074000 USB` where it is
+tuned and in what mode, whenever that changes, and `full` that a hundred are
 listening to it already, or six from the one address. This stretch is inside
 the website's HTTPS.
 

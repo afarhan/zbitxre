@@ -99,6 +99,13 @@
 // connection is lost or REMOTE is turned off, it leaves the group and
 // sends no more.
 //
+// While the sound is being sent, and only then, the service is also told
+// where the radio is tuned and in what mode, "TUNED 7074000 USB", for
+// whoever is listening to see: the author asked for the frequency and the
+// mode beside the player. It is said when the sound begins and when either
+// changes, and no oftener than once a second, a dial being turned changing
+// the frequency many times in one.
+//
 // HOW IT RUNS
 //
 // One thread and one loop around poll(). The connections that carry a
@@ -145,6 +152,8 @@
 #define CHALLENGE_ROOM 72
 #define NAME_ROOM 40
 #define GRID_ROOM 12
+#define TUNED_ROOM 16
+#define TUNED_EVERY_MS 1000
 #define STATUS_ROOM 32
 #define PATH_ROOM 512
 #define COOKIE_LETTERS "abcdefghjkmnpqrstuvwxyz"
@@ -214,6 +223,10 @@ static int is_callsign_new;
 static char grid[GRID_ROOM];
 static char grid_told[GRID_ROOM];
 static int is_grid_told;
+static char tuned_hz[TUNED_ROOM];
+static char tuned_mode[TUNED_ROOM];
+static char tuned_told[2 * TUNED_ROOM + 2];
+static long tuned_told_ms;
 static char cookie[COOKIE_ROOM];
 static char stretched[SHA256_HEX_ROOM];
 static char stretched_for[CALLSIGN_ROOM];
@@ -552,6 +565,8 @@ static void radio_poll(long now) {
 			is_wanted = 1;
 		if (!strcmp(line, "REMOTE OFF"))
 			is_wanted = 0;
+		sscanf(line, "FREQ %15s", tuned_hz);
+		sscanf(line, "MODE %15s", tuned_mode);
 		if (!strncmp(line, "MYGRID", strlen("MYGRID"))) {
 			grid[0] = 0;
 			sscanf(line, "MYGRID %11s", grid);
@@ -700,6 +715,7 @@ static void sound_on(const char *id_hex, const char *nonce) {
 	any.sin_port = htons(RTP_AUDIO_PORT);
 	inet_pton(AF_INET, RTP_AUDIO_GROUP, &membership.imr_multiaddr);
 	inet_pton(AF_INET, LOOPBACK, &membership.imr_interface);
+	tuned_told[0] = 0;
 	if (sound_in < 0
 			|| setsockopt(sound_in, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0
 			|| bind(sound_in, (struct sockaddr *)&any, sizeof(any)) < 0
@@ -803,6 +819,16 @@ static void line_poll(long now) {
 			got = -1;
 		snprintf(grid_told, sizeof(grid_told), "%s", grid);
 		is_grid_told = 1;
+	}
+	// where the radio is tuned, while somebody is listening to it
+	snprintf(token, sizeof(token), "%s %s", tuned_hz, tuned_mode);
+	if (got == 0 && sound_in != NOT_OPEN && strcmp(token, tuned_told)
+			&& now - tuned_told_ms >= TUNED_EVERY_MS) {
+		snprintf(line, sizeof(line), "TUNED %.40s\n", token);
+		if (send_text(line_fd, line) < 0)
+			got = -1;
+		snprintf(tuned_told, sizeof(tuned_told), "%.33s", token);
+		tuned_told_ms = now;
 	}
 	if (got == 0 && now >= next_ping_ms) {
 		next_ping_ms = now + PING_EVERY_MS;
