@@ -198,8 +198,10 @@
   veil.addEventListener("click", function (e) { if (e.target === veil) { closePopup(); } });
   var panel = make("div", "", null, document.body);
   panel.id = "panel";
-  var turn = make("div", "", "Turn the phone on its side to work the radio.", document.body);
+  var turn = make("div", "", null, document.body);
   turn.id = "turn";
+  make("p", "", "Turn the phone on its side to work the radio.", turn);
+  make("button", "", "Leave the radio", turn).addEventListener("click", function () { leave(); });
 
   /* talking to the radio */
 
@@ -888,7 +890,11 @@
   }
 
   function openSettings() {
-    var inside = openPanel("Settings of " + NAME, null);
+    var leaving = document.createElement("button");
+    leaving.className = "leave";
+    leaving.textContent = "Leave the radio";
+    leaving.addEventListener("click", function () { leave(); });
+    var inside = openPanel("Settings of " + NAME, leaving);
     order.forEach(function (name) {
       var control = schema[name];
       // REMOTE is not offered here: turned off from afar, the radio could
@@ -990,35 +996,120 @@
     sound.onclose = function () { setTimeout(listen, 3000); };
   }
 
-  /* the whole screen: asked for with the touch on Start, since a browser
-     gives it only to a touch, and with it the screen is asked to stay on
-     its side. An iPhone's browser gives neither; there the page is put on
-     the home screen (Share, Add to Home Screen) and opened from it, and
-     then it has the screen to itself. If the owner leaves the whole screen,
-     a touch on the line that says what the radio is doing takes it back. */
+  /* the whole screen, and leaving
+
+     The page asks for the whole screen with the touch on Start, since a
+     browser gives it only to a touch, and then asks that the screen stay
+     on its side. An iPhone's browser gives neither; there the page is put
+     on the home screen (Share, Add to Home Screen) and opened from it.
+
+     What the author found on his phone on 2026-10-12, and what is done:
+
+     - Turned upright, the page said to turn it back, and turned back it
+       was no longer on the whole screen, with nothing to say so or to take
+       it back but a touch on the status line that nobody would guess at.
+       Now, whenever the whole screen is lost and the page did not leave it
+       itself, a notice comes up over the page with three buttons: back to
+       the whole screen, stay as it is, or leave the radio. A browser gives
+       the whole screen back only to a touch, so the page cannot take it
+       back by itself.
+     - On the whole screen there is none of the browser left to close the
+       page with, and he had to turn the phone upright to get out. "Leave
+       the radio" is now in that notice, on the page that says to turn the
+       phone, and in the settings. It stops the radio sending, as closing
+       the page does, gives the screen back and goes to the list of radios.
+     - Why the screen did not stay on its side is not known: a refusal was
+       thrown away. It is now said on the status line, and noted.
+
+     note() tells the service's log what the browser did: the whole screen
+     given or lost, the screen held or not and the browser's reason, each
+     turn of the phone. It is a request for an address that does not exist,
+     with the note in it, which the web server writes down like any other.
+     It is there because these things happen on a phone in the owner's hand
+     and nowhere that can be looked at; it says nothing of the radio or of
+     him. */
+
+  var isStarted = false, isLeaving = false;
+
+  function note(text) {
+    var facing = screen.orientation ? screen.orientation.type : "?";
+    try {
+      fetch("/note?" + encodeURIComponent(text + " | " + facing + " " + window.innerWidth + "x"
+        + window.innerHeight + (hasWholeScreen() ? " whole" : " window")),
+        { cache: "no-store" }).catch(function () {});
+    } catch (unable) { /* a note is not worth an error */ }
+  }
+
+  function hasWholeScreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function holdSideways() {
+    if (!screen.orientation || !screen.orientation.lock) { note("no way to hold the screen"); return; }
+    screen.orientation.lock("landscape").then(function () {
+      note("screen held sideways");
+    }, function (refused) {
+      note("screen not held: " + refused.name + ": " + refused.message);
+      say("this browser will not hold the screen on its side: " + refused.message);
+    });
+  }
 
   function fillScreen() {
     var root = document.documentElement;
     var ask = root.requestFullscreen || root.webkitRequestFullscreen;
-    if (!ask || document.fullscreenElement || document.webkitFullscreenElement) { return; }
+    if (!ask) { note("no whole screen to ask for"); return; }
+    if (hasWholeScreen()) { return; }
+    function refused(why) {
+      note("whole screen refused: " + why.name + ": " + why.message);
+      say("this browser did not give the whole screen: " + why.message);
+    }
     try {
       var asked = ask.call(root, { navigationUI: "hide" });
-      if (asked && asked.then) {
-        asked.then(function () {
-          if (screen.orientation && screen.orientation.lock) {
-            screen.orientation.lock("landscape").catch(function () {});
-          }
-        }).catch(function (refused) {
-          // said, so that the owner can tell a browser that will not from
-          // a page that did not ask
-          say("this browser did not give the whole screen: " + refused.message);
-        });
-      }
-    } catch (refused) {
-      say("this browser did not give the whole screen: " + refused.message);
+      if (asked && asked.then) { asked.then(holdSideways, refused); }
+    } catch (why) {
+      refused(why);
     }
   }
   status.addEventListener("click", fillScreen);
+
+  var away = make("div", "gone", null, document.body);
+  away.id = "away";
+  make("p", "", "The page is no longer on the whole screen.", away);
+  var awayButtons = make("div", "", null, away);
+  make("button", "main", "Whole screen", awayButtons).addEventListener("click", fillScreen);
+  make("button", "", "Stay as it is", awayButtons).addEventListener("click", function () {
+    away.className = "gone";
+  });
+  make("button", "", "Leave the radio", awayButtons).addEventListener("click", function () {
+    leave();
+  });
+
+  function onWholeScreenChange() {
+    note(hasWholeScreen() ? "whole screen given" : "whole screen lost");
+    away.className = (hasWholeScreen() || !isStarted || isLeaving) ? "gone" : "";
+    drawScope(); drawMeter(); drawWheel();
+  }
+  document.addEventListener("fullscreenchange", onWholeScreenChange);
+  document.addEventListener("webkitfullscreenchange", onWholeScreenChange);
+  if (screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener("change", function () { note("turned"); });
+  }
+
+  // the radio is stopped sending by the service when the page's connection
+  // closes; this closes it, and does not wait for the browser to
+  function leave() {
+    isLeaving = true;
+    note("leaving");
+    if (retry) { clearTimeout(retry); }
+    if (work) { work.onclose = null; work.close(); }
+    if (sound) { sound.onclose = null; sound.close(); }
+    if (player) { player.close(); }
+    var out = document.exitFullscreen || document.webkitExitFullscreen;
+    if (out && hasWholeScreen()) {
+      try { out.call(document); } catch (unable) { /* going anyway */ }
+    }
+    window.location.href = "/";
+  }
 
   /* beginning: a browser will make no sound until the page has been touched */
 
@@ -1029,6 +1120,8 @@
     + "loudness set by VOL here.", start);
   make("button", "", "Start", start).addEventListener("click", function () {
     start.className = "gone";
+    isStarted = true;
+    note("started");
     player = radioSound();
     setLoudness();
     fillScreen();

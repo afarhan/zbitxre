@@ -126,7 +126,20 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
     border: 1px solid #ffc000; border-radius: 1vh; }
 #start.gone { display: none; }
 
+#away { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.88);
+    z-index: 9; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; padding: 0 4vw; }
+#away.gone { display: none; }
+#away p { font-size: 4.4vh; color: #9ab; margin: 0 0 5vh 0; }
+#away button { font-size: 4.6vh; padding: 2vh 3vw; margin: 0 1vw; background: #1c2834;
+    color: #fff; border: 1px solid #405060; border-radius: 1vh; }
+#away button.main { background: #604800; border-color: #ffc000; }
+#panel .bar button.leave { width: auto; padding: 0 2.5vw; font-size: 3.4vh; }
+
 #turn { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000;
-    z-index: 10; align-items: center; justify-content: center; text-align: center;
-    font-size: 5vw; padding: 0 8vw; color: #9ab; }
+    z-index: 10; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; font-size: 5vw; padding: 0 8vw; color: #9ab; }
+#turn p { margin: 0 0 8vw 0; }
+#turn button { font-size: 4.5vw; padding: 3vw 6vw; background: #1c2834; color: #fff;
+    border: 1px solid #405060; border-radius: 1.5vw; }
 @media (orientation: portrait) and (max-width: 700px) { #turn { display: flex; } }
