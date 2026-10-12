@@ -72,7 +72,7 @@ class Browser:
         sent.update(headers or {})
         connection.request(method, path, body=body, headers=sent)
         answer = connection.getresponse()
-        text = answer.read().decode()
+        text = answer.read().decode("utf-8", "replace")
         cookie = answer.getheader("Set-Cookie")
         if cookie:
             self.cookie = cookie.split(";")[0]
@@ -400,6 +400,17 @@ class AccountsTest(unittest.TestCase):
         status, text = first.get("/operate?radio=%d" % radio)
         self.assertEqual(status, 200)
         self.assertIn('data-radio="%d" data-name="vu2ese-home"' % radio, text)
+        # a telephone can put the page on its home screen, to open on the
+        # whole screen and on its side
+        self.assertIn('rel="manifest" href="/operate.webmanifest?radio=%d"' % radio, text)
+        status, manifest = Browser(self.port).get("/operate.webmanifest?radio=%d" % radio)
+        self.assertEqual(status, 200)
+        manifest = json.loads(manifest)
+        self.assertEqual(manifest["start_url"], "/operate?radio=%d" % radio)
+        self.assertEqual((manifest["display"], manifest["orientation"]),
+                         ("fullscreen", "landscape"))
+        for icon in manifest["icons"]:
+            self.assertEqual(Browser(self.port).get(icon["src"])[0], 200, icon["src"])
         # each file is named with a mark of what is in it, so that a browser
         # holding an older one asks for this one, and the address is served
         marked = re.findall(r'(?:src|href)="(/static/[a-z_.]+\?v=[0-9a-f]{12})"', text)

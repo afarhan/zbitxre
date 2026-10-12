@@ -131,6 +131,7 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
     justify-content: center; text-align: center; padding: 0 4vw; }
 #away.gone { display: none; }
 #away p { font-size: 4.4vh; color: #9ab; margin: 0 0 5vh 0; }
+#away p.small { font-size: 3.2vh; color: #789; margin: -2vh 0 5vh 0; }
 #away button { font-size: 4.6vh; padding: 2vh 3vw; margin: 0 1vw; background: #1c2834;
     color: #fff; border: 1px solid #405060; border-radius: 1vh; }
 #away button.main { background: #604800; border-color: #ffc000; }

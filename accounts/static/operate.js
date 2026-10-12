@@ -1204,6 +1204,15 @@
 
   var isStarted = false, isLeaving = false;
 
+  // opened from the telephone's home screen the page is an application: it
+  // has the whole screen and is held on its side by the telephone, with
+  // nothing to ask for and nothing to lose. accounts.py's manifest for
+  // this page says how it comes to be there
+  function isInstalled() {
+    return window.matchMedia("(display-mode: fullscreen)").matches
+      || window.matchMedia("(display-mode: standalone)").matches;
+  }
+
   function note(text) {
     var facing = screen.orientation ? screen.orientation.type : "?";
     try {
@@ -1230,8 +1239,18 @@
   function fillScreen() {
     var root = document.documentElement;
     var ask = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (isInstalled()) { return; }
     if (!ask) { note("no whole screen to ask for"); return; }
     if (hasWholeScreen()) { return; }
+    // a browser that neither gives nor refuses, which the author's did
+    // after a page had left the whole screen in a hurry: the notice comes
+    // up, where another touch can ask again
+    setTimeout(function () {
+      if (isStarted && !isLeaving && !hasWholeScreen()) {
+        note("whole screen neither given nor refused");
+        away.className = "";
+      }
+    }, 1500);
     function refused(why) {
       note("whole screen refused: " + why.name + ": " + why.message);
       say("this browser did not give the whole screen: " + why.message);
@@ -1247,7 +1266,9 @@
 
   var away = make("div", "gone", null, document.body);
   away.id = "away";
-  make("p", "", "The page is no longer on the whole screen.", away);
+  make("p", "", "The page is not on the whole screen.", away);
+  make("p", "small", "A browser takes the whole screen back when it likes. To keep it for good, "
+    + "choose Add to Home screen in the browser's menu, and open the radio from there.", away);
   var awayButtons = make("div", "", null, away);
   make("button", "main", "Whole screen", awayButtons).addEventListener("click", fillScreen);
   make("button", "", "Stay as it is", awayButtons).addEventListener("click", function () {
@@ -1277,11 +1298,21 @@
     if (work) { work.onclose = null; work.close(); }
     if (sound) { sound.onclose = null; sound.close(); }
     if (player) { player.close(); }
+    // the whole screen is given back before the page goes, and the page
+    // waits for that: leaving at once left the author's browser unable to
+    // give the whole screen to the next page
     var out = document.exitFullscreen || document.webkitExitFullscreen;
+    var given = null;
+    function go() { window.location.href = "/"; }
     if (out && hasWholeScreen()) {
-      try { out.call(document); } catch (unable) { /* going anyway */ }
+      try { given = out.call(document); } catch (unable) { /* going anyway */ }
     }
-    window.location.href = "/";
+    if (given && given.then) {
+      given.then(go, go);
+      setTimeout(go, 1000);
+    } else {
+      go();
+    }
   }
 
   /* beginning: a browser will make no sound until the page has been touched */

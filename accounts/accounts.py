@@ -756,6 +756,8 @@ STATIC = {
     "operate.css": "text/css; charset=utf-8",
     "sound.js": "text/javascript; charset=utf-8",
     "sound_worklet.js": "text/javascript; charset=utf-8",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
 }
 
 
@@ -777,12 +779,38 @@ def static_address(name):
         return "/static/%s?v=%s" % (name, hashlib.sha256(file.read()).hexdigest()[:12])
 
 
+def operate_manifest(radio):
+    """what a telephone needs to put the page that works a radio on its
+    home screen as an application: Chrome's menu, "Add to Home screen".
+
+    Opened from there the page has the whole screen and is held on its
+    side by the telephone itself, and stays so. In a browser's tab it has
+    them only for as long as the browser cares to leave them: the author's
+    telephone took the whole screen back whenever it showed a question of
+    its own, the one about the microphone among them, and at a finger
+    drawn in from the edge of the screen, which in a browser means "back";
+    and a page cannot have them again without a touch. The manifest says
+    nothing of whose radio it is, and anyone may read it; the page it
+    opens asks who is signed in, as ever. The icon is the tuning wheel."""
+    number = radio if radio.isdigit() else ""
+    return {
+        "name": "sBitx radio", "short_name": "sBitx",
+        "start_url": "/operate?radio=" + number, "scope": "/",
+        "display": "fullscreen", "orientation": "landscape",
+        "background_color": "#000000", "theme_color": "#101820",
+        "icons": [{"src": "/static/icon-%d.png" % size, "sizes": "%dx%d" % (size, size),
+                   "type": "image/png", "purpose": "any"} for size in (192, 512)],
+    }
+
+
 OPERATE_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1,
  user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#101820">
+<link rel="manifest" href="/operate.webmanifest?radio=%d">
 <title>%s</title>
 <link rel="stylesheet" href="%s">
 </head><body data-radio="%d" data-name="%s" data-sockets="%s">
@@ -1538,11 +1566,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = radio_id(account["callsign"], mine[0]["suffix"])
         sockets = self.service.settings.sockets
-        self.send(200, OPERATE_PAGE % (html.escape(name), static_address("operate.css"),
+        self.send(200, OPERATE_PAGE % (mine[0]["id"], html.escape(name),
+                                       static_address("operate.css"),
                                        mine[0]["id"], html.escape(name),
                                        html.escape(sockets), static_address("sound.js"),
                                        static_address("operate.js")),
-                  policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
+                  policy=PAGE_POLICY + "; manifest-src 'self'; img-src 'self'; connect-src 'self' "
+                  + sockets)
 
     def kept_page(self, account, number, what):
         """a radio's settings or its logbook, as they were last copied"""
@@ -1601,6 +1631,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":
             self.send(200, MAP_STYLE, "text/css; charset=utf-8")
+        elif url.path == "/operate.webmanifest":
+            self.send(200, json.dumps(operate_manifest(query.get("radio", [""])[0])),
+                      "application/manifest+json")
         elif url.path == "/map.json":
             self.send(200, json.dumps(self.service.on_the_map()), "application/json")
         elif url.path.startswith("/static/") and url.path[len("/static/"):] in STATIC:
