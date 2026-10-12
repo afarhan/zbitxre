@@ -55,8 +55,9 @@
 
 static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
-// what the panel measures, and the entry being written for the logbook
-static const char *const groups_not_kept[] = { "METER", "LOGGER" };
+// what the panel measures, the entry being written for the logbook, and
+// what was last said of reaching the radio from afar
+static const char *const groups_not_kept[] = { "METER", "LOGGER", "REMOTE" };
 #define GROUPS_NOT_KEPT ((int)(sizeof(groups_not_kept) / sizeof(groups_not_kept[0])))
 
 static char file_path[PATH_MAX_LENGTH];

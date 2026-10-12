@@ -6,3 +6,5 @@ build/
 *.swo
 *~
 data/
+/zbitx_remote
+__pycache__/

@@ -14,11 +14,19 @@
 # terminal. It opens maximised and tries the radio program every three
 # seconds until it answers, so the order does not matter. It is not started
 # a second time if it is already there, nor is the radio program.
+#
+# zbitx_remote, the radio's way out to my.sbitx.net, is started too if it
+# has been built. It does nothing, and connects to nothing outside the
+# radio, until the owner turns REMOTE on in the settings.
 
 cd "$(dirname "$0")/.." || exit 1
 
 if [ -x ./zbitx_gui ] && ! pgrep -x zbitx_gui > /dev/null; then
 	setsid ./zbitx_gui localhost < /dev/null > /tmp/zbitx_gui.out 2>&1 &
+fi
+
+if [ -x ./zbitx_remote ] && ! pgrep -x zbitx_remote > /dev/null; then
+	setsid ./zbitx_remote < /dev/null > /tmp/zbitx_remote.out 2>&1 &
 fi
 
 if pgrep -x sdr > /dev/null; then

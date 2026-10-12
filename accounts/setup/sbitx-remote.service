@@ -1,0 +1,20 @@
+# /etc/systemd/system/sbitx-remote.service
+[Unit]
+Description=Where radios and their owners' clients meet (my.sbitx.net, TCP)
+After=network.target sbitx-accounts.service
+
+[Service]
+User=sbitx-accounts
+Group=sbitx-accounts
+ExecStart=/usr/bin/python3 -u /opt/sbitx-accounts/remote.py --settings /etc/sbitx-accounts/settings.ini
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/sbitx-accounts
+
+[Install]
+WantedBy=multi-user.target

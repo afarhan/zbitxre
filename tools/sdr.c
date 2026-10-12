@@ -444,6 +444,23 @@ static struct control vfo_b = {
 	.value = "0",
 };
 
+// REMOTE is the owner's switch for reaching the radio from afar, through
+// my.sbitx.net, and REMOTE_STATUS is what there is to say of it. Both are
+// here as STEP is: the radio program keeps them and does nothing with
+// them. The program that does, clients/remote/zbitx_remote.c, is a client
+// like any other: it is told when REMOTE changes and it sets REMOTE_STATUS.
+// REMOTE is with the station's settings, where every client lists it, and
+// is kept from one start to the next; what was last said of it is not.
+static struct control remote = {
+	.group = "STATION", .name = "REMOTE", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF",
+};
+
+static struct control remote_status = {
+	.group = "REMOTE", .name = "REMOTE_STATUS", .kind = CONTROL_TEXT,
+};
+
 static struct control span = {
 	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
 	.choices = "25K/10K/6K/2.5K",
@@ -1273,6 +1290,8 @@ int main(int argc, char **argv) {
 	control_register(&vfo);
 	control_register(&vfo_a);
 	control_register(&vfo_b);
+	control_register(&remote);
+	control_register(&remote_status);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();

@@ -168,6 +168,14 @@
 // at the top left of each screen goes back. Without a callsign the radio
 // cannot call CQ in FT8 or answer anyone.
 //
+// REMOTE is one of those rows: OFF or ON, whether the radio may be reached
+// from afar through my.sbitx.net; PROTOCOL.md says how that is done. Under
+// the rows is one that cannot be tapped, what the radio has to say of it,
+// its REMOTE_STATUS: the first time REMOTE is turned on it is a code of
+// eight letters to be typed at my.sbitx.net, which links the radio to its
+// owner's account, and after that ONLINE and the callsign. The settings
+// are shown afresh when any of them changes while they are on the screen.
+//
 // TYPING
 //
 // Wherever a text is to be typed, the window's own keyboard comes up, on a
@@ -539,6 +547,9 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define LOG_ROW 0
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
+#define REMOTE_GROUP "REMOTE"
+#define CODE_WORD "CODE "
+#define ACCOUNT_SITE "my.sbitx.net"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
 #define WINDOW_NAME "zbitx"
 #define TITLE_MAX 160
@@ -1585,6 +1596,9 @@ static void take_kept_dial(const char *name, int hz) {
 		vfo_dial_hz[vfo_in_waiting()] = hz;
 }
 
+static void fill_settings(void);
+static int is_page_shown(const char *name);
+
 static void handle_line(const char *name, char *value) {
 	struct known *k;
 
@@ -1650,6 +1664,9 @@ static void handle_line(const char *name, char *value) {
 		take_radio_frequency(atoi(value));
 	take_kept_dial(name, atoi(value));
 	show_values();
+	if (is_page_shown(PAGE_SETTINGS)
+			&& (!strcmp(k->group, STATION_GROUP) || !strcmp(k->group, REMOTE_GROUP)))
+		fill_settings();
 }
 
 // the one try that is waiting to be made
@@ -2106,6 +2123,7 @@ static void fill_settings(void) {
 	GList *child;
 	GtkWidget *row;
 	GtkWidget *value;
+	char said[TEXT_MAX];
 	int i;
 
 	for (child = children; child != NULL; child = child->next)
@@ -2119,6 +2137,19 @@ static void fill_settings(void) {
 		gtk_label_set_text(GTK_LABEL(value), known[i].value);
 		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
 		tell_taps(row, G_CALLBACK(on_setting_tap), &known[i]);
+		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
+	}
+	// what the radio says of being reached from afar: shown, not tapped
+	for (i = 0; i < known_count; i++) {
+		if (strcmp(known[i].group, REMOTE_GROUP) || !known[i].is_text)
+			continue;
+		row = list_row_new(known[i].name, &value);
+		snprintf(said, sizeof(said), "%s", known[i].value);
+		if (!strncmp(known[i].value, CODE_WORD, strlen(CODE_WORD)))
+			snprintf(said, sizeof(said), "type %s at %s",
+				known[i].value + strlen(CODE_WORD), ACCOUNT_SITE);
+		gtk_label_set_text(GTK_LABEL(value), said);
+		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
 		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
 	}
 	gtk_widget_show_all(settings_list);

@@ -361,10 +361,20 @@ class AccountsTest(unittest.TestCase):
                                   {"device_code": started["device_code"]})
         self.assertEqual(again, {"status": "expired"})
 
-    def test_the_key_is_not_kept(self):
-        key = self.link_radio(self.make_account())["key"]
-        with open(os.path.join(self.folder, "accounts.db"), "rb") as file:
-            self.assertNotIn(key.encode(), file.read())
+    def test_a_key_comes_with_an_id_that_says_its_kind(self):
+        browser = self.make_account()
+        radio = self.link_radio(browser)
+        self.assertRegex(radio["key_id"], r"^r[0-9a-f]{12}$")
+        self.assertNotIn(radio["key_id"], radio["key"])
+        _, started = self.radio_ask("/api/radio/link", {"name": "laptop", "kind": "client"})
+        _, text = browser.get("/radios/link")
+        browser.post("/radios/link", {"guard": browser.hidden(text, "guard"),
+                                      "code": started["user_code"]})
+        _, client = self.radio_ask("/api/radio/link/poll",
+                                   {"device_code": started["device_code"]})
+        self.assertRegex(client["key_id"], r"^c[0-9a-f]{12}$")
+        _, text = browser.get("/")
+        self.assertIn("a client", text)
 
     def test_a_wrong_code_links_nothing(self):
         browser = self.make_account()

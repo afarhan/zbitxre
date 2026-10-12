@@ -7,11 +7,13 @@
 #   make check    run the tests that need no radio
 #   make radio    run the tests that need the radio (stop the radio program first)
 #   make gui      build the desktop's window on the radio, here (needs GTK 3)
+#   make remote   build the program that lets the owner reach the radio from afar
 #   make panel    build the front panel's firmware
 #   make panel-flash   put it on a Pico that is in its loader
 #
 #   ./sdr         the radio, run from a terminal; see tools/sdr.c
 #   ./zbitx_gui   the desktop's window on the radio; see clients/gtk/zbitx_gui.c
+#   ./zbitx_remote  the radio's way out to my.sbitx.net; see clients/remote/zbitx_remote.c
 #
 # The programs an operator runs are built in this folder, where they are
 # easy to find. The tests, and what is made on the way, go into build/.
@@ -55,11 +57,12 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_settings $(BUILD)/test_panel_wifi $(BUILD)/test_radio_clock \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
-	$(BUILD)/test_sbitxv3
+	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
 GUI         = zbitx_gui
+REMOTE      = zbitx_remote
 
 # The front panel is an Arduino sketch for the Pico W. It is built with
 # arduino-cli, which needs the rp2040 core and the lvgl library, version 9.3.0.
@@ -70,9 +73,9 @@ PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
-.PHONY: all check radio clean panel panel-flash gui FORCE
+.PHONY: all check radio clean panel panel-flash gui remote FORCE
 
-all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) data/cw.mc
+all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) $(REMOTE) data/cw.mc
 
 check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_si5351_math
@@ -93,6 +96,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_cw_decoder
 	$(BUILD)/test_logger
 	$(BUILD)/test_sbitxv3
+	$(BUILD)/test_sha256
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -246,6 +250,20 @@ $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
 		clients/gtk/logbook_window.h hw/gpio.h hw/board.h
 	$(CC) $(CFLAGS) -Iclients/gtk $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread -lm
+
+# the radio's way out to my.sbitx.net, a program of its own beside sdr;
+# clients/remote/zbitx_remote.c says why. It needs nothing but the C library
+remote: $(REMOTE)
+
+REMOTE_PARTS = clients/remote/linking.c clients/remote/sha256.c
+
+$(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/linking.h \
+		clients/remote/sha256.h
+	$(CC) $(CFLAGS) -Iclients/remote -o $@ clients/remote/zbitx_remote.c $(REMOTE_PARTS)
+
+$(BUILD)/test_sha256: tests/test_sha256.c clients/remote/sha256.c clients/remote/sha256.h \
+		| $(BUILD)
+	$(CC) $(CFLAGS) -Iclients/remote -o $@ tests/test_sha256.c clients/remote/sha256.c
 
 panel:
 	arduino-cli compile --fqbn $(PANEL_BOARD) --build-path $(PANEL_BUILD) \
