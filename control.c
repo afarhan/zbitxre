@@ -153,6 +153,11 @@ static int check(const struct control *c, const char *value, char *taken,
 	int number;
 
 	snprintf(taken, CONTROL_VALUE_MAX, "%s", value);
+	// an action with no choices takes whatever it is given, and its
+	// apply() says whether that will do: CW_KEY, which is given dots and
+	// dashes, is one
+	if (c->kind == CONTROL_ACTION && (c->choices == NULL || c->choices[0] == 0))
+		return 0;
 	if (c->kind == CONTROL_CHOICE || c->kind == CONTROL_ACTION) {
 		if (is_a_choice(c->choices, value))
 			return 0;

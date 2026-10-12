@@ -7,6 +7,7 @@
 //   player.lost(count);       when /listen says "lost <count>"
 //   player.setLoudness(0.6);  0 is silent, 1 is as the radio sent it
 //   player.openMicrophone(taken).then(...)   speech to transmit, see below
+//   player.openKeyer(keyed).then(...)        CW keyed on the page, see below
 //   player.close();
 //
 // WHAT COMES IN
@@ -112,6 +113,28 @@ function radioSound() {
     playAt += buffer.duration;
   }
 
+  /* the keyer, for CW keyed on the page: sound_worklet.js has it. keyed(
+     code, gapMs) is given each character as it is finished. What comes
+     back is told the pads as they are touched and let go, and the speed,
+     the pitch and how loud the sidetone is to be. The sidetone does not go
+     by the loudness set above: the page turns that down while keying, so
+     as not to play the radio's own sidetone late. */
+
+  function openKeyer(keyed) {
+    if (!loaded) {
+      return Promise.reject(new Error("this browser cannot run a keyer in a page"));
+    }
+    return loaded.then(function () {
+      var keyer = new AudioWorkletNode(context, "radio-keyer",
+        { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+      keyer.port.onmessage = function (message) {
+        keyed(message.data.code, message.data.gapMs);
+      };
+      keyer.connect(context.destination);
+      return { tell: function (what) { keyer.port.postMessage(what); } };
+    });
+  }
+
   return {
     play: function (bytes) {
       if (worklet) {
@@ -128,6 +151,7 @@ function radioSound() {
     // taken(bytes) is given each twenty milliseconds of speech, 160 bytes
     // of mu-law, from when the promise is kept
     openMicrophone: openMicrophone,
+    openKeyer: openKeyer,
     close: function () { context.close(); }
   };
 }

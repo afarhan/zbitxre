@@ -224,6 +224,14 @@
 //   SIDETONE  how loud the sidetone is, 0 to 100.
 //   CW_DELAY  how long the radio stays in transmit after the last element,
 //             0 to 1000 ms in steps of 50.
+//   CW_KEY    an action with no choices: a character keyed on a client's
+//             own keyer, as its dots and dashes, and the milliseconds the
+//             key was up before it: "CW_KEY -.- 180". A telephone has no
+//             key jack, and what is keyed on its screen cannot be sent as
+//             key down and key up across the internet, which would arrive
+//             uneven. The radio sends the character at WPM, evenly made,
+//             and keeps the spaces as they were keyed; cw_text.c says how.
+//             ESC stops it, as it stops a macro.
 //
 // As in zbitxv2, the passband is centred on the pitch: from PITCH - BW_CW/2
 // to PITCH + BW_CW/2. Narrowing it closes in on the signal being heard, and
@@ -1103,6 +1111,29 @@ static int apply_cw_do(struct control *c, const char *value, char *why, int room
 	return 0;
 }
 
+// a character keyed elsewhere, on a client's own keyer, is sent: its dots
+// and dashes, and after them if it is known the milliseconds the key was
+// up before it, "-.- 180". Only in CW, as the macros are
+static int apply_cw_key(struct control *c, const char *value, char *why, int room) {
+	const char *mode = control_get("MODE");
+	char code[CONTROL_VALUE_MAX];
+	int gap_ms = 0;
+
+	(void)c;
+	if (mode == NULL || (strcmp(mode, "CW") && strcmp(mode, "CWR"))) {
+		snprintf(why, room, "keying is sent in CW");
+		return -1;
+	}
+	code[0] = 0;
+	sscanf(value, "%s %d", code, &gap_ms);
+	atomic_store(&is_text_to_stop, 0);
+	if (!cw_text_put_code(code, gap_ms)) {
+		snprintf(why, room, "one to twelve dots and dashes, and the gap before them in ms");
+		return -1;
+	}
+	return 0;
+}
+
 static int apply_cw_input(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
@@ -1178,6 +1209,11 @@ static struct control cw_do = {
 	.choices = "ESC", .apply = apply_cw_do,
 };
 
+static struct control cw_key = {
+	.group = "CW", .name = "CW_KEY", .kind = CONTROL_ACTION,
+	.choices = "", .apply = apply_cw_key,
+};
+
 static char macro_choices[MACRO_CHOICES_MAX];
 
 static struct control macro = {
@@ -1204,6 +1240,7 @@ static void cw_start(void) {
 	control_register(&sidetone_control);
 	control_register(&cw_delay);
 	control_register(&cw_do);
+	control_register(&cw_key);
 	apply_cw_delay(&cw_delay, cw_delay.value, NULL, 0);
 	atomic_store(&pitch_hz, atoi(pitch.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));

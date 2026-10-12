@@ -11,6 +11,7 @@
 #include "cw_keyer.h"
 #include "cw_text.h"
 
+#define SAMPLES_A_MS 96
 #define DOT_AT_20_WPM (CW_KEYER_RATE_HZ * 12 / 10 / 20)
 #define RUNS_MAX 64
 #define SENT_MAX 128
@@ -118,6 +119,55 @@ int main(void) {
 	cw_text_reset();
 	put = cw_text_put(long_text);
 	expect(put == RING_ROOM, "more text than there is room for is taken as far as the room goes");
+
+	// characters keyed elsewhere, on a telephone's keyer
+	cw_text_reset();
+	cw_text_put_code("-.-", 0);
+	cw_text_put_code(".", 0);
+	key_it_all();
+	marks_as_text(sent);
+	expect(strcmp(sent, "-.- .") == 0,
+		"keyed characters are sent as their dots and dashes, three dots apart at the least");
+
+	cw_text_reset();
+	cw_text_put_code(".", 0);
+	cw_text_put_code("-", 500);
+	key_it_all();
+	expect(runs == 4 && run_samples[1] == 500 * SAMPLES_A_MS,
+		"one keyed 500 ms after the last begins 500 ms after it, to the sample");
+
+	cw_text_reset();
+	cw_text_put_code(".", 0);
+	cw_text_put_code(".", 60);
+	key_it_all();
+	expect(runs == 4 && run_samples[1] == 3 * DOT_AT_20_WPM,
+		"one keyed sooner than three dots after the last still waits three dots");
+
+	cw_text_reset();
+	cw_text_put_code(".", 0);
+	for (i = 0; i < 1000 * SAMPLES_A_MS; i++)
+		cw_text_is_key_down();
+	cw_text_put_code("-", 500);
+	expect(cw_text_is_key_down(),
+		"one that comes after its time has passed begins at once");
+
+	cw_text_reset();
+	expect(!cw_text_put_code("", 0) && !cw_text_put_code(".x-", 0)
+		&& !cw_text_put_code(".............", 0) && !cw_text_is_busy(),
+		"nothing, what is not dots and dashes, and more than twelve of them are refused");
+	cw_text_put("a");
+	cw_text_put_code("-...", 0);
+	cw_text_put("c");
+	key_it_all();
+	marks_as_text(sent);
+	expect(strcmp(sent, ".- -... -.-.") == 0, "text and keyed characters are sent in the order they came");
+
+	memset(long_text, 'e', sizeof(long_text) - 1);
+	long_text[RING_ROOM - 3] = 0;
+	cw_text_reset();
+	cw_text_put(long_text);
+	expect(!cw_text_put_code("--", 0) && cw_text_put("ee") == 2,
+		"a keyed character there is not room for whole is not taken in part");
 
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);

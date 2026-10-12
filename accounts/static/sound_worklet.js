@@ -389,3 +389,169 @@ class RadioMicrophone extends AudioWorkletProcessor {
 }
 
 registerProcessor("radio-microphone", RadioMicrophone);
+
+// THE KEYER
+//
+// A telephone has no key jack. Two pads on the page stand for a paddle's
+// two contacts, and this is the keyer between them and the radio: the
+// author's design, a keyer that makes its dots and dashes on the telephone
+// and sends them to the radio as symbols, to be sent there.
+//
+// It is the radio's own keyer, modems/cw_keyer.c, for iambic A and B, with
+// nothing changed in what it does: an element is a mark and the dot's
+// space after it; a pad touched while an element is being sent is
+// remembered and its element sent next, so that no tap is lost; with both
+// held, dots and dashes take turns; and in B the other pad held during an
+// element's mark is remembered too, so that a squeeze let go is followed
+// by one more. It counts samples, as the radio's does, and so its elements
+// are exact however busy the page is.
+//
+// The sidetone is made here, a tone at the radio's PITCH that rises and
+// falls over 5 ms, so that what is keyed is heard as it is keyed. The
+// radio's own sidetone would come back a third of a second late.
+//
+// What is keyed goes to the page a character at a time, as the author
+// chose: when the pads have been at rest for a dot's length after an
+// element's own space, two dots since the last mark, the character is
+// over, and the page is given its dots and dashes, "-.-", and for how many
+// milliseconds the key was up before it began. The radio sends each
+// character evenly made and keeps those gaps; modems/cw_text.c says how.
+// A character whole is never broken by the line; what the line can do is
+// make a gap longer.
+
+var DASH_DOTS = 3, KEYED_SYMBOLS_MOST = 12, RISE_MS = 5, GAP_KNOWN_MOST_MS = 5000;
+
+class RadioKeyer extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.isDotHeld = false;
+    this.isDashHeld = false;
+    this.wasDotHeld = false;
+    this.wasDashHeld = false;
+    this.isB = false;
+    this.dotSamples = Math.round(sampleRate * 1.2 / 18);
+    this.turn = 2 * Math.PI * 600 / sampleRate;  // the tone's angle a sample
+    this.angle = 0;
+    this.level = 0.1;
+    this.sending = "";        // "." or "-" while an element is being sent
+    this.lastSent = "";
+    this.markLeft = 0;
+    this.spaceLeft = 0;
+    this.isDotRemembered = false;
+    this.isDashRemembered = false;
+    this.riseSamples = Math.round(sampleRate * RISE_MS / 1000);
+    this.risen = 0;
+    this.code = "";           // the character being keyed, so far
+    this.gapMs = 0;           // how long the key was up before it began
+    this.upSamples = -1;      // how long the key has been up; -1, never down yet
+    this.restSamples = 0;     // how long the pads have been at rest, no element sending
+
+    var self = this;
+    this.port.onmessage = function (message) {
+      var said = message.data;
+      if (said.dot !== undefined) { self.isDotHeld = said.dot; }
+      if (said.dash !== undefined) { self.isDashHeld = said.dash; }
+      if (said.wpm) { self.dotSamples = Math.round(sampleRate * 1.2 / said.wpm); }
+      if (said.pitch) { self.turn = 2 * Math.PI * said.pitch / sampleRate; }
+      if (said.level !== undefined) { self.level = said.level; }
+      if (said.isB !== undefined) { self.isB = said.isB; }
+    };
+  }
+
+  // the character keyed so far is given to the page
+  give() {
+    if (!this.code) { return; }
+    this.port.postMessage({ code: this.code, gapMs: this.gapMs });
+    this.code = "";
+  }
+
+  begin(element) {
+    if (!this.code) {
+      this.gapMs = this.upSamples < 0 ? 0 : Math.round(this.upSamples * 1000 / sampleRate);
+      if (this.gapMs > GAP_KNOWN_MOST_MS) { this.gapMs = 0; }
+    }
+    this.code += element;
+    this.sending = element;
+    this.lastSent = element;
+    this.spaceLeft = this.dotSamples;
+    this.restSamples = 0;
+    if (element === ".") {
+      this.markLeft = this.dotSamples;
+      this.isDotRemembered = false;
+    } else {
+      this.markLeft = this.dotSamples * DASH_DOTS;
+      this.isDashRemembered = false;
+    }
+    if (this.code.length === KEYED_SYMBOLS_MOST) { this.give(); }
+  }
+
+  // with no element being sent: the next one, if a pad or a memory asks
+  wanted() {
+    var isDot = this.isDotHeld || this.isDotRemembered;
+    var isDash = this.isDashHeld || this.isDashRemembered;
+    if (isDot && isDash) { return this.lastSent === "." ? "-" : "."; }
+    if (isDot) { return "."; }
+    if (isDash) { return "-"; }
+    return "";
+  }
+
+  // one sample; says whether the key is down
+  step() {
+    var dotJustHeld = this.isDotHeld && !this.wasDotHeld;
+    var dashJustHeld = this.isDashHeld && !this.wasDashHeld;
+    var next;
+    this.wasDotHeld = this.isDotHeld;
+    this.wasDashHeld = this.isDashHeld;
+    if (!this.sending) {
+      next = this.wanted();
+      if (!next) {
+        this.lastSent = "";
+        this.restSamples++;
+        if (this.restSamples === this.dotSamples) { this.give(); }
+        return false;
+      }
+      this.begin(next);
+    } else {
+      if (dotJustHeld) { this.isDotRemembered = true; }
+      if (dashJustHeld) { this.isDashRemembered = true; }
+      if (this.isB && this.markLeft > 0) {
+        if (this.sending === "." && this.isDashHeld) { this.isDashRemembered = true; }
+        if (this.sending === "-" && this.isDotHeld) { this.isDotRemembered = true; }
+      }
+    }
+    if (this.markLeft > 0) {
+      this.markLeft--;
+      return true;
+    }
+    this.spaceLeft--;
+    if (this.spaceLeft === 0) { this.sending = ""; }
+    return false;
+  }
+
+  process(inputs, outputs) {
+    var out = outputs[0][0], i, isDown, shape;
+    for (i = 0; i < out.length; i++) {
+      isDown = this.step();
+      if (isDown) {
+        this.upSamples = 0;
+        if (this.risen < this.riseSamples) { this.risen++; }
+      } else {
+        if (this.upSamples >= 0) { this.upSamples++; }
+        if (this.risen > 0) { this.risen--; }
+      }
+      if (this.risen === 0) {
+        this.angle = 0;
+        out[i] = 0;
+        continue;
+      }
+      // a raised cosine, from nothing to full over the rise
+      shape = 0.5 - 0.5 * Math.cos(Math.PI * this.risen / this.riseSamples);
+      out[i] = Math.sin(this.angle) * shape * this.level;
+      this.angle += this.turn;
+      if (this.angle > 2 * Math.PI) { this.angle -= 2 * Math.PI; }
+    }
+    return true;
+  }
+}
+
+registerProcessor("radio-keyer", RadioKeyer);

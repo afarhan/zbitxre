@@ -74,6 +74,23 @@ with a stroke between them. A control's group says where it belongs: `RADIO` for
 the radio as a whole, a mode's name for that mode's own, `STATION` for the
 callsign and grid, `METER` for what is measured. An **action** has no value: it
 is something done each time it is set, as `MACRO CQ` sends that macro.
+An action
+with no choices takes what it is given and says itself whether that will do.
+
+**CW keyed on a client.** `CW_KEY` is such an action, for a client with a keyer
+of its own, as a telephone's screen has: it is sent each character as it is
+keyed, as dots and dashes, and after them the milliseconds the key was up
+before the character began, if that is known:
+
+    CW_KEY -.-
+    CW_KEY --.- 180
+
+One to twelve dots and dashes. The radio, in CW, sends the character at `WPM`,
+evenly made, beginning when its own key has been up for as long as the client's
+was, and never sooner than three dots after the character before; so the
+spacing is the operator's and the making is the radio's. A character that comes
+too late for that is sent as soon as it comes. `CW_DO ESC` drops what is
+waiting, as it does a macro's text.
 
 ## What the radio sends besides controls
 

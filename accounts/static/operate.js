@@ -12,7 +12,8 @@
 //   row 1   STEP | the meter | the frequency, two wide | RIT, SPLIT, DRIVE,
 //           AGC, IF, VOL
 //   row 2   a button for each band, 10M to 80M, and MODE
-//   rows 3 to 7, on the left: LOG, SET, TERM, and one more for the mode
+//   rows 3 to 7, on the left: LOG, SET, TERM or in CW KEY, which brings up
+//           the keyer's two pads over rows 5 to 7, and one more for the mode
 //           in the middle, six wide: the status line, and under it the
 //           graph and the waterfall; in FT8 the messages copied have the
 //           left half
@@ -229,6 +230,8 @@
   scope.id = "scope";
   var list = make("div", "", null, app);
   list.id = "list";
+  var keyerBox = make("div", "gone", null, app);
+  keyerBox.id = "keyer";
   var wheelBox = make("div", "canvas-box gone", null, app);
   wheelBox.id = "wheel-box";
   var wheel = make("canvas", "", null, wheelBox);
@@ -485,7 +488,9 @@
     }
 
     var labels = ["LOG", "SET", "TERM", ""];
-    if (group === "CW") { labels[3] = "ESC"; }
+    if (group === "CW") { labels[2] = "KEY"; labels[3] = "ESC"; }
+    if (group !== "CW" && keyerBox.className !== "gone") { showKeyer(false); }
+    tellKeyer();
     if (group === "FT8") { labels[2] = "CQ"; labels[3] = "HALT"; }
     column.forEach(function (t, n) {
       t.value.textContent = labels[n];
@@ -569,6 +574,91 @@
     }, SPEECH_TAIL_MS);
   }
 
+  /* the keyer, in CW: KEY brings up two pads over the lower half of the
+     page, DOT under the left thumb and DASH under the right, which are a
+     paddle's two contacts. The keyer itself and its sidetone are in the
+     browser's sound thread, sound_worklet.js, at the radio's WPM and PITCH
+     and in iambic A, or B if the radio's CW_INPUT is IAMBICB. Each
+     character it finishes is sent to the radio as CW_KEY, its dots and
+     dashes and the milliseconds the key was up before it, and the radio
+     sends it. The radio's sound is not played while keying, nor for a
+     little after: its own sidetone would be heard a third of a second
+     behind the telephone's. ESC, between the pads, stops what the radio
+     still has to send. */
+
+  var KEYED_QUIET_MS = 2000;
+  var keyer = null, isKeyerAsked = false, keyedTimer = null;
+
+  function tellKeyer() {
+    if (!keyer) { return; }
+    keyer.tell({
+      wpm: Number(values.WPM) || 18, pitch: Number(values.PITCH) || 600,
+      level: (Number(values.SIDETONE) || 30) / 100 * Number(own.VOL) / 100,
+      isB: values.CW_INPUT === "IAMBICB"
+    });
+  }
+
+  function keyed(code, gapMs) {
+    send("CW_KEY " + code + (gapMs ? " " + gapMs : ""));
+    isMuted = true;
+    setLoudness();
+    if (keyedTimer) { clearTimeout(keyedTimer); }
+    keyedTimer = setTimeout(function () {
+      keyedTimer = null;
+      isMuted = isSpeaking;
+      setLoudness();
+    }, KEYED_QUIET_MS);
+  }
+
+  function showKeyer(on) {
+    keyerBox.className = on ? "" : "gone";
+    if (!on) {
+      if (keyer) { keyer.tell({ dot: false, dash: false }); }
+      return;
+    }
+    if (isKeyerAsked || !player) { return; }
+    isKeyerAsked = true;
+    player.openKeyer(keyed).then(function (opened) {
+      keyer = opened;
+      tellKeyer();
+    }, function (refused) {
+      isKeyerAsked = false;
+      showKeyer(false);
+      say("the keyer could not be started: " + refused.message, "warning");
+    });
+  }
+
+  function pad(label, sign, which) {
+    var box = make("div", "pad", null, keyerBox);
+    make("div", "sign", sign, box);
+    make("div", "name", label, box);
+    function held(is) {
+      var told = {};
+      told[which] = is;
+      box.className = "pad" + (is ? " held" : "");
+      if (keyer) { keyer.tell(told); }
+    }
+    box.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      held(true);
+      // so that a thumb that slides off the pad still lets go of it
+      try { box.setPointerCapture(e.pointerId); } catch (unable) { /* held all the same */ }
+    });
+    box.addEventListener("pointerup", function () { held(false); });
+    box.addEventListener("pointercancel", function () { held(false); });
+    box.addEventListener("lostpointercapture", function () { held(false); });
+    box.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  }
+  pad("DOT", "\u2022", "dot");
+  var keyerMiddle = make("div", "middle", null, keyerBox);
+  make("button", "", "ESC", keyerMiddle).addEventListener("click", function () {
+    send("CW_DO ESC");
+  });
+  make("button", "", "\u2715", keyerMiddle).addEventListener("click", function () {
+    showKeyer(false);
+  });
+  pad("DASH", "\u2014", "dash");
+
   function footerTapped(place) {
     var label = footer[place].value.textContent;
     if (label === "TX") { startSending(); }
@@ -580,6 +670,7 @@
     var label = column[place].value.textContent;
     if (label === "LOG") { openLog(); }
     if (label === "SET") { openSettings(); }
+    if (label === "KEY") { showKeyer(keyerBox.className === "gone"); }
     if (label === "ESC") { send("CW_DO ESC"); }
     if (label === "CQ") { send("FT8_DO CQ"); }
     if (label === "HALT") { send("FT8_DO HALT"); }
