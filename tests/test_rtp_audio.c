@@ -29,7 +29,9 @@
 #define SECOND_OF_BLOCKS 94
 #define PACKETS_MAX 64
 #define SETTLED_PACKETS 5
-#define QUARTER_SCALE 536870912.0
+// the tone goes in at a thirty-second of full scale, and the sender makes
+// it eight times larger: a quarter of full scale comes out
+#define TONE_IN 67108864.0
 #define QUARTER_SCALE_16 8192.0
 #define ULAW_BIAS 0x84
 
@@ -89,7 +91,7 @@ static void play_a_tone(double hz) {
 	packet_count = 0;
 	for (blocks = 0; blocks < SECOND_OF_BLOCKS; blocks++) {
 		for (i = 0; i < BLOCK_FRAMES; i++) {
-			block[i] = (int32_t)(QUARTER_SCALE * sin(phase));
+			block[i] = (int32_t)(TONE_IN * sin(phase));
 			phase += 2.0 * M_PI * hz / RATE_IN_HZ;
 		}
 		rtp_audio_take(block, BLOCK_FRAMES);
@@ -162,7 +164,7 @@ int main(void) {
 	measure(&loudest, &hz);
 	expect(fabs(hz - 1000.0) < 15.0, "a 1 kHz tone comes out a 1 kHz tone");
 	expect(loudest > QUARTER_SCALE_16 * 0.9 && loudest < QUARTER_SCALE_16 * 1.1,
-		"at the level it went in at, a quarter of full scale");
+		"eight times as large as it went in, a quarter of full scale");
 
 	play_a_tone(6000.0);
 	measure(&loudest, &hz);

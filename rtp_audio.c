@@ -46,9 +46,12 @@
 // above 4 kHz would come out folded down among the speech. With half as
 // many taps the filter fell away too slowly, and 3 kHz, the top of the
 // speech, came out much reduced. They are then
-// made louder by STREAM_GAIN, the sound card being given samples far below
-// its full scale and its own amplifier making up the rest, and held to 16
-// bits.
+// made eight times larger, STREAM_GAIN, and held to 16 bits. The sound card
+// is given samples far below its full scale, its own amplifier making up
+// the rest: on the author's sbitx, with the AGC at MED on a quiet 40 m
+// band, the speaker's samples came to 1 percent of full scale, and their
+// peaks to 5. Eight times that leaves the peaks room and is loud enough to
+// be heard with a player's volume at its middle.
 //
 // WHO DOES WHAT
 //
@@ -87,7 +90,7 @@
 #define HAMMING_A 0.54
 #define HAMMING_B 0.46
 #define RING_SAMPLES 4096
-#define STREAM_GAIN 1.0
+#define STREAM_GAIN 8.0
 #define INT32_TO_INT16 65536.0
 #define INT16_MOST 32767
 #define PERCENT 100
