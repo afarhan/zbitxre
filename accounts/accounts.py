@@ -124,7 +124,8 @@ THE GLOBE, AND LISTENING TO ANY RADIO
 /map is a page anyone may see and hear, signed in or not: the world as a
 globe, after radio.garden's, with the radios that are on line now, each a
 dot at the middle of its grid square with its owner's callsign. The globe
-is turned by dragging it and brought nearer with the wheel. A dot that is
+is turned by dragging it and brought nearer with the wheel, or on a
+touch screen by two fingers drawn apart. A dot that is
 touched is chosen, and Listen plays what that radio is hearing, with the
 frequency it is tuned to and its mode shown above the button, as the
 author asked, and kept up as the radio is tuned. The author
@@ -526,12 +527,36 @@ MAP_SCRIPT = """
 
   /* turning it, bringing it nearer, choosing a radio */
 
-  var held = null, moved = 0;
+  // one finger turns it; two, drawn apart or together, bring it nearer or
+  // send it back, as the wheel does
+  var fingers = {}, held = null, moved = 0, spread = 0;
+  function fingersApart() {
+    var ids = Object.keys(fingers);
+    if (ids.length < 2) { return 0; }
+    return Math.hypot(fingers[ids[0]].x - fingers[ids[1]].x,
+      fingers[ids[0]].y - fingers[ids[1]].y);
+  }
+  function setZoom(to) {
+    zoom = Math.max(0.5, Math.min(8, to));
+    draw();
+  }
   canvas.addEventListener("pointerdown", function (e) {
-    held = { x: e.clientX, y: e.clientY }; moved = 0;
+    if (Object.keys(fingers).length === 0) { moved = 0; }
+    fingers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    held = { x: e.clientX, y: e.clientY };
+    spread = fingersApart();
+    if (spread) { moved = 100; }  // two fingers never choose a radio
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener("pointermove", function (e) {
+    if (!fingers[e.pointerId]) { return; }
+    fingers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var apart = fingersApart();
+    if (apart) {
+      if (spread > 10) { setZoom(zoom * apart / spread); }
+      spread = apart;
+      return;
+    }
     if (!held) { return; }
     var dx = e.clientX - held.x, dy = e.clientY - held.y;
     moved += Math.abs(dx) + Math.abs(dy);
@@ -547,10 +572,19 @@ MAP_SCRIPT = """
     held = { x: e.clientX, y: e.clientY };
     draw();
   });
+  function lifted(e) {
+    var ids;
+    delete fingers[e.pointerId];
+    ids = Object.keys(fingers);
+    spread = 0;
+    // the finger that stays goes on turning from where it is
+    held = ids.length === 1 ? { x: fingers[ids[0]].x, y: fingers[ids[0]].y } : null;
+    return ids.length === 0;
+  }
+  canvas.addEventListener("pointercancel", lifted);
   canvas.addEventListener("pointerup", function (e) {
     var box = canvas.getBoundingClientRect(), best = null, near = 18, i, d;
-    held = null;
-    if (moved > 6) { return; }
+    if (!lifted(e) || moved > 6) { return; }
     for (i = 0; i < radios.length; i++) {
       if (!radios[i].at || !radios[i].at.seen) { continue; }
       d = Math.hypot(radios[i].at.x - (e.clientX - box.left),
@@ -561,10 +595,7 @@ MAP_SCRIPT = """
   });
   canvas.addEventListener("wheel", function (e) {
     e.preventDefault();
-    zoom *= e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    if (zoom < 0.5) { zoom = 0.5; }
-    if (zoom > 8) { zoom = 8; }
-    draw();
+    setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
   }, { passive: false });
   window.addEventListener("resize", draw);
   view.addEventListener("click", function () {
@@ -731,7 +762,7 @@ MAP_PAGE = """<!doctype html>
 <button id="listen">Listen</button><span id="state"></span>
 <label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
 </div>
-<div id="hint">drag to turn &middot; wheel to come nearer &middot; touch a radio to listen</div>
+<div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen</div>
 <script src="/map.js"></script>
 </body></html>
 """
