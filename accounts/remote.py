@@ -206,7 +206,9 @@ class Remote:
                 writer.write(b"ERROR AUTH no radio of that callsign has this cookie; "
                              b"add it at the website\n")
             else:
-                writer.write(b"ERROR AUTH that is not the radio's client password\n")
+                writer.write(("ERROR AUTH there is no radio %s with that client password: "
+                              "check the name and the password at the website\n"
+                              % name.lower()).encode())
             return None, None
         radio, secret, salt = found
         writer.write(("WELCOME %s %s\n" % (
