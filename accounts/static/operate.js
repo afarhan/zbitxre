@@ -907,9 +907,15 @@
           if (screen.orientation && screen.orientation.lock) {
             screen.orientation.lock("landscape").catch(function () {});
           }
-        }).catch(function () {});
+        }).catch(function (refused) {
+          // said, so that the owner can tell a browser that will not from
+          // a page that did not ask
+          say("this browser did not give the whole screen: " + refused.message);
+        });
       }
-    } catch (refused) { /* the page works as well in the browser's window */ }
+    } catch (refused) {
+      say("this browser did not give the whole screen: " + refused.message);
+    }
   }
   status.addEventListener("click", fillScreen);
 
