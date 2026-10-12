@@ -9,6 +9,7 @@ Group=sbitx-accounts
 ExecStart=/usr/bin/python3 -u /opt/sbitx-accounts/remote.py --settings /etc/sbitx-accounts/settings.ini
 Restart=on-failure
 RestartSec=2
+UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
