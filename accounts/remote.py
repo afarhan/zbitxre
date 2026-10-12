@@ -210,6 +210,7 @@ class Remote:
         self.streams = {}    # a stream's id -> [the radio's id, the key, the last sequence]
         self.stream_of = {}  # a radio's id -> its stream's id, while there is one
         self.heard = 0       # packets of sound taken, for the tests
+        self.heard_at_start = 0
         self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
             db.execute("update radios set online = 0")
@@ -373,12 +374,16 @@ class Remote:
                        hashlib.sha256).hexdigest().encode()
         self.streams[stream] = [radio, key, None]
         self.stream_of[radio] = stream
+        self.heard_at_start = self.heard
+        self.say("the sound of radio %d is asked for" % radio)
         line.write(("AUDIO ON %s %s\n" % (stream.hex(), nonce)).encode())
 
     def forget_stream(self, radio):
         stream = self.stream_of.pop(radio, None)
         if stream is not None:
             del self.streams[stream]
+            self.say("the sound of radio %d is no longer asked for, after %d packets" % (
+                radio, self.heard - self.heard_at_start))
 
     def stop_stream(self, radio):
         if radio in self.stream_of:
