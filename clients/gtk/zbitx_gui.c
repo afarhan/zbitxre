@@ -5,9 +5,51 @@
 // network.
 //
 //     zbitx_gui [radio] [port]
+//     zbitx_gui remote [radio] [server] [port]
 //
 // The radio is sbitx.local unless another name or address is given, and the
 // port 8081.
+//
+// With the word remote, the window reaches the owner's radio from anywhere,
+// through my.sbitx.net; PROTOCOL.md, at the top of the repository, says how
+// that works. The radio wanted is named by the name it has on the website
+// or by its key's id, and with none named it is the first of the owner's
+// radios that is on line. The server is my.sbitx.net and the port 8081
+// unless others are given.
+//
+// REACHING A RADIO THROUGH MY.SBITX.NET
+//
+// This computer needs a key of its own, as the radio has one. The first
+// time, it has none, and the window gets it as the radio's daemon gets the
+// radio's, with the same code, clients/remote/linking.c: the status line
+// says "to link this computer, type BCDF-GHJK at my.sbitx.net", the owner
+// signs in there and types it, and the key comes back and is kept in
+// ~/.config/zbitx/client.key, which only this user can read. The password
+// is typed into the website and never into this window.
+//
+// Then the window connects to the service and, before anything of the
+// radio's, there are a few lines between the two:
+//
+//     CHALLENGE ...            the service
+//     AUTH ...                 the window, with a proof made with its key
+//     WELCOME VU2ESE ...       the service, with a proof of its own, which
+//                              the window checks: it will not go on with
+//                              something that does not have its key
+//     radios                   the window
+//     RADIO r3f... online shack sbitx
+//     RADIOS END               the service
+//     connect r3f...           the window
+//     CONNECTED shack sbitx    the service
+//
+// and from there on it is the radio's own protocol, as if the window had
+// connected to the radio itself, and everything below is the same. None of
+// it is inside TLS, by the author's ruling; the proof is there to say who
+// is on the line.
+//
+// A key the service refuses is dropped, and the computer is linked afresh.
+// If none of the owner's radios is on line, the window says so and tries
+// again every three seconds, as it does for a radio that cannot be
+// reached.
 //
 // THE WINDOW
 //
@@ -325,13 +367,24 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/random.h>
+
 #include "board.h"
 #include "gpio.h"
 #include "knob.h"
+#include "linking.h"
 #include "logbook_window.h"
+#include "sha256.h"
 
 #define DEFAULT_RADIO "sbitx.local"
 #define DEFAULT_PORT 8081
+#define REMOTE_WORD "remote"
+#define DEFAULT_SERVER "my.sbitx.net"
+#define NONCE_BYTES 16
+#define CHALLENGE_ROOM 72
+#define LINKING_TICK_MS 200
+#define MICROS_A_MILLI 1000
+#define KEY_FOLDER_MODE 0700
 #define RETRY_EVERY_MS 3000
 #define HZ_PER_MHZ 1000000
 #define HZ_PER_KHZ 1000
@@ -675,6 +728,25 @@ static const struct radio_knobs radios_with_knobs[] = {
 static GtkWidget *main_window;
 static guint retry_timer;
 static int is_connecting;
+
+// reaching a radio through my.sbitx.net: how far the few lines before the
+// radio's own have got
+enum through {
+	NOT_THROUGH,
+	TO_BE_CHALLENGED,
+	TO_BE_WELCOMED,
+	LISTING,
+	TO_BE_CONNECTED,
+	THROUGH,
+};
+
+static int is_remote;
+static enum through through = NOT_THROUGH;
+static const char *through_wanted = "";
+static char through_challenge[CHALLENGE_ROOM];
+static char through_nonce[2 * NONCE_BYTES + 1];
+static char through_choice[LINKING_KEY_ID_ROOM];
+static guint linking_timer;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1689,10 +1761,201 @@ static void disconnect(const char *why) {
 	g_clear_object(&reader);
 	writer = NULL;
 	g_clear_object(&connection);
+	through = NOT_THROUGH;
 	snprintf(text, sizeof(text), "%s: %s; trying again", radio_name, why);
 	show_status(text);
 	if (retry_timer == 0)
 		retry_timer = g_timeout_add(RETRY_EVERY_MS, on_time_to_retry, NULL);
+}
+
+/* reaching a radio through my.sbitx.net */
+
+static void send_a_line(const char *line) {
+	if (writer == NULL)
+		return;
+	g_output_stream_write_all(writer, line, strlen(line), NULL, NULL, NULL);
+	g_output_stream_write_all(writer, "\n", 1, NULL, NULL, NULL);
+}
+
+// the service's challenge is answered with a proof made with this
+// computer's key, and the nonce the proof was made with is kept, to check
+// the service's own proof by
+static void answer_the_challenge(const char *challenge) {
+	char key_id[LINKING_KEY_ID_ROOM];
+	char key[LINKING_KEY_ROOM];
+	uint8_t random_bytes[NONCE_BYTES];
+	char text[LINE_MAX_LENGTH * 2];
+	char proof[SHA256_HEX_ROOM];
+	int i;
+
+	if (!linking_read_key(key_id, key)
+			|| getrandom(random_bytes, sizeof(random_bytes), 0) != sizeof(random_bytes)) {
+		disconnect("this computer has no key");
+		return;
+	}
+	for (i = 0; i < NONCE_BYTES; i++)
+		snprintf(through_nonce + 2 * i, 3, "%02x", random_bytes[i]);
+	snprintf(through_challenge, sizeof(through_challenge), "%.*s",
+		(int)sizeof(through_challenge) - 1, challenge);
+	snprintf(text, sizeof(text), "zbitx-auth-1 client %s %s", through_challenge,
+		through_nonce);
+	hmac_sha256_hex(key, text, proof);
+	snprintf(text, sizeof(text), "AUTH %s %s %s", key_id, through_nonce, proof);
+	send_a_line(text);
+	through = TO_BE_WELCOMED;
+}
+
+// whether what answered has this computer's key too
+static int is_the_service(const char *its_proof) {
+	char key_id[LINKING_KEY_ID_ROOM];
+	char key[LINKING_KEY_ROOM];
+	char text[LINE_MAX_LENGTH * 2];
+	char proof[SHA256_HEX_ROOM];
+	unsigned char differs = 0;
+	size_t i;
+
+	if (!linking_read_key(key_id, key) || strlen(its_proof) != SHA256_HEX_ROOM - 1)
+		return 0;
+	snprintf(text, sizeof(text), "zbitx-auth-1 server %s %s", through_challenge,
+		through_nonce);
+	hmac_sha256_hex(key, text, proof);
+	for (i = 0; i < SHA256_HEX_ROOM - 1; i++)
+		differs |= (unsigned char)(proof[i] ^ its_proof[i]);
+	return differs == 0;
+}
+
+// "RADIO <key id> online|offline <name>": the radio wanted, if this is it
+// and it is on line; with none wanted, the first that is on line
+static void take_a_listed_radio(char *rest) {
+	char *state = strchr(rest, ' ');
+	char *name;
+
+	if (state == NULL || through_choice[0] != 0)
+		return;
+	*state++ = 0;
+	name = strchr(state, ' ');
+	if (name == NULL)
+		return;
+	*name++ = 0;
+	if (strcmp(state, "online"))
+		return;
+	if (through_wanted[0] != 0 && g_ascii_strcasecmp(through_wanted, rest)
+			&& g_ascii_strcasecmp(through_wanted, name))
+		return;
+	snprintf(through_choice, sizeof(through_choice), "%s", rest);
+}
+
+// a line from the service, before the radio is on the line
+static void take_through_line(char *line) {
+	const char *asks = "schema\nspectrum on\nmessages on\ntime";
+	char text[LINE_MAX_LENGTH];
+	char *rest = strchr(line, ' ');
+
+	if (rest != NULL)
+		*rest++ = 0;
+	else
+		rest = line + strlen(line);
+	if (!strcmp(line, "ERROR")) {
+		if (!strncmp(rest, "AUTH", strlen("AUTH")) && through == TO_BE_WELCOMED)
+			linking_forget_key();
+		disconnect(rest);
+		return;
+	}
+	if (through == TO_BE_CHALLENGED && !strcmp(line, "CHALLENGE")) {
+		answer_the_challenge(rest);
+		return;
+	}
+	if (through == TO_BE_WELCOMED && !strcmp(line, "WELCOME")) {
+		rest = strchr(rest, ' ');
+		if (rest == NULL || !is_the_service(rest + 1)) {
+			disconnect("what answered does not have this computer's key");
+			return;
+		}
+		through_choice[0] = 0;
+		through = LISTING;
+		send_a_line("radios");
+		return;
+	}
+	if (through == LISTING && !strcmp(line, "RADIO")) {
+		take_a_listed_radio(rest);
+		return;
+	}
+	if (through == LISTING && !strcmp(line, "RADIOS")) {
+		if (through_choice[0] == 0) {
+			if (through_wanted[0] != 0)
+				snprintf(text, sizeof(text), "%.40s is not on line", through_wanted);
+			else
+				snprintf(text, sizeof(text), "none of your radios is on line");
+			disconnect(text);
+			return;
+		}
+		snprintf(text, sizeof(text), "connect %s", through_choice);
+		send_a_line(text);
+		through = TO_BE_CONNECTED;
+		return;
+	}
+	if (through == TO_BE_CONNECTED && !strcmp(line, "CONNECTED")) {
+		through = THROUGH;
+		send_a_line(asks);
+		snprintf(text, sizeof(text), "connected to %.40s through %.40s", rest, radio_name);
+		show_status(text);
+	}
+}
+
+// this computer is being linked: what there is to show, and when it has
+// its key, the connection is tried
+static gboolean on_linking_tick(gpointer unused) {
+	char said[LINKING_STATUS_ROOM];
+	char text[LINE_MAX_LENGTH];
+	enum linking_result result;
+
+	(void)unused;
+	result = linking_poll(g_get_monotonic_time() / MICROS_A_MILLI, said);
+	if (!strncmp(said, CODE_WORD, strlen(CODE_WORD))) {
+		snprintf(text, sizeof(text), "to link this computer, type %s at %.40s",
+			said + strlen(CODE_WORD), radio_name);
+		show_status(text);
+	}
+	if (result == LINKING_UNDER_WAY)
+		return G_SOURCE_CONTINUE;
+	linking_timer = 0;
+	if (result == LINKING_FAILED) {
+		snprintf(text, sizeof(text), "linking this computer: %s", said);
+		disconnect(text);
+	} else {
+		try_to_connect();
+	}
+	return G_SOURCE_REMOVE;
+}
+
+// says whether this computer has a key; if it has none, getting one is
+// begun
+static int has_key_or_links(void) {
+	char key_id[LINKING_KEY_ID_ROOM];
+	char key[LINKING_KEY_ROOM];
+
+	if (linking_read_key(key_id, key))
+		return 1;
+	if (linking_timer == 0) {
+		show_status("asking my.sbitx.net for a code to link this computer");
+		linking_begin();
+		linking_timer = g_timeout_add(LINKING_TICK_MS, on_linking_tick, NULL);
+	}
+	return 0;
+}
+
+// where this computer's key is kept, in a folder that is made if it is not
+// there
+static void open_linking(void) {
+	char folder[LINE_MAX_LENGTH * 2];
+	char path[LINE_MAX_LENGTH * 2 + 16];
+	char web[LINE_MAX_LENGTH];
+
+	snprintf(folder, sizeof(folder), "%s/zbitx", g_get_user_config_dir());
+	g_mkdir_with_parents(folder, KEY_FOLDER_MODE);
+	snprintf(path, sizeof(path), "%s/client.key", folder);
+	snprintf(web, sizeof(web), "https://%.80s", radio_name);
+	linking_open(web, path, g_get_host_name(), "client");
 }
 
 static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
@@ -1712,6 +1975,14 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 	if (line == NULL) {
 		g_clear_error(&error);
 		disconnect("gone");
+		return;
+	}
+	if (is_remote && through != THROUGH) {
+		take_through_line(line);
+		g_free(line);
+		if (reader != NULL)
+			g_data_input_stream_read_line_async(reader, G_PRIORITY_DEFAULT, NULL,
+				on_line, NULL);
 		return;
 	}
 	value = strchr(line, ' ');
@@ -1747,8 +2018,13 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 		g_io_stream_get_input_stream(G_IO_STREAM(connection)));
 	writer = g_io_stream_get_output_stream(G_IO_STREAM(connection));
 	drop_all_messages();
-	g_output_stream_write_all(writer, asks, strlen(asks), NULL, NULL, NULL);
-	snprintf(text, sizeof(text), "connected to %s", radio_name);
+	if (is_remote) {
+		through = TO_BE_CHALLENGED;
+		snprintf(text, sizeof(text), "%s: saying who this is", radio_name);
+	} else {
+		g_output_stream_write_all(writer, asks, strlen(asks), NULL, NULL, NULL);
+		snprintf(text, sizeof(text), "connected to %s", radio_name);
+	}
 	show_status(text);
 	g_data_input_stream_read_line_async(reader, G_PRIORITY_DEFAULT, NULL,
 		on_line, NULL);
@@ -1758,6 +2034,8 @@ static void try_to_connect(void) {
 	char text[LINE_MAX_LENGTH];
 
 	if (connection != NULL || is_connecting)
+		return;
+	if (is_remote && !has_key_or_links())
 		return;
 	is_connecting = 1;
 	snprintf(text, sizeof(text), "connecting to %s", radio_name);
@@ -3280,10 +3558,22 @@ int main(int argc, char **argv) {
 	GtkWidget *window;
 
 	gtk_init(&argc, &argv);
-	if (argc > 1)
-		radio_name = argv[1];
-	if (argc > 2)
-		radio_port = atoi(argv[2]);
+	if (argc > 1 && !strcmp(argv[1], REMOTE_WORD)) {
+		is_remote = 1;
+		radio_name = DEFAULT_SERVER;
+		if (argc > 2)
+			through_wanted = argv[2];
+		if (argc > 3)
+			radio_name = argv[3];
+		if (argc > 4)
+			radio_port = atoi(argv[4]);
+		open_linking();
+	} else {
+		if (argc > 1)
+			radio_name = argv[1];
+		if (argc > 2)
+			radio_port = atoi(argv[2]);
+	}
 
 	fall = cairo_image_surface_create(CAIRO_FORMAT_RGB24, POINTS_MAX, FALL_ROWS);
 	add_own_controls();

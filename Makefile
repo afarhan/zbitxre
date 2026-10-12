@@ -244,11 +244,15 @@ gui: $(GUI)
 
 # the window reads the sbitx's two knobs itself, with its own knob reader;
 # of hw/ it has the pins, and the boards for the radio's name
-GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c hw/gpio.c hw/board.c
+# of clients/remote it has what gets this computer a key and answers the
+# service's challenge, for reaching a radio through my.sbitx.net
+GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c hw/gpio.c hw/board.c \
+	clients/remote/linking.c clients/remote/sha256.c
 
 $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
-		clients/gtk/logbook_window.h hw/gpio.h hw/board.h
-	$(CC) $(CFLAGS) -Iclients/gtk $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
+		clients/gtk/logbook_window.h hw/gpio.h hw/board.h clients/remote/linking.h \
+		clients/remote/sha256.h
+	$(CC) $(CFLAGS) -Iclients/gtk -Iclients/remote $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread -lm
 
 # the radio's way out to my.sbitx.net, a program of its own beside sdr;

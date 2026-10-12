@@ -17,7 +17,8 @@ enum linking_result {
 	LINKING_FAILED,
 };
 
-void linking_open(const char *web_url, const char *key_file, const char *radio_name);
+void linking_open(const char *web_url, const char *key_file, const char *name,
+	const char *radio_or_client);
 int linking_read_key(char *key_id, char *key);
 void linking_forget_key(void);
 void linking_begin(void);

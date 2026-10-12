@@ -4,11 +4,14 @@ This is how a program talks to a zbitx or an sbitx running zbitxre: the window o
 the radio's own screen, a program on another computer, and, when it is built, the
 service at my.sbitx.net that lets an owner reach their radio from anywhere.
 
-The first part describes the protocol **as it is today**. `server.c` serves it and
-its header is the fuller account; where the two differ, `server.c` is right and
-this file is to be corrected. The last two parts, on authentication and on
-reaching a radio through my.sbitx.net, are **proposed and not built**. They are
-written here to be argued with before any of it is code.
+The first part is the radio's own protocol. `server.c` serves it and its header
+is the fuller account; where the two differ, `server.c` is right and this file
+is to be corrected. The second and third parts are what is added to cross the
+internet: how each end proves who it is, and how a client is brought to its
+radio. `accounts/remote.py` is the service's end of that,
+`clients/remote/zbitx_remote.c` the radio's, and `clients/gtk/zbitx_gui.c` and
+`accounts/remote_client.py` are clients; where this file and they differ, they
+are right.
 
 ## The connection
 
@@ -154,9 +157,7 @@ Messages and log entries are not state and none is left out.
 
 ---
 
-# Proposed: authentication
-
-**Not built. For review.**
+# Authentication
 
 ## What it is for
 
@@ -234,9 +235,9 @@ linked. Neither is a radio communication.
 
 ---
 
-# Proposed: reaching a radio through my.sbitx.net
+# Reaching a radio through my.sbitx.net
 
-**Not built. For review.**
+The service listens on TCP port 8081, as a radio does.
 
 A radio at home is behind a router and cannot be connected to from outside. So
 something on the radio connects out to my.sbitx.net, and nothing is changed on
@@ -277,19 +278,52 @@ connection, reads the controls' values and the log's entries as a client
 would, and closes it. That is done when the radio comes on line, and when the
 owner asks for it on the website.
 
-## The steps
+## What is said, after the handshake
 
-1. The owner turns remote access on. The daemon connects to my.sbitx.net, is
-   challenged, and proves itself with the radio's key. The service now knows
-   this radio can be reached and whose it is.
-2. The owner's client, anywhere, connects to my.sbitx.net, is challenged, and
-   proves itself with its own key. It asks which of the owner's radios can be
-   reached, and for one of them.
-3. The service tells that radio's daemon. The daemon connects again, proves
-   itself again, and names the session it was told of. The service joins that
-   connection to the client's.
+**The daemon, on the connection it keeps.** It says what the connection is, and
+then nothing but a word a minute:
 
-**Open:** how many clients may be on one radio at once; whether sound is carried, which the protocol does not do
-today; and whether files that are not controls, the radio's calibration in
-`hw_settings.ini` and the CW macros, are backed up, which needs a request for
-sending a file.
+    radio                      the daemon
+    OK                         the service
+    PING                       the daemon, each minute
+    PONG                       the service
+
+When somebody wants the radio, the service says so on that connection:
+
+    SESSION 9c41e0...          the service
+
+**The daemon, for that visitor.** It connects again, answers a challenge again,
+and names the session:
+
+    session 9c41e0...          the daemon
+    OK                         the service
+
+Every byte after that `OK` is passed between this connection and the visitor,
+and the daemon passes it between this connection and one it has made to the
+radio program. A session nobody is waiting for is refused.
+
+**A client.** It asks which of the owner's radios there are, and for one:
+
+    radios                     the client
+    RADIO r3f9a1c2b4d5e online shack sbitx
+    RADIO r77ab01c9e2f4 offline portable
+    RADIOS END                 the service
+    connect r3f9a1c2b4d5e      the client
+    CONNECTED shack sbitx      the service
+
+A radio is named by its key's id. After `CONNECTED` the client is talking to
+its radio in the radio's own protocol, the first part of this file, beginning
+with every control's value, as if it had just connected to the radio itself.
+A client is given only the radios of the account it is linked to, and a radio
+that is not on line, or does not answer within ten seconds, is an `ERROR
+connect` with the reason.
+
+At most four visitors are on one radio at once.
+
+## Not done yet
+
+Sound is not carried: the protocol has none today. The copy of the logbook is
+the newest hundred entries, which is all `log` gives. Files that are not
+controls, the radio's calibration in `hw_settings.ini` and the CW macros, are
+not backed up; that needs a request for sending a file. And a kept copy of the
+settings cannot yet be put back into a radio.

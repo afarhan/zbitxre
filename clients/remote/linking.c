@@ -7,6 +7,11 @@
 // PROTOCOL.md says how. This file gets the key, once, when the owner first
 // turns remote access on, and keeps it.
 //
+// A client, the window on another computer, has a key of its own and gets
+// it in the same way, so the window is built with this file too, and says
+// "client" where the radio's daemon says "radio". What is said of the radio
+// below is so of both.
+//
 // LINKING, AS THE OPERATOR SEES IT
 //
 // The radio shows eight letters, "CODE BCDF-GHJK". The operator signs in at
@@ -60,7 +65,7 @@
 #define URL_MAX 128
 #define BODY_MAX 256
 #define ANSWER_MAX 1024
-#define PATH_MAX_LENGTH 128
+#define PATH_MAX_LENGTH 512
 #define NAME_MAX_LENGTH 40
 #define KEY_LINE_MAX (LINKING_KEY_ID_ROOM + LINKING_KEY_ROOM + 4)
 #define KEY_FILE_MODE 0600
@@ -84,6 +89,7 @@ enum state {
 static char web[URL_MAX];
 static char key_path[PATH_MAX_LENGTH];
 static char radio_name[NAME_MAX_LENGTH];
+static char kind[NAME_MAX_LENGTH];
 static enum state state = IDLE;
 static char device_code[LINKING_KEY_ROOM];
 static long code_ends_ms;
@@ -340,7 +346,8 @@ enum linking_result linking_poll(long now_ms, char *status) {
 	if (state == IDLE)
 		return LINKING_IDLE;
 	if (state == TO_ASK_FOR_A_CODE) {
-		snprintf(body, sizeof(body), "{\"name\": \"%s\", \"kind\": \"radio\"}", radio_name);
+		snprintf(body, sizeof(body), "{\"name\": \"%s\", \"kind\": \"%s\"}", radio_name,
+			kind);
 		if (ask("/api/radio/link", body) < 0) {
 			state = IDLE;
 			snprintf(status, LINKING_STATUS_ROOM, "NO ANSWER FROM SERVER");
@@ -374,10 +381,12 @@ enum linking_result linking_poll(long now_ms, char *status) {
 	return LINKING_UNDER_WAY;
 }
 
-void linking_open(const char *web_url, const char *key_file, const char *name) {
+void linking_open(const char *web_url, const char *key_file, const char *name,
+		const char *radio_or_client) {
 	snprintf(web, sizeof(web), "%s", web_url);
 	snprintf(key_path, sizeof(key_path), "%s", key_file);
 	snprintf(radio_name, sizeof(radio_name), "%s", name);
+	snprintf(kind, sizeof(kind), "%s", radio_or_client);
 	state = IDLE;
 	device_code[0] = 0;
 }

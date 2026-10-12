@@ -671,7 +671,7 @@ int main(int argc, char **argv) {
 		sessions[i].service_fd = NOT_OPEN;
 		sessions[i].radio_fd = NOT_OPEN;
 	}
-	linking_open(web, key_file, name);
+	linking_open(web, key_file, name, "radio");
 	snprintf(status_said, sizeof(status_said), "OFF");
 	printf("remote: for %s port %s, the radio program on port %s\n", server, port, radio_port);
 	fflush(stdout);
