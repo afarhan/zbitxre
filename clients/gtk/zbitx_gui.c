@@ -136,8 +136,10 @@
 // pitch to it. The pitch of each message is left out of the list, which is
 // half as wide as it was: where the stations are is seen beside it. The rows of one slot are told from those of the next by their
 // ground, a little lighter for every other slot; a station calling CQ is
-// in green; and what the radio itself sent is in red, with TX where the
-// strength would be. A tap on a message marks it, and the list then stays
+// in green; a message that has the station's own callsign in it, the
+// radio's MYCALLSIGN, is in yellow, so that an answer stands out, which
+// the author asked for; and what the radio itself sent is in red, with TX
+// where the strength would be. A tap on a message marks it, and the list then stays
 // where it is as more come, so that the marked one does not run off under
 // the finger, and the status line says how it is answered: by a tap on it
 // again, or by a press of the knob that works the selected control, as a
@@ -1486,6 +1488,30 @@ static void drop_oldest_message(void) {
 	g_list_free(children);
 }
 
+// whether a message has a callsign among its words; a callsign sent as a
+// hash is shown between angle brackets, and is found too
+static int has_callsign(const char *text, const char *callsign) {
+	size_t length = strlen(callsign);
+	const char *at = text;
+	const char *end;
+
+	if (length == 0)
+		return 0;
+	while (*at != 0) {
+		while (*at == ' ' || *at == '<')
+			at++;
+		end = at;
+		while (*end != 0 && *end != ' ' && *end != '>')
+			end++;
+		if ((size_t)(end - at) == length && !g_ascii_strncasecmp(at, callsign, length))
+			return 1;
+		at = end;
+		if (*at == '>')
+			at++;
+	}
+	return 0;
+}
+
 // MESSAGE 043015|-12|1797|CQ VU2ESE MK97: a row is added to the list
 static void take_message_line(const char *line) {
 	char copy[LINE_MAX_LENGTH];
@@ -1516,6 +1542,8 @@ static void take_message_line(const char *line) {
 	add_label_class(label, "message");
 	if (!strcmp(field[1], "TX"))
 		add_label_class(label, "sent");
+	else if (has_callsign(field[3], value_of(CALLSIGN_CONTROL)))
+		add_label_class(label, "to-us");
 	else if (!strncmp(field[3], "CQ ", strlen("CQ ")))
 		add_label_class(label, "calling");
 	box = gtk_event_box_new();
@@ -2881,6 +2909,7 @@ static void load_style(void) {
 		".message { font-family: monospace; font-size: %dpx; color: #FFFFFF; }"
 		".message.sent { color: #FF6060; }"
 		".message.calling { color: #60E060; }"
+		".message.to-us { color: #FFE000; }"
 		".message-row { background-color: #101820; }"
 		".message-row.other-slot { background-color: #1C2834; }"
 		".message-row.marked { background-color: #604800; }"
