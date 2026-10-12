@@ -1,0 +1,22 @@
+# /etc/systemd/system/sbitx-accounts.service
+[Unit]
+Description=Accounts of sbitx and zbitx owners (my.sbitx.net)
+After=network.target
+
+[Service]
+User=sbitx-accounts
+Group=sbitx-accounts
+ExecStart=/usr/bin/python3 /opt/sbitx-accounts/accounts.py --settings /etc/sbitx-accounts/settings.ini serve
+Restart=on-failure
+RestartSec=2
+# the service needs its own folder and nothing else of the machine
+StateDirectory=sbitx-accounts
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/sbitx-accounts
+
+[Install]
+WantedBy=multi-user.target
