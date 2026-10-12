@@ -110,8 +110,10 @@
 // zbitxv2's window had. The scale is an arc, marked at S1, S3, S5, S7 and
 // S9, which is seven tenths of the way across, and from there to 20 dB
 // over S9 it is red. The needle's pivot is below the dial's box and is not
-// drawn, so that the dial covers little of the graph; the figure, "S7" or
-// "S9+", is beside the box, to its left. While the radio transmits
+// drawn, so that the dial covers little of the graph. Its box is right in
+// the corner, against the graph's top and its right edge, and there is no
+// figure beside it: the author wanted the dial alone. While the radio
+// transmits
 // the graph is not the spectrum, of which there is none, but the envelope
 // of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
 // it: the radio sends it in the spectrum's place, a fifth of a second
@@ -408,15 +410,12 @@
 // is made of: the S units times a hundred, and the dB over
 #define SMETER_WIDTH 60
 #define SMETER_HEIGHT 26
-#define SMETER_TOP 2
-#define SMETER_RIGHT 2
 #define SMETER_RADIUS 34
 #define SMETER_ARC_TOP 9
 #define SMETER_SWEEP (48.0 * G_PI / 180.0)
 #define SMETER_TICK 3
 #define SMETER_MARK_ROOM 2
 #define SMETER_MARK_SIZE 5
-#define SMETER_FIGURE_GAP 3
 #define SMETER_NEEDLE_FROM 0.35
 #define SMETER_S9_AT 0.7
 #define SMETER_OVER_MOST_DB 20
@@ -2536,19 +2535,14 @@ static void draw_smeter_mark(cairo_t *cr, double x, double y, int units) {
 // from a pivot that is below the box and out of sight
 static void draw_smeter(cairo_t *cr, int width) {
 	int strength = atoi(value_of("SMETER"));
-	int s_units = strength / SMETER_PER_UNIT;
-	int is_over = s_units > S_UNITS_MOST
-		|| (s_units == S_UNITS_MOST && strength % SMETER_PER_UNIT > 0);
 	double box_width = px(SMETER_WIDTH);
 	double box_height = px(SMETER_HEIGHT);
-	double left = width - px(SMETER_RIGHT) - box_width;
-	double top = px(SMETER_TOP);
+	double left = width - box_width;
+	double top = 0;
 	double radius = px(SMETER_RADIUS);
 	double x = left + box_width / 2;
 	double y = top + px(SMETER_ARC_TOP) + radius;
 	double angle = smeter_angle(smeter_place(strength));
-	cairo_text_extents_t size;
-	char text[TEXT_MAX];
 	int units;
 
 	cairo_save(cr);
@@ -2582,19 +2576,7 @@ static void draw_smeter(cairo_t *cr, int width) {
 		y + (radius + px(SMETER_TICK)) * sin(angle));
 	cairo_stroke(cr);
 
-	if (s_units > S_UNITS_MOST)
-		s_units = S_UNITS_MOST;
-	if (is_over)
-		snprintf(text, sizeof(text), "S%d+", s_units);
-	else
-		snprintf(text, sizeof(text), "S%d", s_units);
 	cairo_restore(cr);
-	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
-	cairo_set_font_size(cr, px(CORNER_SIZE));
-	cairo_text_extents(cr, text, &size);
-	cairo_move_to(cr, left - px(SMETER_FIGURE_GAP) - size.width - size.x_bearing,
-		px(SPAN_BASELINE));
-	cairo_show_text(cr, text);
 }
 
 // in CW the pitch, where a station tuned in is heard, and in FT8 the pitch
