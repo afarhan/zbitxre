@@ -124,7 +124,10 @@ The map is drawn by Leaflet, which is in static/ beside this file as its
 authors published it, with its licence, and is served from here; the
 pictures of the map itself are OpenStreetMap's, fetched by the visitor's
 browser from OpenStreetMap, which is the one thing on this site that comes
-from somewhere else. The map's own script is map.js, below.
+from somewhere else. OpenStreetMap's servers are run by volunteers and have
+a policy for their use: the page must say whose pictures they are, which it
+does, and must say where it is when it asks for them, which is why the
+map's page alone lets other sites be told this site's name. The map's own script is map.js, below.
 
 MAIL
 
@@ -989,7 +992,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", keep)
         self.send_header("Content-Security-Policy", policy)
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "same-origin")
+        # OpenStreetMap gives its pictures only to a page that says where
+        # it is, so the map's page tells other sites its site's name, and
+        # no more than that; the other pages tell them nothing
+        if policy == MAP_POLICY:
+            self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        else:
+            self.send_header("Referrer-Policy", "same-origin")
         for name, value in headers:
             self.send_header(name, value)
         self.end_headers()
