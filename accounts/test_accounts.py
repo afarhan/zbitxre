@@ -405,7 +405,8 @@ class AccountsTest(unittest.TestCase):
         _, text = Browser(self.port).get("/operate?radio=%d" % radio)
         self.assertIn("Sign in first", text)
         for path, has in (("/static/operate.js", "WebSocket"), ("/static/operate.css", "#app"),
-                          ("/static/sound.js", "radioSound")):
+                          ("/static/sound.js", "radioSound"),
+                          ("/static/sound_worklet.js", "registerProcessor")):
             status, text = Browser(self.port).get(path)
             self.assertEqual(status, 200, path)
             self.assertIn(has, text, path)

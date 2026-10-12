@@ -114,7 +114,11 @@ Each packet's 160 bytes of sound are passed to everyone listening to that
 radio. Listeners today are web browsers, which cannot take UDP: a browser
 opens a WebSocket here, through nginx, at /listen?radio=<number>, from the
 website's globe, and is sent each packet's sound as a binary message, and
-the words "online" and "offline" as the radio comes and goes.
+the words "online" and "offline" as the radio comes and goes. When packets
+did not come, which the RTP sequence numbers show, the listeners are told
+how many before the next that did, "lost 2": UDP loses some, and a player
+that knows where can fill the gap, where one that does not joins two
+pieces of sound that do not belong together and clicks.
 
 With the sound, the daemon says where the radio is tuned and in what mode,
 "TUNED 7074000 USB", when the sound begins and when either changes, and
@@ -451,6 +455,9 @@ class Remote:
         sequence = struct.unpack(">H", packet[STREAM_ID_BYTES + 2:STREAM_ID_BYTES + 4])[0]
         if last is not None and not 0 < (sequence - last) % 65536 < SEQUENCE_AHEAD_MOST:
             return
+        if last is not None and (sequence - last) % 65536 > 1:
+            # so that a player may cover the gap and not click at it
+            self.tell_listeners(radio, "lost %d" % ((sequence - last) % 65536 - 1))
         stream[2] = sequence
         self.heard += 1
         sound = packet[STREAM_ID_BYTES + RTP_HEADER_BYTES:-TAG_BYTES]

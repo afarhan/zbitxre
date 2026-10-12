@@ -582,6 +582,9 @@ MAP_SCRIPT = """
     return ids.length === 0;
   }
   canvas.addEventListener("pointercancel", lifted);
+  // a finger whose lifting was never told of would be counted for ever,
+  // and every touch after it taken for the second of two
+  canvas.addEventListener("lostpointercapture", lifted);
   canvas.addEventListener("pointerup", function (e) {
     var box = canvas.getBoundingClientRect(), best = null, near = 18, i, d;
     if (!lifted(e) || moved > 6) { return; }
@@ -635,6 +638,7 @@ MAP_SCRIPT = """
     socket.onmessage = function (message) {
       if (typeof message.data === "string") {
         var words = message.data.split(" ");
+        if (words[0] === "lost") { player.lost(Number(words[1])); return; }
         if (words[0] === "tuned") {
           var hz = ("000000" + words[1]).slice(-Math.max(7, words[1].length));
           tuned.textContent = hz.slice(0, -6).replace(/^0+(?=\\d)/, "") + "."
@@ -751,6 +755,7 @@ STATIC = {
     "operate.js": "text/javascript; charset=utf-8",
     "operate.css": "text/css; charset=utf-8",
     "sound.js": "text/javascript; charset=utf-8",
+    "sound_worklet.js": "text/javascript; charset=utf-8",
 }
 
 OPERATE_PAGE = """<!doctype html>

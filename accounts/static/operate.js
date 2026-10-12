@@ -880,7 +880,11 @@
     sound = new WebSocket(SOCKETS + "/listen?radio=" + RADIO);
     sound.binaryType = "arraybuffer";
     sound.onmessage = function (message) {
-      if (typeof message.data !== "string") { player.play(new Uint8Array(message.data)); }
+      if (typeof message.data !== "string") {
+        player.play(new Uint8Array(message.data));
+      } else if (message.data.indexOf("lost ") === 0) {
+        player.lost(Number(message.data.slice(5)));
+      }
     };
     sound.onclose = function () { setTimeout(listen, 3000); };
   }

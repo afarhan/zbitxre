@@ -548,6 +548,27 @@ class RemoteTest(unittest.TestCase):
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
 
+    def test_a_listener_is_told_how_many_packets_did_not_come(self):
+        radio = self.switch_on_and_add()
+        speaker = Speaker()
+        listener = self.listener(radio["id"])
+        self.assertEqual(listener.read(), "online")
+        self.hear(speaker, listener)
+        listener.socket.settimeout(0.5)
+        try:
+            while True:
+                listener.read()
+        except socket.timeout:
+            pass
+        listener.socket.settimeout(5)
+        speaker.sequence += 2  # two packets that the network kept
+        sound = speaker.play()
+        self.assertEqual(listener.read(), "lost 2")
+        self.assertEqual(listener.read(), sound)
+        sound = speaker.play()
+        self.assertEqual(listener.read(), sound, "told of a loss when there was none")
+        listener.close()
+
     def owners_page(self, account, radio):
         with self.service.store.open() as db:
             cookie = self.service.new_session(db, account["id"])
