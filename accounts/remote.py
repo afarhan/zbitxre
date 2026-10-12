@@ -75,7 +75,9 @@ value as it connects, which is the copy of the owner's settings, and it
 asks for the log, which is the copy of the logbook. It keeps both in the
 database, in place of the copy before, for the website to show, and closes
 the session. The radio's protocol gives the newest hundred entries of the
-log and no more, so that is what is kept for now.
+log and no more, so that is what is kept for now. keep_a_copy() says how
+the end of the values is found in what a radio, which is never quiet, goes
+on to say.
 
 HOW IT IS SERVED
 
@@ -101,7 +103,9 @@ HELLO_WAIT_S = 10
 SESSION_WAIT_S = 10
 RADIO_QUIET_S = 150
 CLIENT_QUIET_S = 600
-SETTLE_S = 1.5
+FIRST_LINE_WAIT_S = 10
+VALUES_S = 2
+COPY_MOST_S = 30
 LOG_WAIT_S = 5
 LINE_LONGEST = 512
 SESSIONS_A_RADIO = 4
@@ -272,31 +276,12 @@ class Remote:
         if streams is None:
             return
         reader, writer = streams
-        controls = []
+        controls = {}
         log = []
         try:
-            while True:
-                line = await self.read_line(reader, SETTLE_S)
-                if not line:
-                    break
-                if CONTROL_LINE.match(line) and line.split(" ")[0] not in NOT_CONTROLS:
-                    controls.append(line[:LINE_LONGEST])
-            writer.write(b"log\n")
-            await writer.drain()
-            coming = 0
-            while True:
-                line = await self.read_line(reader, LOG_WAIT_S)
-                if not line:
-                    break
-                if line.startswith("LOG_LIST "):
-                    coming = int(line.split()[1])
-                    if coming == 0:
-                        break
-                elif line.startswith("LOG "):
-                    log.append(line[4:][:LINE_LONGEST])
-                    if len(log) >= coming:
-                        break
-        except (ConnectionError, ValueError, IndexError):
+            await asyncio.wait_for(self.read_a_copy(reader, writer, controls, log),
+                                   COPY_MOST_S)
+        except (asyncio.TimeoutError, ConnectionError, ValueError, IndexError):
             pass
         finally:
             writer.close()
@@ -305,7 +290,35 @@ class Remote:
         with self.store.open() as db:
             db.execute("insert or replace into snapshots (radio, taken, controls, log) "
                        "values (?, ?, ?, ?)",
-                       (radio, accounts.now(), "\n".join(controls), "\n".join(log)))
+                       (radio, accounts.now(), "\n".join(
+                           "%s %s" % pair for pair in controls.items()), "\n".join(log)))
+
+    async def read_a_copy(self, reader, writer, controls, log):
+        """A radio is never quiet: its meter's reading changes five times a
+        second and each change is told. So the values it tells a client as
+        it connects are not known to have ended by a pause. They are taken
+        for VALUES_S from the first, which is many times longer than they
+        take to come, and of a control told more than once the last value
+        is kept. The log is asked for after that, and has its own end: the
+        line before it says how many entries are coming."""
+        line = await self.read_line(reader, FIRST_LINE_WAIT_S)
+        ends = time.monotonic() + VALUES_S
+        while line and time.monotonic() < ends:
+            name, _, value = line.partition(" ")
+            if CONTROL_LINE.match(line) and name not in NOT_CONTROLS:
+                controls[name] = value[:LINE_LONGEST]
+            line = await self.read_line(reader, VALUES_S)
+        writer.write(b"log\n")
+        await writer.drain()
+        coming = None
+        while coming is None or len(log) < coming:
+            line = await self.read_line(reader, LOG_WAIT_S)
+            if not line:
+                return
+            if line.startswith("LOG_LIST "):
+                coming = int(line.split()[1])
+            elif line.startswith("LOG ") and coming is not None:
+                log.append(line[4:][:LINE_LONGEST])
 
     # a client
 

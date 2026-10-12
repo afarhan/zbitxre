@@ -52,7 +52,10 @@ class Mail:
 
 class RadioProgram:
     """in place of sdr: every client is told the controls, what a client
-    sets is kept and told to the others, and log is answered"""
+    sets is kept and told to the others, and log is answered. Like a real
+    radio it is never quiet: its meter's reading is told to every client
+    five times a second, which is what first caught the service out, its
+    copy of the settings waiting for a pause that a radio never makes"""
 
     def __init__(self):
         self.controls = {"FREQ": "7074000", "MODE": "USB", "MYCALLSIGN": "VU2ESE",
@@ -61,7 +64,16 @@ class RadioProgram:
         self.lock = threading.Lock()
         self.listener = socket.create_server(("127.0.0.1", 0))
         self.port = self.listener.getsockname()[1]
+        self.is_open = True
         threading.Thread(target=self.accept, daemon=True).start()
+        threading.Thread(target=self.meter, daemon=True).start()
+
+    def meter(self):
+        reading = 500
+        while self.is_open:
+            reading = 500 + (reading + 1) % 6
+            self.set("SMETER", str(reading))
+            time.sleep(0.2)
 
     def accept(self):
         while True:
@@ -115,6 +127,7 @@ class RadioProgram:
                         pass
 
     def close(self):
+        self.is_open = False
         self.listener.close()
 
 
@@ -137,7 +150,11 @@ class Client:
         self.file.flush()
 
     def read(self):
-        return self.file.readline().strip()
+        """the next line that is not the meter's"""
+        line = self.file.readline().strip()
+        while line.startswith("SMETER "):
+            line = self.file.readline().strip()
+        return line
 
     def read_until(self, last):
         lines = []
