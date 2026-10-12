@@ -52,8 +52,13 @@ WHAT A RADIO'S DAEMON SAYS NEXT
     radio                 this is the connection the daemon keeps while the
                           owner has remote access on. Nothing is sent down
                           it but PING from the daemon each minute and PONG
-                          back, and from here, when somebody wants the
-                          radio:
+                          back; the grid locator set on the radio, when the
+                          connection is made and whenever it is changed,
+        GRID MK97fk
+                          which is kept with the radio, the author having
+                          asked for the grid to reach the service along
+                          with the callsign; and from here, when somebody
+                          wants the radio:
         SESSION <token>
     session <token>       this is a connection the daemon made because it
                           was sent that token. Its other end, on the radio,
@@ -273,10 +278,13 @@ class Remote:
         try:
             while True:
                 line = await self.read_line(reader, RADIO_QUIET_S)
-                if line != "PING":
+                if line == "PING":
+                    writer.write(b"PONG\n")
+                    await writer.drain()
+                elif line.split(" ")[0] == "GRID":
+                    self.keep_the_grid(radio, line.partition(" ")[2])
+                else:
                     break
-                writer.write(b"PONG\n")
-                await writer.drain()
         finally:
             copying.cancel()
             if self.lines.get(radio) is writer:
@@ -285,6 +293,17 @@ class Remote:
                     db.execute("update radios set online = 0, last_seen = ? where id = ?",
                                (accounts.now(), radio))
                 self.say("%s is off line" % name)
+
+    def keep_the_grid(self, radio, said):
+        """a grid locator of four or six characters is kept with the radio,
+        written as it is by custom, MK97fk; none at all clears it; anything
+        else is let pass and what was kept stays"""
+        grid = said.strip().upper()
+        if grid and not accounts.GRID_FORM.match(grid):
+            return
+        with self.store.open() as db:
+            db.execute("update radios set grid = ? where id = ?",
+                       (grid[:4] + grid[4:].lower(), radio))
 
     async def open_session(self, radio):
         """a connection to the radio program of a radio that is on line, by

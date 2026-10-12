@@ -328,8 +328,15 @@ then nothing but a word a minute:
 
     radio                      the daemon
     OK                         the service
+    GRID MK97fk                the daemon: the grid locator set on the radio
     PING                       the daemon, each minute
     PONG                       the service
+
+`GRID` is said once the connection is made and again whenever the radio's
+`MYGRID` is changed; with no grid set it is said with nothing after it. The
+service keeps it with the radio. It is the one thing of the radio's that is
+told unasked, the author having asked that the grid reach the service along
+with the callsign.
 
 When somebody wants the radio, the service says so on that connection:
 

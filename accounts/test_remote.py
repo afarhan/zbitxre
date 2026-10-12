@@ -59,6 +59,7 @@ class RadioProgram:
 
     def __init__(self):
         self.controls = {"FREQ": "7074000", "MODE": "USB", "MYCALLSIGN": "VU2ESE",
+                         "MYGRID": "MK97",
                          "REMOTE": "OFF", "REMOTE_STATUS": ""}
         self.clients = []
         self.lock = threading.Lock()
@@ -263,6 +264,18 @@ class RemoteTest(unittest.TestCase):
         radio = self.switch_on_and_add()
         self.assertNotIn(radio["cookie"][:4], self.status())
         self.assertEqual(self.service.radio_called("vu2ese-home")["online"], 1)
+
+    def test_the_grid_set_on_the_radio_reaches_the_service_and_follows_it(self):
+        self.switch_on_and_add()
+        grid = lambda: self.service.radio_called("vu2ese-home")["grid"]
+        self.wait_for(lambda: grid() == "MK97", "the grid did not arrive")
+        self.radio.set("MYGRID", "mk97FK")
+        self.wait_for(lambda: grid() == "MK97fk", "the new grid did not arrive")
+        self.radio.set("MYGRID", "nowhere")
+        time.sleep(1.5)
+        self.assertEqual(grid(), "MK97fk")
+        self.radio.set("MYGRID", "")
+        self.wait_for(lambda: grid() == "", "the grid was not cleared")
 
     def test_with_no_callsign_it_asks_for_one_and_makes_no_connection(self):
         self.radio.set("MYCALLSIGN", "")

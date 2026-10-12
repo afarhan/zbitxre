@@ -44,6 +44,11 @@
 // minute the radio is on line, and from then on the cookie is not shown:
 // REMOTE_STATUS says "ONLINE vu2ese-home".
 //
+// The grid locator set on the radio, MYGRID, goes to the service too, on
+// the connection that is kept, when it is made and whenever the grid is
+// changed: the author asked that the grid reach the service along with the
+// callsign.
+//
 // The radio does not know the name it was given on the website and does
 // not need to. It says whose it is, by the callsign set on it, MYCALLSIGN,
 // which this program is told as any client is; the website finds which of
@@ -121,6 +126,7 @@
 #define CALLSIGN_ROOM 20
 #define CHALLENGE_ROOM 72
 #define NAME_ROOM 40
+#define GRID_ROOM 12
 #define STATUS_ROOM 32
 #define PATH_ROOM 512
 #define COOKIE_LETTERS "abcdefghjkmnpqrstuvwxyz"
@@ -183,6 +189,9 @@ static enum state state = OFF;
 static int is_wanted;
 static char callsign[CALLSIGN_ROOM];
 static int is_callsign_new;
+static char grid[GRID_ROOM];
+static char grid_told[GRID_ROOM];
+static int is_grid_told;
 static char cookie[COOKIE_ROOM];
 static char stretched[SHA256_HEX_ROOM];
 static char stretched_for[CALLSIGN_ROOM];
@@ -517,6 +526,10 @@ static void radio_poll(long now) {
 			is_wanted = 1;
 		if (!strcmp(line, "REMOTE OFF"))
 			is_wanted = 0;
+		if (!strncmp(line, "MYGRID", strlen("MYGRID"))) {
+			grid[0] = 0;
+			sscanf(line, "MYGRID %11s", grid);
+		}
 		if (!strncmp(line, "MYCALLSIGN", strlen("MYCALLSIGN"))) {
 			callsign_heard[0] = 0;
 			sscanf(line, "MYCALLSIGN %19s", callsign_heard);
@@ -656,6 +669,7 @@ static void line_open(long now) {
 	last_heard_ms = now;
 	retry_after_ms = RETRY_FIRST_MS;
 	state = ONLINE;
+	is_grid_told = 0;
 	snprintf(said, sizeof(said), "ONLINE %.22s", name);
 	say_status(said);
 }
@@ -670,6 +684,15 @@ static void line_poll(long now) {
 		if (sscanf(line, "SESSION %64s", token) == 1)
 			session_open(token);
 		got = take_line(&line_lines, line_fd, line, sizeof(line));
+	}
+	// the grid set on the radio, once the connection is made and again
+	// whenever it is changed
+	if (got == 0 && (!is_grid_told || strcmp(grid, grid_told))) {
+		snprintf(line, sizeof(line), "GRID %s\n", grid);
+		if (send_text(line_fd, line) < 0)
+			got = -1;
+		snprintf(grid_told, sizeof(grid_told), "%s", grid);
+		is_grid_told = 1;
 	}
 	if (got == 0 && now >= next_ping_ms) {
 		next_ping_ms = now + PING_EVERY_MS;

@@ -64,8 +64,10 @@ WHAT IS KEPT, AND HOW
     accounts   callsign, email, the password's hash, status, a note
     tokens     the links mailed out, to verify an address or reset a password
     sessions   who is signed in, in which browser
-    radios     each radio's name, its cookie and its client password, and
-               whether it is on line now, which remote.py says
+    radios     each radio's name, its cookie and its client password; and
+               from remote.py, whether it is on line now and the grid
+               locator set on it, which the radio's daemon tells the service
+               along with the callsign, as the author asked
     snapshots  the newest copy of each radio's settings and logbook, which
                remote.py takes when the radio comes on line
     attempts   what has been tried lately, to slow down guessing
@@ -180,6 +182,7 @@ SECRET_GROUP = 4
 STRETCH_ROUNDS = 50000
 
 CALLSIGN_FORM = re.compile(r"^[A-Z0-9]{3,10}$")
+GRID_FORM = re.compile(r"^[A-R]{2}[0-9]{2}([A-X]{2})?$")
 SUFFIX_FORM = re.compile(r"^[a-z0-9]{1,10}$")
 EMAIL_FORM = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s.]{2,}$")
 
@@ -213,6 +216,7 @@ create table if not exists radios (
     created integer not null,
     last_seen integer,
     online integer not null default 0,
+    grid text not null default '',
     unique (account, suffix)
 );
 create table if not exists snapshots (
@@ -464,6 +468,10 @@ class Store:
                 db.execute("drop table radios")
                 db.execute("drop table if exists links")
             db.executescript(SCHEMA)
+            # the grid came after the first radios were added
+            columns = [row["name"] for row in db.execute("pragma table_info(radios)")]
+            if "grid" not in columns:
+                db.execute("alter table radios add column grid text not null default ''")
 
     @contextlib.contextmanager
     def open(self):
@@ -900,12 +908,13 @@ class Handler(BaseHTTPRequestHandler):
                             "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                             "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
                             "<button>%s</button></form> " % (action, guard, radio["id"], label))
-            rows += ("<tr><td><strong>%s</strong></td><td>%s</td><td class=\"code\">%s</td>"
-                     "<td>%s</td><td>%s</td></tr>"
+            rows += ("<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td>"
+                     "<td class=\"code\">%s</td><td>%s</td><td>%s</td></tr>"
                      % (html.escape(radio_id(account["callsign"], radio["suffix"])), state,
-                        show_secret(radio["client_password"]), kept, buttons))
+                        html.escape(radio["grid"]), show_secret(radio["client_password"]),
+                        kept, buttons))
         if rows:
-            radios = ("<table><tr><th>Radio</th><th></th><th>Client password</th>"
+            radios = ("<table><tr><th>Radio</th><th></th><th>Grid</th><th>Client password</th>"
                       "<th>Kept here</th><th></th></tr>%s</table>"
                       "<p>To reach a radio from another computer, give the client its "
                       "name and its client password.</p>" % rows)
