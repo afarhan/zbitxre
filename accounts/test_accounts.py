@@ -404,7 +404,8 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(second.get("/operate?radio=%d" % radio)[0], 404)
         _, text = Browser(self.port).get("/operate?radio=%d" % radio)
         self.assertIn("Sign in first", text)
-        for path, has in (("/static/operate.js", "WebSocket"), ("/static/operate.css", "#app")):
+        for path, has in (("/static/operate.js", "WebSocket"), ("/static/operate.css", "#app"),
+                          ("/static/sound.js", "radioSound")):
             status, text = Browser(self.port).get(path)
             self.assertEqual(status, 200, path)
             self.assertIn(has, text, path)
@@ -435,7 +436,7 @@ class AccountsTest(unittest.TestCase):
         self.assertIn('<canvas id="globe">', text)
         self.assertIn('<button id="view">flat map</button>', text)
         self.assertNotIn("http", text.replace("http-equiv", ""))
-        for path, has in (("/map.js", "createBufferSource"), ("/map.css", "#globe"),
+        for path, has in (("/map.js", "radioSound"), ("/map.css", "#globe"),
                           ("/static/land.json", "[[[")):
             status, text = visitor.get(path)
             self.assertEqual(status, 200, path)

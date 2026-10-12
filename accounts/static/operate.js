@@ -41,7 +41,7 @@
 //
 // The radio's sound comes as it does to anyone listening from the globe,
 // over a second WebSocket, /listen: twenty milliseconds of mu-law to a
-// message. VOL is the loudness in this browser and is not sent to the
+// message, played by sound.js, which says how. VOL is the loudness in this browser and is not sent to the
 // radio: the author's rule is that whoever listens from afar sets their
 // own volume.
 //
@@ -870,41 +870,44 @@
 
   /* the radio's sound */
 
-  var table = new Float32Array(256);
-  (function () {
-    for (var b = 0; b < 256; b++) {
-      var u = ~b & 255, size = (((u & 15) << 3) + 132) << ((u & 112) >> 4);
-      table[b] = ((u & 128) ? (132 - size) : (size - 132)) / 32768;
-    }
-  })();
-  var context = null, gain = null, sound = null, playAt = 0;
+  var player = null, sound = null;
 
   function setLoudness() {
-    if (gain) { gain.gain.value = Number(own.VOL) / 100; }
-  }
-
-  function play(bytes) {
-    var now = context.currentTime;
-    if (playAt > now + 0.5) { return; }
-    if (playAt < now + 0.02) { playAt = now + 0.1; }
-    var buffer = context.createBuffer(1, bytes.length, 8000);
-    var samples = buffer.getChannelData(0);
-    for (var i = 0; i < bytes.length; i++) { samples[i] = table[bytes[i]]; }
-    var source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gain);
-    source.start(playAt);
-    playAt += buffer.duration;
+    if (player) { player.setLoudness(Number(own.VOL) / 100); }
   }
 
   function listen() {
     sound = new WebSocket(SOCKETS + "/listen?radio=" + RADIO);
     sound.binaryType = "arraybuffer";
     sound.onmessage = function (message) {
-      if (typeof message.data !== "string") { play(new Uint8Array(message.data)); }
+      if (typeof message.data !== "string") { player.play(new Uint8Array(message.data)); }
     };
     sound.onclose = function () { setTimeout(listen, 3000); };
   }
+
+  /* the whole screen: asked for with the touch on Start, since a browser
+     gives it only to a touch, and with it the screen is asked to stay on
+     its side. An iPhone's browser gives neither; there the page is put on
+     the home screen (Share, Add to Home Screen) and opened from it, and
+     then it has the screen to itself. If the owner leaves the whole screen,
+     a touch on the line that says what the radio is doing takes it back. */
+
+  function fillScreen() {
+    var root = document.documentElement;
+    var ask = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (!ask || document.fullscreenElement || document.webkitFullscreenElement) { return; }
+    try {
+      var asked = ask.call(root, { navigationUI: "hide" });
+      if (asked && asked.then) {
+        asked.then(function () {
+          if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock("landscape").catch(function () {});
+          }
+        }).catch(function () {});
+      }
+    } catch (refused) { /* the page works as well in the browser's window */ }
+  }
+  status.addEventListener("click", fillScreen);
 
   /* beginning: a browser will make no sound until the page has been touched */
 
@@ -915,10 +918,9 @@
     + "loudness set by VOL here.", start);
   make("button", "", "Start", start).addEventListener("click", function () {
     start.className = "gone";
-    context = new (window.AudioContext || window.webkitAudioContext)();
-    gain = context.createGain();
-    gain.connect(context.destination);
+    player = radioSound();
     setLoudness();
+    fillScreen();
     listen();
     connect();
     show();

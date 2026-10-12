@@ -616,42 +616,19 @@ MAP_SCRIPT = """
 
   /* listening */
 
-  var table = new Float32Array(256);
-  for (var b = 0; b < 256; b++) {
-    var u = ~b & 255;
-    var size = (((u & 15) << 3) + 132) << ((u & 112) >> 4);
-    table[b] = ((u & 128) ? (132 - size) : (size - 132)) / 32768;
-  }
-  var context = null, gain = null, socket = null, playAt = 0;
-
-  function play(bytes) {
-    var now = context.currentTime;
-    if (playAt > now + 0.5) { return; }
-    if (playAt < now + 0.02) { playAt = now + 0.1; }
-    var buffer = context.createBuffer(1, bytes.length, 8000);
-    var samples = buffer.getChannelData(0);
-    for (var i = 0; i < bytes.length; i++) { samples[i] = table[bytes[i]]; }
-    var source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gain);
-    source.start(playAt);
-    playAt += buffer.duration;
-  }
+  var player = null, socket = null;
 
   function stop(said) {
     if (socket) { socket.onclose = null; socket.close(); socket = null; }
-    if (context) { context.close(); context = null; }
+    if (player) { player.close(); player = null; }
     button.textContent = "Listen";
     state.textContent = said;
     tuned.textContent = "";
   }
 
   function start() {
-    context = new (window.AudioContext || window.webkitAudioContext)();
-    gain = context.createGain();
-    gain.gain.value = slider.value / 100;
-    gain.connect(context.destination);
-    playAt = 0;
+    player = radioSound();
+    player.setLoudness(slider.value / 100);
     socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
       + location.host + "/listen?radio=" + chosen.radio);
     socket.binaryType = "arraybuffer";
@@ -675,7 +652,7 @@ MAP_SCRIPT = """
           state.textContent = "too many are listening to this radio just now";
         }
       } else {
-        play(new Uint8Array(message.data));
+        player.play(new Uint8Array(message.data));
       }
     };
     socket.onclose = function () { stop("the connection was lost"); };
@@ -687,7 +664,7 @@ MAP_SCRIPT = """
     if (socket) { stop("stopped"); } else if (chosen) { start(); }
   });
   slider.addEventListener("input", function () {
-    if (gain) { gain.gain.value = slider.value / 100; }
+    if (player) { player.setLoudness(slider.value / 100); }
   });
 
   /* what there is to show */
@@ -763,6 +740,7 @@ MAP_PAGE = """<!doctype html>
 <label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
 </div>
 <div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen</div>
+<script src="/static/sound.js"></script>
 <script src="/map.js"></script>
 </body></html>
 """
@@ -772,6 +750,7 @@ STATIC = {
     "land.json": "application/json",
     "operate.js": "text/javascript; charset=utf-8",
     "operate.css": "text/css; charset=utf-8",
+    "sound.js": "text/javascript; charset=utf-8",
 }
 
 OPERATE_PAGE = """<!doctype html>
@@ -783,6 +762,7 @@ OPERATE_PAGE = """<!doctype html>
 <title>%s</title>
 <link rel="stylesheet" href="/static/operate.css">
 </head><body data-radio="%d" data-name="%s" data-sockets="%s">
+<script src="/static/sound.js"></script>
 <script src="/static/operate.js"></script>
 </body></html>
 """
@@ -1601,7 +1581,10 @@ class Handler(BaseHTTPRequestHandler):
             name = url.path[len("/static/"):]
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                    "static", name), "rb") as file:
-                self.send(200, file.read(), STATIC[name], keep="public, max-age=86400")
+                # the coastlines do not change; the scripts do, and a phone
+                # that kept yesterday's would not have today's mending
+                self.send(200, file.read(), STATIC[name],
+                          keep="public, max-age=86400" if name == "land.json" else "no-cache")
         elif url.path == "/":
             self.home(account)
         elif url.path == "/register":
