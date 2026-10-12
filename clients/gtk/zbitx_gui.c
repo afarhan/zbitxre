@@ -370,10 +370,14 @@
 #define ROW_MARGIN_SIDE 6
 #define TITLE_SIZE 11
 #define CORNER_SIZE 9
-#define WAITING_SIZE 10
+#define WAITING_SIZE 12
 #define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
-#define FREQUENCY_SIZE 13
+#define FREQUENCY_SIZE 17
+// the longest the large line is, "TX:21.074.000", and how wide a letter of
+// the frequency's face is beside its height, with a little over
+#define FREQUENCY_LETTERS 13
+#define LETTER_WIDTH_SHARE 0.63
 #define STATUS_SIZE 10
 #define SPAN_LEFT 3
 #define SPAN_BASELINE 11
@@ -2880,6 +2884,18 @@ static void make_list(void) {
 }
 
 // the panel's colours; the sizes of the letters go with the scale
+// the frequency's letters are the size the plan gives them, unless its
+// longest line would then be wider than its box, as it would in a window
+// much taller for its width than the radio's screen; then they are as
+// large as fits, and the waiting line is smaller by as much
+static int frequency_px(int size) {
+	double fits = px_across(FREQ_WIDTH) / (FREQUENCY_LETTERS * LETTER_WIDTH_SHARE);
+
+	if (px(FREQUENCY_SIZE) <= fits)
+		return px(size);
+	return (int)(fits * size / FREQUENCY_SIZE);
+}
+
 static void load_style(void) {
 	char rules[CSS_MAX];
 
@@ -2920,8 +2936,8 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), px(WAITING_SIZE), px(VALUE_SIZE),
-		px(FREQUENCY_SIZE),
+		px(1), px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
+		frequency_px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
