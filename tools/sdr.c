@@ -58,9 +58,10 @@
 // SAVE", as the panel's LOG screen does; "LOGGER WIPE" clears them.
 // logger.c says what an entry needs.
 //
-// What the panel measures, the forward power, the SWR and the battery, is
-// not printed as it changes, five times a second as the radio transmits;
-// "report" prints it. radio.c says what the numbers are.
+// What is measured, the signal's strength as the radio receives and the
+// forward power and the SWR as it transmits, and the battery, is not
+// printed as it changes, five times a second; "report" prints it. radio.c
+// and meter.c say what the numbers are and who measures them.
 //
 // What the radio copies off the air, FT8's messages, is printed on the
 // terminal as it is copied, a line to each: the mode, the time in UTC it
@@ -113,7 +114,9 @@
 //
 // Ten times a second, while a network client has asked for it, it sends the
 // same spectrum at the full resolution of the bins, 534 points, one to a
-// bin. server.c says how.
+// bin. server.c says how. While the radio transmits it sends them instead the
+// envelope of what is being sent, which the core keeps, as zbitxv2's window
+// drew it in the spectrum's place.
 //
 // Some words are the program's own. "report" prints how the sound card and
 // the link have been doing, and the largest sample sent to the transmitter
@@ -229,6 +232,7 @@
 #include "ft8_qso.h"
 #include "logger.h"
 #include "messages.h"
+#include "meter.h"
 #include "panel_wifi.h"
 #include "control.h"
 #include "modem.h"
@@ -295,6 +299,12 @@
 #define HZ_PER_K 1000.0
 #define VFO_DIAL_MAX_HZ 30000000
 #define CLIENT_SPECTRUM_EVERY_MS 100
+// mod_display has a least and a greatest for each point. 50 either way
+// was the height zbitxv2's window gave it, and is the top of the line sent
+// to clients; 2TONE comes to 21
+#define MODULATION_POINTS (MOD_MAX / 2)
+#define MODULATION_FULL_SCALE 50
+#define MODULATION_HIGHEST 255
 
 // what is measured: 3 kHz either side of the tuned frequency, which is bin
 // 1536 of the spectrum, a bin being 46.875 Hz
@@ -316,6 +326,7 @@ static long next_spectrum_ms;
 static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
 static long next_client_spectrum_ms;
 static uint8_t client_spectrum_line[SPECTRUM_BINS];
+static uint8_t client_modulation_line[MODULATION_POINTS];
 
 static double measured_power[MEASURED_BINS];
 static int measured_times;
@@ -357,9 +368,9 @@ static void report(void) {
 		printf("the panel does not answer\n");
 	sdr_request(asked, answer);
 	printf("transmitter: peak %s\n", answer);
-	printf("meter: power %.1f W, swr %.1f, battery %.2f V\n",
+	printf("meter: power %.1f W, swr %.1f, battery %.2f V, smeter %d\n",
 		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
-		control_get_int("BATTERY") / HUNDREDTHS);
+		control_get_int("BATTERY") / HUNDREDTHS, control_get_int("SMETER"));
 }
 
 static int max_bin_level(int first_bin, int after_last_bin) {
@@ -471,12 +482,42 @@ static void spectrum_send(long now) {
 	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
 }
 
+// the envelope of what is being sent, for the clients to draw where the
+// spectrum was: of each half millisecond's least and greatest, the one
+// further from zero, with 255 for the top of zbitxv2's picture and for
+// anything over it
+static void client_modulation_send(void) {
+	int point;
+	int least;
+	int greatest;
+	int level;
+
+	for (point = 0; point < MODULATION_POINTS; point++) {
+		least = -mod_display[2 * point];
+		greatest = mod_display[2 * point + 1];
+		level = greatest;
+		if (least > level)
+			level = least;
+		level = (level * MODULATION_HIGHEST) / MODULATION_FULL_SCALE;
+		if (level < 0)
+			level = 0;
+		if (level > MODULATION_HIGHEST)
+			level = MODULATION_HIGHEST;
+		client_modulation_line[point] = (uint8_t)level;
+	}
+	server_send_modulation(client_modulation_line, MODULATION_POINTS);
+}
+
 static void client_spectrum_send(long now) {
 	int bin;
 
 	if (now < next_client_spectrum_ms || !server_wants_spectrum())
 		return;
 	next_client_spectrum_ms = now + CLIENT_SPECTRUM_EVERY_MS;
+	if (!strcmp(control_get("TX"), "ON")) {
+		client_modulation_send();
+		return;
+	}
 	for (bin = 0; bin < SPECTRUM_BINS; bin++)
 		client_spectrum_line[SPECTRUM_BINS - 1 - bin]
 			= spectrum_level(SPECTRUM_FIRST_BIN + bin);
@@ -1186,6 +1227,7 @@ static void main_loop(void) {
 		server_send_messages();
 		server_send_log();
 		radio_poll(now_ms());
+		meter_poll(now_ms());
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -1225,6 +1267,7 @@ int main(int argc, char **argv) {
 
 	panel_open();
 	radio_open();
+	meter_open();
 	control_register(&span);
 	control_register(&step);
 	control_register(&vfo);

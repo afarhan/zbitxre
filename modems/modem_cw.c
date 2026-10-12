@@ -197,7 +197,11 @@
 // down and up, at the keyer's speed, and the modem shapes and sends that
 // as it does the paddles'. The radio goes to transmit for it and comes
 // back when it is done, as for the paddles. A touch of a paddle or the key
-// while text is being sent stops it.
+// while text is being sent stops it. So does CW_DO, an action with the one
+// choice ESC, for a client's button: the author asked for an ESC on the
+// screen that halts a macro or what was typed. The text is the audio
+// thread's to stop, so the action leaves it word, is_text_to_stop, and the
+// audio thread stops the text at its next sample.
 //
 // The macros are the function keys' messages, read when the radio starts
 // from data/cw.mc, a file in zbitxv2's form; macros.c says what is in one.
@@ -302,6 +306,7 @@ static atomic_int sidetone_level;
 static atomic_int hang_samples;
 static atomic_int is_wanting_tx;
 static atomic_int is_ring_a_paddle;
+static atomic_int is_text_to_stop;
 
 static int32_t sidetone_output[MAX_BINS/2];
 static float shape_delayed[RF_DELAY_SAMPLES_MAX];
@@ -440,6 +445,11 @@ static int key_for_a_sample(void) {
 
 	if (!cw_text_is_busy())
 		return is_key_down;
+	if (atomic_load(&is_text_to_stop)) {
+		atomic_store(&is_text_to_stop, 0);
+		cw_text_abort();
+		return is_key_down;
+	}
 	if (is_dot_closed || (atomic_load(&is_ring_a_paddle) && is_dash_closed)) {
 		cw_text_abort();
 		return is_key_down;
@@ -1075,7 +1085,21 @@ static int apply_macro(struct control *c, const char *value, char *why, int room
 		snprintf(why, room, "no such macro");
 		return -1;
 	}
+	atomic_store(&is_text_to_stop, 0);
 	cw_text_put(text);
+	return 0;
+}
+
+// the text being sent is stopped and what was waiting is dropped. With no
+// text being sent there is nothing to do, and no word is left to stop the
+// next one
+static int apply_cw_do(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)value;
+	(void)why;
+	(void)room;
+	if (cw_text_is_busy())
+		atomic_store(&is_text_to_stop, 1);
 	return 0;
 }
 
@@ -1149,6 +1173,11 @@ static struct control cw_delay = {
 	.value = "300", .apply = apply_cw_delay,
 };
 
+static struct control cw_do = {
+	.group = "CW", .name = "CW_DO", .kind = CONTROL_ACTION,
+	.choices = "ESC", .apply = apply_cw_do,
+};
+
 static char macro_choices[MACRO_CHOICES_MAX];
 
 static struct control macro = {
@@ -1174,6 +1203,7 @@ static void cw_start(void) {
 	control_register(&cw_input);
 	control_register(&sidetone_control);
 	control_register(&cw_delay);
+	control_register(&cw_do);
 	apply_cw_delay(&cw_delay, cw_delay.value, NULL, 0);
 	atomic_store(&pitch_hz, atoi(pitch.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));

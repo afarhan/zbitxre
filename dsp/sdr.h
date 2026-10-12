@@ -98,6 +98,10 @@ for the transmission. The data required is the same!
 extern float fft_bins[];
 extern int spectrum_plot[];
 
+// the envelope of what is being transmitted; core_sdr.c says what is in it
+#define MOD_MAX 800
+extern int mod_display[];
+
 //vfo definitions
 
 #define MAX_PHASE_COUNT (16385)

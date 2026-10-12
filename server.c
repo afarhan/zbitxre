@@ -66,6 +66,18 @@
 // client that cannot keep up misses lines rather than falling behind: how
 // is below.
 //
+// While the radio transmits there is no spectrum, and in its place the
+// client is sent, as often, the envelope of what is being sent, to draw as
+// an oscilloscope would:
+//
+//     MODULATION 00030a1f...
+//
+// Each point is two hex digits, how far the signal swung from zero in half
+// a millisecond, whatever the drive: 2TONE's two tones come to 107, and
+// 255 is a microphone driven hard, or harder. The points are a fifth of a second, in the order the core keeps
+// them, going round: the newest is somewhere in the line and the oldest
+// follows it. core_sdr.c says how they are kept.
+//
 // A client that sends "messages on" is sent what the radio copies off the
 // air, FT8's messages, a line each as it is copied, beginning with what
 // the radio still has of what was copied before; messages.c says what is
@@ -234,6 +246,7 @@
 #define WHY_MAX CONTROL_WHY_MAX
 #define LABEL_ROOM 16
 #define SPECTRUM_LINE_MAX (2 * SERVER_SPECTRUM_POINTS_MAX + 32)
+#define SPECTRUM_BEGINS_MAX 32
 #define HEX_DIGITS "0123456789abcdef"
 #define MESSAGE_LINE_MAX (MESSAGE_TEXT_ROOM + 48)
 #define ANSWER_WORD "answer "
@@ -437,7 +450,9 @@ int server_wants_spectrum(void) {
 	return 0;
 }
 
-void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
+// a line of points, two hex digits each, after its first words, to every
+// client that asked for the spectrum and has nothing waiting to be sent
+static void send_points(const char *begins, const uint8_t *points, int count) {
 	char line[SPECTRUM_LINE_MAX];
 	int length;
 	int i;
@@ -446,7 +461,7 @@ void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
 		return;
 	if (count > SERVER_SPECTRUM_POINTS_MAX)
 		count = SERVER_SPECTRUM_POINTS_MAX;
-	length = snprintf(line, sizeof(line), "SPECTRUM %d ", span_hz);
+	length = snprintf(line, sizeof(line), "%s", begins);
 	for (i = 0; i < count; i++) {
 		line[length++] = HEX_DIGITS[points[i] >> 4];
 		line[length++] = HEX_DIGITS[points[i] & 0xf];
@@ -460,6 +475,17 @@ void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
 			continue;
 		client_queue_line(&clients[i], line);
 	}
+}
+
+void server_send_spectrum(int span_hz, const uint8_t *points, int count) {
+	char begins[SPECTRUM_BEGINS_MAX];
+
+	snprintf(begins, sizeof(begins), "SPECTRUM %d ", span_hz);
+	send_points(begins, points, count);
+}
+
+void server_send_modulation(const uint8_t *points, int count) {
+	send_points("MODULATION ", points, count);
 }
 
 static void tell_everyone(const char *word, const char *text) {

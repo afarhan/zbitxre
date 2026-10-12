@@ -51,16 +51,19 @@
 //           start of that minute at the moment it is set. hw/radio_clock.c
 //           says where the time comes from and why it is kept as it is.
 //
-//   POWER, SWR, BATTERY   what the front panel measures, in a group of
-//           their own, METER, so that no list of the radio's controls
-//           shows them and they are not kept from one start to the next.
-//           The panel reads the SWR bridge and the battery, as zbitx's
-//           first panel did, and sends them five times a second, when they
-//           change: the forward power in tenths of a watt, the SWR in
-//           tenths, 13 for 1.3, and the battery in hundredths of a volt.
-//           front_panel/meter.cpp says how they are measured. They are
-//           here, in the table, so that every client is told of them as of
-//           any control; nothing in the radio acts on them.
+//   POWER, SWR, BATTERY   what is measured as the radio transmits, in a
+//           group of their own, METER, so that no list of the radio's
+//           controls shows them and they are not kept from one start to
+//           the next. On the zbitx the panel reads the SWR bridge and the
+//           battery, as zbitx's first panel did, and sends them five times
+//           a second, when they change: the forward power in tenths of a
+//           watt, the SWR in tenths, 13 for 1.3, and the battery in
+//           hundredths of a volt. front_panel/meter.cpp says how they are
+//           measured. On the sbitx the radio reads the bridge itself, and
+//           meter.c says how; it has SMETER too, the signal's strength as
+//           the radio receives. They are here, in the table, so that every
+//           client is told of them as of any control; nothing in the radio
+//           acts on them.
 //
 // The names are zbitxv2's, so that its clients and this radio say the same
 // thing in the same words.

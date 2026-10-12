@@ -98,9 +98,21 @@
 // it to the list, where it is a row in these modes as any modem's control
 // is in its own. TX is red while the radio transmits and RX
 // has the bright edge while it receives. 2TONE has the same two. In CW the
-// places are the first six of the radio's macros, each sent at a click. In
-// FT8 the row is empty, and the column's third and fourth buttons are CQ
-// and HALT.
+// places are the first six of the radio's macros, each sent at a click,
+// and the column's fourth button is ESC, which stops a macro, or anything
+// else the radio is sending as text, where it is; the Escape key does the
+// same there. In FT8 the row is empty, and the column's third and fourth
+// buttons are CQ and HALT.
+//
+// In the graph's top right corner is the signal's strength as the radio
+// receives, the radio's SMETER: six boxes, as zbitxv2's window had, lit
+// green at S1, S3, S5, S7 and S9 and the last red for anything over S9,
+// with the figure before them, "S7" or "S9+". While the radio transmits
+// the graph is not the spectrum, of which there is none, but the envelope
+// of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
+// it: the radio sends it in the spectrum's place, a fifth of a second
+// across, and the waterfall stays as it was. The power and the SWR are
+// then at the right end of the status line.
 //
 // In FT8 the graph and the waterfall are not shown. In their place, and
 // down to the foot of the window, the left half is the list of the
@@ -387,6 +399,18 @@
 #define POINTS_MAX 1024
 #define FALL_ROWS 256
 #define FULL_SCALE_DB 80
+#define MODULATION_FULL_SCALE 255.0
+// the S meter's boxes, in the panel's pixels, and what the radio's SMETER
+// is made of: the S units times a hundred, and the dB over
+#define SMETER_BOXES 6
+#define SMETER_BOX_WIDTH 7
+#define SMETER_BOX_HEIGHT 4
+#define SMETER_BOX_GAP 1
+#define SMETER_TOP 4
+#define SMETER_RIGHT 3
+#define SMETER_TEXT_ROOM 16
+#define SMETER_PER_UNIT 100
+#define S_UNITS_MOST 9
 #define SHADES_PER_DB 2
 #define SHADES_A_BAND 32
 #define SHADE_STEP 8
@@ -489,6 +513,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define MACRO_CONTROL "MACRO"
 #define MESSAGES_GROUP "FT8"
 #define FT8_DO_CONTROL "FT8_DO"
+#define CW_DO_CONTROL "CW_DO"
+#define CW_ESC_ROW 3
 #define TX_PITCH_CONTROL "TX_PITCH"
 #define LOG_ROW 0
 #define SET_ROW 1
@@ -585,6 +611,9 @@ static int vfo_in_use = VFO_A;
 static int span_hz;
 static int point_count;
 static uint8_t points[POINTS_MAX];
+static int is_modulation_shown;
+static int modulation_count;
+static uint8_t modulation[POINTS_MAX];
 static cairo_surface_t *fall;
 
 // a radio's two knobs: each one's two contacts and its button
@@ -952,6 +981,11 @@ static void show_buttons(void) {
 		set_class(column_box[i], "dim", i != SET_ROW && i != LOG_ROW);
 		gtk_widget_set_visible(column_box[i], column_names[i][0] != 0);
 	}
+	if (!strcmp(mode_group(), MACRO_GROUP)) {
+		gtk_label_set_text(GTK_LABEL(column_label[CW_ESC_ROW]), "ESC");
+		set_class(column_box[CW_ESC_ROW], "dim", 0);
+		gtk_widget_set_visible(column_box[CW_ESC_ROW], TRUE);
+	}
 	if (!is_ft8)
 		return;
 	gtk_label_set_text(GTK_LABEL(column_label[FT8_CQ_ROW]), "CQ");
@@ -1289,6 +1323,7 @@ static void take_spectrum_line(const char *rest) {
 
 	if (hex == NULL)
 		return;
+	is_modulation_shown = 0;
 	span_hz = atoi(rest);
 	hex++;
 	point_count = strlen(hex) / 2;
@@ -1305,6 +1340,20 @@ static void take_spectrum_line(const char *rest) {
 	for (i = 0; i < point_count; i++)
 		row[i] = heat_map(points[i] * SHADES_PER_DB);
 	cairo_surface_mark_dirty(fall);
+	gtk_widget_queue_draw(spectrum_area);
+}
+
+// MODULATION <two hex digits a point>: the envelope of what the radio is
+// sending, which it sends while it transmits where the spectrum was
+static void take_modulation_line(const char *hex) {
+	int i;
+
+	modulation_count = strlen(hex) / 2;
+	if (modulation_count > POINTS_MAX)
+		modulation_count = POINTS_MAX;
+	for (i = 0; i < modulation_count; i++)
+		modulation[i] = (uint8_t)(hex_digit(hex[2 * i]) * 16 + hex_digit(hex[2 * i + 1]));
+	is_modulation_shown = 1;
 	gtk_widget_queue_draw(spectrum_area);
 }
 
@@ -1489,6 +1538,10 @@ static void handle_line(const char *name, char *value) {
 
 	if (!strcmp(name, "SPECTRUM")) {
 		take_spectrum_line(value);
+		return;
+	}
+	if (!strcmp(name, "MODULATION")) {
+		take_modulation_line(value);
 		return;
 	}
 	if (!strcmp(name, "CONTROL")) {
@@ -2029,6 +2082,8 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of);
 		return TRUE;
 	}
+	if (clicked == CW_ESC_ROW && !strcmp(mode_group(), MACRO_GROUP))
+		send_line(CW_DO_CONTROL, "ESC");
 	if (strcmp(mode_group(), MESSAGES_GROUP))
 		return TRUE;
 	if (clicked == FT8_CQ_ROW)
@@ -2156,6 +2211,8 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 		return TRUE;
 	}
 	if (event->keyval == GDK_KEY_Escape) {
+		if (!strcmp(mode_group(), MACRO_GROUP))
+			send_line(CW_DO_CONTROL, "ESC");
 		focus = ON_FREQUENCY;
 		show_values();
 		return TRUE;
@@ -2394,6 +2451,69 @@ static void draw_graph(cairo_t *cr, int width, int height) {
 	cairo_stroke(cr);
 }
 
+// the envelope of what is being sent, each point a line as far above the
+// middle as below it
+static void draw_modulation(cairo_t *cr, int width, int height) {
+	double middle = height / 2.0;
+	double reach;
+	double x;
+	int i;
+
+	cairo_set_source_rgb(cr, 0.0, 0.05, 0.1);
+	cairo_rectangle(cr, 0, 0, width, height);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 0.2, 0.25, 0.3);
+	cairo_set_line_width(cr, 1.0);
+	cairo_move_to(cr, 0, middle);
+	cairo_line_to(cr, width, middle);
+	cairo_stroke(cr);
+	if (modulation_count < 1)
+		return;
+	cairo_set_source_rgb(cr, 1.0, 0.9, 0.0);
+	for (i = 0; i < width; i++) {
+		x = i + 0.5;
+		reach = modulation[(i * modulation_count) / width] * middle / MODULATION_FULL_SCALE;
+		cairo_move_to(cr, x, middle - reach - 0.5);
+		cairo_line_to(cr, x, middle + reach + 0.5);
+	}
+	cairo_stroke(cr);
+}
+
+// the signal's strength, in the graph's top right corner: the figure, and
+// after it the boxes for S1, S3, S5, S7 and S9, and one for over S9
+static void draw_smeter(cairo_t *cr, int width) {
+	int strength = atoi(value_of("SMETER"));
+	int s_units = strength / SMETER_PER_UNIT;
+	int is_over = s_units > S_UNITS_MOST
+		|| (s_units == S_UNITS_MOST && strength % SMETER_PER_UNIT > 0);
+	double box_width = px(SMETER_BOX_WIDTH);
+	double pitch = px(SMETER_BOX_WIDTH + SMETER_BOX_GAP);
+	double left = width - px(SMETER_RIGHT) - SMETER_BOXES * pitch;
+	char text[TEXT_MAX];
+	int i;
+
+	if (s_units > S_UNITS_MOST)
+		s_units = S_UNITS_MOST;
+	for (i = 0; i < SMETER_BOXES; i++) {
+		cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+		if (i < SMETER_BOXES - 1 && s_units >= 2 * i + 1)
+			cairo_set_source_rgb(cr, 0.0, 1.0, 0.0);
+		if (i == SMETER_BOXES - 1 && is_over)
+			cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
+		cairo_rectangle(cr, left + i * pitch, px(SMETER_TOP), box_width,
+			px(SMETER_BOX_HEIGHT));
+		cairo_fill(cr);
+	}
+	if (is_over)
+		snprintf(text, sizeof(text), "S%d+", s_units);
+	else
+		snprintf(text, sizeof(text), "S%d", s_units);
+	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
+	cairo_set_font_size(cr, px(CORNER_SIZE));
+	cairo_move_to(cr, left - px(SMETER_TEXT_ROOM), px(SPAN_BASELINE));
+	cairo_show_text(cr, text);
+}
+
 // in CW the pitch, where a station tuned in is heard, and in FT8 the pitch
 // we send at, is carried down the waterfall from the graph, dotted, so that
 // the station right under it is not hidden
@@ -2440,13 +2560,18 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 	int graph_height = px_down(GRAPH_HEIGHT);
 
 	(void)unused;
-	draw_graph(cr, width, graph_height);
-	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
-	cairo_set_font_size(cr, px(CORNER_SIZE));
-	cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
-	// FT8 shows its passband whatever the span, so the span is not named
-	if (strcmp(mode_group(), MESSAGES_GROUP))
-		cairo_show_text(cr, value_of("SPAN"));
+	if (is_modulation_shown) {
+		draw_modulation(cr, width, graph_height);
+	} else {
+		draw_graph(cr, width, graph_height);
+		draw_smeter(cr, width);
+		cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
+		cairo_set_font_size(cr, px(CORNER_SIZE));
+		cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
+		// FT8 shows its passband whatever the span, so the span is not named
+		if (strcmp(mode_group(), MESSAGES_GROUP))
+			cairo_show_text(cr, value_of("SPAN"));
+	}
 	cairo_translate(cr, 0, graph_height);
 	draw_waterfall(cr, width, height - graph_height);
 	return TRUE;

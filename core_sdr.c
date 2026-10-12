@@ -132,6 +132,22 @@
 // one, so the spectrum differs from zbitxv2's by a little; the sound does
 // not differ at all.
 //
+// THE MODULATION
+//
+// While the radio transmits there is no spectrum, and zbitxv2 drew in its
+// place what was being sent: the envelope, as an oscilloscope shows it.
+// sdr_modulation_update() is zbitxv2's, from its sbitx_gtk.c, brought here
+// since the core is where the samples are. For every 48 samples sent to
+// the transmitter, half a millisecond, it keeps the least and the
+// greatest in mod_display, the one after the other, and goes round to the
+// start when the 800 places are full: a fifth of a second across. The
+// figures are as zbitxv2 kept them, the samples over 40 million and over
+// the level they are sent at, so that the drive does not change the
+// picture. 2TONE's two tones come to 21 either way, and zbitxv2's window
+// had room for some 50; a microphone driven hard goes well past that.
+// Whoever draws it reads mod_display as it is; it is cleared as each
+// transmission begins.
+//
 // WHO CHANGES WHAT
 //
 // The audio thread runs sound_block(), and from it sound_process(),
@@ -180,6 +196,8 @@ static int center_bin = 512;
 
 float fft_bins[MAX_BINS]; // spectrum ampltiudes
 int spectrum_plot[MAX_BINS];
+int mod_display[MOD_MAX];
+static int mod_display_index = 0;
 complex float *fft_spectrum;
 static void set_rx1(int frequency);
 
@@ -250,6 +268,8 @@ static atomic_int reset_wanted = 0;
 #define MICROS_PER_MILLI 1000
 #define MILLIONTHS 1000000.0
 #define SAMPLE_FULL_SCALE 2147483647.0
+#define MOD_SAMPLES 48
+#define MOD_DIVISOR 40000000.0
 #define DB_OF_AMPLITUDE 20.0
 #define TX_MUTE_BLOCKS 20
 
@@ -851,6 +871,28 @@ void speaker_play(const int32_t *samples, int count){
 */
 static double tx_samples[MAX_BINS/2];
 
+static void sdr_modulation_update(int32_t *samples, int count, double scale_up){
+	int min = 0x7fffffff;
+	int max = -0x7fffffff;
+
+	if (scale_up <= 0)
+		return;
+	for (int i = 0; i < count; i++){
+		if (i % MOD_SAMPLES == 0 && i > 0){
+			if (mod_display_index >= MOD_MAX)
+				mod_display_index = 0;
+			mod_display[mod_display_index++] = (min / MOD_DIVISOR) / scale_up;
+			mod_display[mod_display_index++] = (max / MOD_DIVISOR) / scale_up;
+			min = 0x7fffffff;
+			max = -0x7fffffff;
+		}
+		if (samples[i] < min)
+			min = samples[i];
+		if (samples[i] > max)
+			max = samples[i];
+	}
+}
+
 static void tx_process(
 	int32_t *input_rx, int32_t *input_mic,
 	int32_t *output_speaker, int32_t *output_tx,
@@ -952,6 +994,7 @@ static void tx_process(
 			peak = abs(output_tx[i]);
 	}
 	atomic_store(&tx_peak, peak);
+	sdr_modulation_update(output_tx, MAX_BINS/2, tx_amp);
 }
 
 /*
@@ -1107,6 +1150,7 @@ static void tr_switch(int tx_on){
 		tx_process_restart = 1;
 		set_tx_power_levels();
 		atomic_store(&tx_peak, 0);
+		memset(mod_display, 0, sizeof(mod_display));
 		in_tx = 1;
 
 		board_receiver_power(0);

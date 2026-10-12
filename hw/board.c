@@ -143,6 +143,11 @@
 // It works at the middle of what the sound card sees, bin 512, 24 kHz from
 // the BFO, with the BFO at 40.035 MHz, as sbitx.c has it.
 //
+// Its SWR bridge is read by an ATtiny85 on the board, which the Pi asks
+// over the I2C bus; hw/swr_bridge.c does. The zbitx's bridge goes to its
+// front panel, which measures it and tells the radio. is_bridge_on_i2c
+// says the Pi is to read it.
+//
 // Its two knobs are wired to the Pi as well, but they are no business of
 // this file or of the radio program: the window on the radio's screen reads
 // them, and clients/gtk/zbitx_gui.c has their pins.
@@ -187,6 +192,7 @@ const struct board board_sbitx_v3 = {
 	.centre_bin = 512,
 	.is_filter_in_receive = 1,
 	.is_power_before_filter = 1,
+	.is_bridge_on_i2c = 1,
 	.filter = {
 		{ "D", 7, 5500000u },
 		{ "C", 8, 10500000u },

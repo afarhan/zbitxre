@@ -26,13 +26,13 @@ LINK        = front_panel/link.c
 LINK_HEADERS = front_panel/link.h
 
 HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw/key.h \
-	hw/radio_clock.h \
+	hw/radio_clock.h hw/swr_bridge.h \
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h modems/cw_keyer.h \
 	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
 	modems/ft8_callsign_hash.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
-	hw/radio_clock.c \
+	hw/radio_clock.c hw/swr_bridge.c \
 	$(LINK)
 # every file in modems/ is a modem, and the list of them is made from the
 # files at build time; modem.h says how
@@ -125,11 +125,11 @@ sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
 		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h panel_cw.c panel_cw.h \
-		logger.c logger.h server.h control.h \
+		logger.c logger.h server.h control.h meter.c meter.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
 		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c logbook.c \
-		logger.c settings.c \
+		logger.c settings.c meter.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \

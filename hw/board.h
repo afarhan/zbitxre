@@ -28,6 +28,7 @@ struct board {
 	int centre_bin;
 	int is_filter_in_receive;
 	int is_power_before_filter;
+	int is_bridge_on_i2c;
 	struct board_filter filter[BOARD_FILTERS_MAX + 1];
 };
 
