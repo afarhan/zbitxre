@@ -17,7 +17,8 @@
 //           graph and the waterfall; in FT8 the messages copied have the
 //           left half
 //           on the right, three wide: the list of the radio's other
-//           controls and the mode's own, which scrolls
+//           controls and the mode's own, which scrolls; a tap on the
+//           frequency lays the tuning wheel over it
 //   row 7   under the waterfall, six places for the mode's own buttons:
 //           TX and RX in the voice modes, the CW macros in CW
 //
@@ -185,6 +186,10 @@
   scope.id = "scope";
   var list = make("div", "", null, app);
   list.id = "list";
+  var wheelBox = make("div", "canvas-box gone", null, app);
+  wheelBox.id = "wheel-box";
+  var wheel = make("canvas", "", null, wheelBox);
+  wheel.id = "wheel";
 
   var veil = make("div", "", null, document.body);
   veil.id = "veil";
@@ -701,7 +706,103 @@
     e.preventDefault();
     tune(e.deltaY < 0 ? 1 : -1);
   }, { passive: false });
-  window.addEventListener("resize", function () { drawScope(); drawMeter(); });
+  window.addEventListener("resize", function () { drawScope(); drawMeter(); drawWheel(); });
+
+  /* the tuning wheel: the window's, for a finger. A tap on the frequency
+     brings it up over the list of controls, where it does not hide the
+     spectrum, which is what is watched while tuning. A finger taken round
+     it turns it, clockwise up, a step of STEP for every ten degrees, 36 to
+     the turn; with RIT on it moves the receiver alone, as all tuning here
+     does. It is the angle the finger goes through that counts, not where
+     it is put down. The dimple goes round with the wheel so that it is
+     seen to turn. The hub does not turn and has a cross on it: a tap
+     there, or another on the frequency, puts the wheel away. */
+
+  var WHEEL_TICKS = 36, WHEEL_NOTCH = 2 * Math.PI / WHEEL_TICKS;
+  var WHEEL_HUB_SHARE = 0.32, WHEEL_DIMPLE_AT = 0.68, WHEEL_DIMPLE_SHARE = 0.16;
+  var WHEEL_TICK_SHARE = 0.08, WHEEL_MARGIN = 0.06;
+  var wheelAngle = 0, wheelFingerAngle = 0, wheelOwed = 0, isWheelHeld = false;
+
+  function wheelRadius() {
+    return Math.min(wheel.clientWidth, wheel.clientHeight) * (0.5 - WHEEL_MARGIN);
+  }
+  // the angle of the finger from the wheel's middle, growing clockwise,
+  // and how far from the middle it is
+  function wheelPlace(e) {
+    var box = wheel.getBoundingClientRect();
+    var across = e.clientX - box.left - box.width / 2, down = e.clientY - box.top - box.height / 2;
+    return { angle: Math.atan2(down, across), out: Math.hypot(across, down) };
+  }
+  function showWheel(on) {
+    isWheelHeld = false;
+    wheelBox.className = "canvas-box" + (on ? "" : " gone");
+    drawWheel();
+  }
+
+  function drawWheel() {
+    var scale = window.devicePixelRatio || 1;
+    var wide = wheel.clientWidth, high = wheel.clientHeight, radius = wheelRadius(), i, angle;
+    if (!wide || !high) { return; }
+    if (wheel.width !== Math.round(wide * scale) || wheel.height !== Math.round(high * scale)) {
+      wheel.width = Math.round(wide * scale); wheel.height = Math.round(high * scale);
+    }
+    var pen = wheel.getContext("2d"), arm = radius * WHEEL_HUB_SHARE * 0.35;
+    pen.setTransform(scale, 0, 0, scale, 0, 0);
+    pen.fillStyle = "#101820"; pen.fillRect(0, 0, wide, high);
+    pen.strokeStyle = "#ffc000"; pen.lineWidth = 1;
+    pen.strokeRect(0.5, 0.5, wide - 1, high - 1);
+    pen.translate(wide / 2, high / 2);
+    pen.fillStyle = isWheelHeld ? "#384d61" : "#293847";
+    pen.beginPath(); pen.arc(0, 0, radius, 0, 2 * Math.PI); pen.fill();
+    pen.strokeStyle = "#8fa1b0"; pen.beginPath();
+    for (i = 0; i < WHEEL_TICKS; i++) {
+      angle = wheelAngle + i * WHEEL_NOTCH;
+      pen.moveTo(radius * Math.cos(angle), radius * Math.sin(angle));
+      pen.lineTo(radius * (1 - WHEEL_TICK_SHARE) * Math.cos(angle),
+        radius * (1 - WHEEL_TICK_SHARE) * Math.sin(angle));
+    }
+    pen.stroke();
+    pen.fillStyle = "#0a0f14"; pen.beginPath();
+    pen.arc(radius * WHEEL_DIMPLE_AT * Math.cos(wheelAngle),
+      radius * WHEEL_DIMPLE_AT * Math.sin(wheelAngle), radius * WHEEL_DIMPLE_SHARE, 0, 2 * Math.PI);
+    pen.fill();
+    pen.fillStyle = "#101820"; pen.beginPath();
+    pen.arc(0, 0, radius * WHEEL_HUB_SHARE, 0, 2 * Math.PI); pen.fill();
+    pen.strokeStyle = "#ffffff"; pen.lineWidth = 2; pen.beginPath();
+    pen.moveTo(-arm, -arm); pen.lineTo(arm, arm);
+    pen.moveTo(arm, -arm); pen.lineTo(-arm, arm);
+    pen.stroke();
+  }
+
+  frequency.addEventListener("click", function () {
+    showWheel(wheelBox.className.indexOf("gone") >= 0);
+  });
+  wheel.addEventListener("pointerdown", function (e) {
+    var at = wheelPlace(e);
+    if (at.out <= wheelRadius() * WHEEL_HUB_SHARE) { showWheel(false); return; }
+    isWheelHeld = true;
+    wheelFingerAngle = at.angle;
+    wheelOwed = 0;
+    wheel.setPointerCapture(e.pointerId);
+    drawWheel();
+  });
+  wheel.addEventListener("pointermove", function (e) {
+    if (!isWheelHeld) { return; }
+    var now = wheelPlace(e).angle, turned = now - wheelFingerAngle, notches;
+    // the short way round, across where the angle wraps
+    if (turned > Math.PI) { turned -= 2 * Math.PI; }
+    if (turned < -Math.PI) { turned += 2 * Math.PI; }
+    wheelFingerAngle = now;
+    wheelAngle += turned;
+    wheelOwed += turned;
+    notches = Math.trunc(wheelOwed / WHEEL_NOTCH);
+    wheelOwed -= notches * WHEEL_NOTCH;
+    if (notches !== 0) { tune(notches); }
+    drawWheel();
+  });
+  function letGoOfWheel() { isWheelHeld = false; drawWheel(); }
+  wheel.addEventListener("pointerup", letGoOfWheel);
+  wheel.addEventListener("pointercancel", letGoOfWheel);
 
   /* the meter: the signal's strength on a dial with a needle */
 

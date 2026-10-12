@@ -58,6 +58,9 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
 #messages div.to-us { color: #ffe000; }
 #messages div.marked { background: #604800; }
 
+#wheel-box { grid-column: 8 / span 3; grid-row: 3 / span 5; z-index: 2; }
+#wheel-box.gone { display: none; }
+#wheel { touch-action: none; }
 #list { grid-column: 8 / span 3; grid-row: 3 / span 5; overflow-y: auto; background: #000;
     -webkit-overflow-scrolling: touch; }
 .row { height: 14.2857vh; height: calc(100dvh / 7); background: #101820;
