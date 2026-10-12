@@ -131,6 +131,26 @@ one address, beyond which a browser is sent the word "full" and no sound. A list
 packets and stays up to date. Clients that take UDP, the window among
 them, are to come.
 
+WORKING A RADIO FROM A BROWSER
+
+The website has a client of its own, a page that works the radio as the
+window does; accounts/static/operate.js is it. A browser cannot make the
+plain connection the window makes, so the page opens a WebSocket here,
+through nginx, at /work?radio=<number>, and this service is the go-between.
+It is for the radio's owner, signed in to the website: the browser's
+session says who it is, and no client password is asked for. It is then a
+client like the window: the one client the radio may have, with a session
+of its own to the radio program by way of the daemon. Each text message
+from the page is lines of the radio's protocol, passed to the radio as
+they are, and what the radio says goes back as text messages of whole
+lines. The page hears the radio as any listener does, at /listen.
+
+A page that works a radio can put it on the air, and a phone goes out of
+reach of its network without saying so. So the page sends a full stop
+every few seconds, which is not passed on, and if nothing has come from it
+for twenty seconds, or its connection closes, the radio is told "TX OFF"
+before the session is let go.
+
 NOTHING IS SENT THAT NOBODY ASKED FOR
 
 The author's rule. A radio that is on line and not in use costs a line a
@@ -192,6 +212,8 @@ LISTENER_WAITING_MOST = 4096
 LISTENERS_A_RADIO = 100
 LISTENERS_AN_ADDRESS = 6
 REQUEST_LONGEST = 8192
+PAGE_QUIET_S = 20
+MESSAGE_LONGEST = 65536
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WRONG_PROOFS = 100
 WINDOW_S = 15 * 60
@@ -439,7 +461,7 @@ class Remote:
 
     def tell_listeners(self, radio, word):
         for listener in self.listeners.get(radio, ()):
-            listener.write(bytes([0x81, len(word)]) + word.encode())
+            listener.write(self.text_message(word))
 
     def listener_of(self, headers, path):
         """the radio a browser may listen to: the one its address names, if
@@ -462,10 +484,64 @@ class Remote:
         return (len(self.listeners.get(radio, ())) < LISTENERS_A_RADIO
                 and from_there < LISTENERS_AN_ADDRESS)
 
+    def owner_of(self, headers, path):
+        """the radio a browser may work: the one its address names, if the
+        browser is signed in to the website as that radio's owner and the
+        page asking is the website's own; None otherwise"""
+        if headers.get("origin") != self.settings.base_url:
+            return None
+        name = "__Host-sid" if self.settings.base_url.startswith("https://") else "sid"
+        secret = ""
+        for part in headers.get("cookie", "").split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == name:
+                secret = value
+        account = self.service.session_account(secret)
+        number = path.partition("?radio=")[2]
+        if account is None or not number.isdigit():
+            return None
+        with self.store.open() as db:
+            return db.execute(
+                "select radios.*, accounts.callsign from radios join accounts "
+                "on accounts.id = radios.account where radios.id = ? and radios.account = ?",
+                (int(number), account["id"])).fetchone()
+
+    async def read_message(self, reader, wait_s):
+        """the next message of a browser's WebSocket: (True, text) or
+        (False, bytes); None when it closes, says nothing in time, or sends
+        what is too long"""
+        try:
+            head = await asyncio.wait_for(reader.readexactly(2), wait_s)
+            length = head[1] & 0x7f
+            if length == 126:
+                length = struct.unpack(">H", await reader.readexactly(2))[0]
+            elif length == 127:
+                length = struct.unpack(">Q", await reader.readexactly(8))[0]
+            if length > MESSAGE_LONGEST:
+                return None
+            mask = await reader.readexactly(4) if head[1] & 0x80 else bytes(4)
+            body = bytes(byte ^ mask[at % 4]
+                         for at, byte in enumerate(await reader.readexactly(length)))
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError):
+            return None
+        if head[0] & 0x0f == 8:
+            return None
+        if head[0] & 0x0f == 1:
+            return True, body.decode("utf-8", "replace")
+        return False, body
+
+    @staticmethod
+    def text_message(text):
+        body = text.encode()
+        if len(body) < 126:
+            return bytes([0x81, len(body)]) + body
+        if len(body) < 65536:
+            return bytes([0x81, 126]) + struct.pack(">H", len(body)) + body
+        return bytes([0x81, 127]) + struct.pack(">Q", len(body)) + body
+
     async def meet_browser(self, reader, writer):
         """a browser's WebSocket, RFC 6455: its request is answered, and it
-        is then a listener until it closes"""
-        radio = None
+        then listens to a radio or works one, as its address says"""
         try:
             request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HELLO_WAIT_S)
             lines = request.decode("latin-1").split("\r\n")
@@ -474,9 +550,13 @@ class Remote:
             for line in lines[1:]:
                 name, _, value = line.partition(":")
                 headers[name.strip().lower()] = value.strip()
-            found = self.listener_of(headers, path)
+            found = None
+            if path.startswith("/listen?"):
+                found = self.listener_of(headers, path)
+            elif path.startswith("/work?"):
+                found = self.owner_of(headers, path)
             key = headers.get("sec-websocket-key", "")
-            if found is None or not path.startswith("/listen?") or not key:
+            if found is None or not key:
                 writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                 await writer.drain()
                 return
@@ -484,41 +564,100 @@ class Remote:
             writer.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                          b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept
                          + b"\r\n\r\n")
-            address = headers.get("x-real-ip", "")
-            if not self.has_room(found["id"], address):
-                writer.write(bytes([0x81, 4]) + b"full")
-                await writer.drain()
-                return
-            radio = found["id"]
-            self.listener_from[writer] = address
-            self.listeners.setdefault(radio, set()).add(writer)
-            word = b"online" if radio in self.lines else b"offline"
-            writer.write(bytes([0x81, len(word)]) + word)
-            if radio in self.tuned:
-                word = ("tuned " + self.tuned[radio]).encode()
-                writer.write(bytes([0x81, len(word)]) + word)
-            self.start_stream(radio)
-            # what the browser sends is read only to learn that it has closed
-            while True:
-                head = await reader.readexactly(2)
-                length = head[1] & 0x7f
-                if length == 126:
-                    length = struct.unpack(">H", await reader.readexactly(2))[0]
-                elif length == 127:
-                    break
-                await reader.readexactly(4 + length)
-                if head[0] & 0x0f == 8:
-                    break
+            if path.startswith("/work?"):
+                await self.work(found, reader, writer)
+            else:
+                await self.listen(found, headers.get("x-real-ip", ""), reader, writer)
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
                 ConnectionError, IndexError):
             pass
         finally:
-            self.listener_from.pop(writer, None)
-            if radio is not None:
-                self.listeners[radio].discard(writer)
-                if not self.listeners[radio]:
-                    self.stop_stream(radio)
             writer.close()
+
+    async def listen(self, found, address, reader, writer):
+        """a browser listening to a radio, until it closes"""
+        if not self.has_room(found["id"], address):
+            writer.write(self.text_message("full"))
+            await writer.drain()
+            return
+        radio = found["id"]
+        self.listener_from[writer] = address
+        self.listeners.setdefault(radio, set()).add(writer)
+        try:
+            writer.write(self.text_message("online" if radio in self.lines else "offline"))
+            if radio in self.tuned:
+                writer.write(self.text_message("tuned " + self.tuned[radio]))
+            self.start_stream(radio)
+            # what the browser sends is read only to learn that it has closed
+            while await self.read_message(reader, None) is not None:
+                pass
+        finally:
+            self.listener_from.pop(writer, None)
+            self.listeners[radio].discard(writer)
+            if not self.listeners[radio]:
+                self.stop_stream(radio)
+
+    async def work(self, radio, reader, writer):
+        """the owner's browser working a radio: its lines to the radio and
+        the radio's to it, until the page goes; then the radio is told to
+        stop transmitting, in case it was"""
+        name = accounts.radio_id(radio["callsign"], radio["suffix"])
+        refusal = ""
+        if radio["id"] not in self.lines:
+            refusal = "offline"
+        elif self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
+            refusal = "busy"
+        streams = None
+        if not refusal:
+            self.sessions[radio["id"]] = self.sessions.get(radio["id"], 0) + 1
+            streams = await self.open_session(radio["id"])
+            if streams is None:
+                self.sessions[radio["id"]] -= 1
+                refusal = "offline"
+        if refusal:
+            writer.write(self.text_message("! " + refusal))
+            await writer.drain()
+            return
+        radio_reader, radio_writer = streams
+        writer.write(self.text_message("! connected " + name))
+        self.say("the owner's browser is on %s" % name)
+
+        async def from_the_radio():
+            waiting = b""
+            while True:
+                data = await radio_reader.read(PIPE_BYTES)
+                if not data:
+                    return
+                waiting += data
+                whole, _, waiting = waiting.rpartition(b"\n")
+                if whole:
+                    writer.write(self.text_message(whole.decode("utf-8", "replace")))
+                    await writer.drain()
+
+        async def from_the_page():
+            while True:
+                message = await self.read_message(reader, PAGE_QUIET_S)
+                if message is None:
+                    return
+                is_text, body = message
+                if is_text and body != ".":
+                    radio_writer.write(body.encode() + b"\n")
+                    await radio_writer.drain()
+
+        ways = [asyncio.ensure_future(from_the_radio()), asyncio.ensure_future(from_the_page())]
+        try:
+            await asyncio.wait(ways, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for way in ways:
+                way.cancel()
+            try:
+                radio_writer.write(b"TX OFF\n")
+                await asyncio.wait_for(radio_writer.drain(), 2)
+            except (ConnectionError, asyncio.TimeoutError):
+                pass
+            radio_writer.close()
+            self.sessions[radio["id"]] -= 1
+            self.say("the owner's browser has left %s" % name)
 
     def keep_the_grid(self, radio, said):
         """a grid locator of four or six characters is kept with the radio,

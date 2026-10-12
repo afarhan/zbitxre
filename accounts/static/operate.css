@@ -1,0 +1,129 @@
+/* operate.css — the radio worked from a browser: accounts/static/operate.js
+   says what the page is. It is laid out as the window on the radio's own
+   screen is, clients/gtk/zbitx_gui.c, place for place, on a grid ten places
+   across and seven down, for a phone held on its side. */
+
+html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+    font-family: sans-serif; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+#app { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh;
+    display: grid; grid-template-columns: repeat(10, minmax(0, 1fr));
+    grid-template-rows: repeat(7, minmax(0, 1fr)); }
+
+/* a canvas is as large as the box it is in and never the other way about: left
+   to itself, a canvas drawn at a sharp screen's two pixels to one asks for
+   twice the room, is given it, is drawn larger still, and so on without end */
+.canvas-box { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.canvas-box canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    display: block; }
+
+.tile { background: #101820; box-shadow: inset 0 0 0 1px #405060; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; min-width: 0;
+    min-height: 0; overflow: hidden; cursor: pointer; }
+.tile .title { color: #00ffff; font-size: 3.1vh; line-height: 1.25; white-space: nowrap; }
+.tile .value { font-size: 4vh; line-height: 1.25; white-space: nowrap; }
+.tile.button .value { font-size: 4.2vh; }
+.tile.in-use { background: #604800; }
+.tile.on { background: #b02020; }
+.tile.focused { box-shadow: inset 0 0 0 2px #ffc000; }
+.tile.dim .value, .tile.dim .title { color: #4a5a68; }
+.tile.hidden { visibility: hidden; }
+
+#frequency { grid-column: 3 / span 2; grid-row: 1; align-items: flex-start; padding-left: 1.6vw; }
+#frequency .waiting { font-family: monospace; font-weight: bold; color: #00ffff; font-size: 3.2vh; }
+#frequency .figures { font-family: monospace; font-weight: bold; font-size: 5vh;
+    white-space: nowrap; }
+#frequency.sending .figures { color: #ff6060; }
+#meter-box { grid-column: 2; grid-row: 1; background: #101820; }
+
+#middle { grid-column: 2 / span 6; grid-row: 3 / span 4; display: flex; flex-direction: column;
+    min-width: 0; min-height: 0; position: relative; }
+#status { height: 4.6vh; line-height: 4.6vh; font-size: 3vh; color: #9ab; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; padding: 0 0.4vw; background: #000; }
+#status.qso { color: #fff; background: #b02020; }
+#status.warning { color: #ffe000; font-weight: bold; }
+#power { position: absolute; right: 0; top: 0; height: 4.6vh; line-height: 4.6vh;
+    font-size: 3vh; color: #ffc000; background: #000; padding: 0 0.6vw; }
+#views { flex: 1; display: flex; min-height: 0; }
+#scope-box { flex: 1; }
+#scope { touch-action: none; }
+#messages { display: none; flex: 1; min-width: 0; overflow-y: auto; background: #101820;
+    font-family: monospace; font-size: 3.1vh; line-height: 1.35; }
+.ft8 #messages { display: block; }
+#messages div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 0.4vw; }
+#messages div.other-slot { background: #1c2834; }
+#messages div.sent { color: #ff6060; }
+#messages div.calling { color: #60e060; }
+#messages div.to-us { color: #ffe000; }
+#messages div.marked { background: #604800; }
+
+#list { grid-column: 8 / span 3; grid-row: 3 / span 5; overflow-y: auto; background: #000;
+    -webkit-overflow-scrolling: touch; }
+.row { height: 14.2857vh; height: calc(100dvh / 7); background: #101820;
+    box-shadow: inset 0 0 0 1px #405060; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 1vw; box-sizing: border-box; cursor: pointer; }
+.row .title { color: #00ffff; font-size: 3.3vh; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+.row .value { font-size: 4vh; white-space: nowrap; padding-left: 0.6vw; }
+
+/* what comes up over the page: something to set, the settings, the logbook */
+#veil { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 5; align-items: center; justify-content: center; }
+#veil.shown { display: flex; }
+#popup { background: #101820; border: 1px solid #405060; border-radius: 1vh; padding: 3vh 3vw;
+    min-width: 46vw; max-width: 92vw; max-height: 92vh; overflow-y: auto; box-sizing: border-box; }
+#popup h2 { margin: 0 0 2vh 0; font-size: 4vh; color: #00ffff; font-weight: normal; }
+#popup .now { font-size: 7vh; text-align: center; margin: 1vh 0 2vh 0; font-family: monospace; }
+#popup .steps { display: flex; gap: 2vw; margin-bottom: 2.5vh; }
+#popup button { background: #1c2834; color: #fff; border: 1px solid #405060; border-radius: 0.8vh;
+    font-size: 4.2vh; padding: 1.6vh 2.4vw; flex: 1; min-width: 0; }
+#popup button:active { background: #604800; }
+#popup button.chosen { background: #604800; border-color: #ffc000; }
+#popup .choices { display: flex; flex-wrap: wrap; gap: 1.6vh 1.4vw; }
+#popup .choices button { flex: 0 1 auto; min-width: 12vw; }
+#popup input[type=range] { width: 100%; height: 7vh; margin: 0 0 2vh 0; }
+#popup input[type=text] { width: 100%; box-sizing: border-box; font-size: 4.6vh; padding: 1.2vh 1vw;
+    background: #000; color: #fff; border: 1px solid #ffc000; border-radius: 0.6vh;
+    margin-bottom: 2.5vh; text-transform: uppercase; }
+#popup .foot { display: flex; gap: 2vw; margin-top: 1vh; }
+
+#panel { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000;
+    z-index: 4; flex-direction: column; }
+#panel.shown { display: flex; }
+#panel .bar { display: flex; align-items: center; background: #101820; height: 13vh;
+    box-shadow: inset 0 -1px 0 #405060; flex: none; }
+#panel .bar button { height: 100%; width: 12vw; background: #1c2834; color: #fff; border: 0;
+    font-size: 5vh; }
+#panel .bar h2 { flex: 1; text-align: center; margin: 0; font-size: 4.2vh; font-weight: normal; }
+#panel .bar input { font-size: 4vh; width: 26vw; margin-right: 1.5vw; padding: 0.8vh 1vw;
+    background: #000; color: #fff; border: 1px solid #405060; text-transform: uppercase; }
+#panel .inside { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#panel table { border-collapse: collapse; width: 100%; font-size: 3.4vh; }
+#panel td, #panel th { text-align: left; padding: 1.4vh 0.8vw; border-bottom: 1px solid #25313c;
+    white-space: nowrap; }
+#panel th { color: #00ffff; font-weight: normal; position: sticky; top: 0; background: #101820; }
+#panel td button { background: #1c2834; color: #fff; border: 1px solid #405060; font-size: 3vh;
+    padding: 0.6vh 1.4vw; }
+#panel .entry { display: flex; gap: 0.8vw; padding: 1.4vh 0.8vw; background: #101820;
+    align-items: flex-end; flex: none; flex-wrap: wrap; }
+#panel .entry label { color: #00ffff; font-size: 2.8vh; display: flex; flex-direction: column;
+    flex: 1; min-width: 9vw; }
+#panel .entry input { font-size: 3.8vh; padding: 0.6vh 0.6vw; background: #000; color: #fff;
+    border: 1px solid #405060; text-transform: uppercase; min-width: 0; }
+#panel .entry button { font-size: 3.6vh; padding: 0.9vh 2vw; background: #1c2834; color: #fff;
+    border: 1px solid #405060; }
+
+#start { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 9;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 6vw; }
+#start h1 { font-size: 7vh; margin: 0 0 2vh 0; font-weight: normal; }
+#start p { font-size: 3.6vh; color: #9ab; margin: 0 0 4vh 0; }
+#start button { font-size: 6vh; padding: 2vh 8vw; background: #604800; color: #fff;
+    border: 1px solid #ffc000; border-radius: 1vh; }
+#start.gone { display: none; }
+
+#turn { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000;
+    z-index: 10; align-items: center; justify-content: center; text-align: center;
+    font-size: 5vw; padding: 0 8vw; color: #9ab; }
+@media (orientation: portrait) and (max-width: 700px) { #turn { display: flex; } }

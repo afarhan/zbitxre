@@ -393,6 +393,22 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertNotIn("VU2XZ", text)
 
+    def test_the_page_that_works_a_radio_is_for_its_owner(self):
+        first = self.make_account()
+        self.add_radio(first)
+        radio = self.service.radio_called("vu2ese-home")["id"]
+        status, text = first.get("/operate?radio=%d" % radio)
+        self.assertEqual(status, 200)
+        self.assertIn('data-radio="%d" data-name="vu2ese-home"' % radio, text)
+        second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        self.assertEqual(second.get("/operate?radio=%d" % radio)[0], 404)
+        _, text = Browser(self.port).get("/operate?radio=%d" % radio)
+        self.assertIn("Sign in first", text)
+        for path, has in (("/static/operate.js", "WebSocket"), ("/static/operate.css", "#app")):
+            status, text = Browser(self.port).get(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn(has, text, path)
+
     # the globe
 
     def test_the_globe_shows_the_radios_on_line_and_only_their_callsign_and_square(self):

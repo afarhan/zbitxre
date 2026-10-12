@@ -201,13 +201,13 @@ class Browser:
     """a browser's WebSocket to the service, as nginx hands it on; nobody is
     signed in"""
 
-    def __init__(self, port, origin, radio, address="203.0.113.7"):
+    def __init__(self, port, origin, radio, address="203.0.113.7", path="/listen", cookie=""):
         self.socket = socket.create_connection(("127.0.0.1", port), timeout=5)
         self.socket.sendall((
-            "GET /listen?radio=%d HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+            "GET %s?radio=%d HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
             "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            "Sec-WebSocket-Version: 13\r\nOrigin: %s\r\nX-Real-IP: %s\r\n\r\n"
-            % (radio, origin, address)).encode())
+            "Sec-WebSocket-Version: 13\r\nOrigin: %s\r\nX-Real-IP: %s\r\n"
+            "Cookie: sid=%s\r\n\r\n" % (path, radio, origin, address, cookie)).encode())
         self.waiting = b""
         answer = b""
         while b"\r\n\r\n" not in answer:
@@ -237,6 +237,28 @@ class Browser:
         if head[0] & 0x0f == 1:
             return body.decode()
         return body
+
+    def say(self, text):
+        """a text message, masked as a browser's must be"""
+        body = text.encode()
+        self.socket.sendall(bytes([0x81, 0x80 | len(body), 1, 2, 3, 4])
+                            + bytes(byte ^ (1, 2, 3, 4)[at % 4] for at, byte in enumerate(body)))
+
+    def lines(self, seconds=2):
+        """the lines the radio's side sends in a while, the meter's left out"""
+        self.socket.settimeout(0.3)
+        got = []
+        ends = time.time() + seconds
+        while time.time() < ends:
+            try:
+                message = self.read()
+            except socket.timeout:
+                continue
+            except ConnectionError:
+                break
+            if isinstance(message, str):
+                got += [line for line in message.split("\n") if not line.startswith("SMETER ")]
+        return got
 
     def close(self):
         self.socket.sendall(bytes([0x88, 0x80, 0, 0, 0, 0]))
@@ -525,6 +547,56 @@ class RemoteTest(unittest.TestCase):
             speaker.play()
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
+
+    def owners_page(self, account, radio):
+        with self.service.store.open() as db:
+            cookie = self.service.new_session(db, account["id"])
+        port = self.remote.web.sockets[0].getsockname()[1]
+        return Browser(port, self.service.settings.base_url, radio, path="/work", cookie=cookie)
+
+    def test_the_owners_browser_works_the_radio_and_leaving_stops_it_sending(self):
+        radio = self.switch_on_and_add()
+        page = self.owners_page(self.account, radio["id"])
+        self.assertTrue(page.is_accepted, page.status)
+        told = page.lines()
+        self.assertEqual(told[0], "! connected vu2ese-home")
+        self.assertIn("FREQ 7074000", told)
+        page.say("FREQ 14074000")
+        self.wait_for(lambda: self.radio.controls["FREQ"] == "14074000",
+                      "what the page set did not reach the radio")
+        self.radio.set("MODE", "CW")
+        self.assertIn("MODE CW", page.lines())
+        page.say(".")
+        time.sleep(0.5)
+        self.assertNotIn(".", self.radio.controls)
+
+        # one client at a time, the window's kind and the browser's alike
+        other = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertEqual(other.read(),
+                         "ERROR connect that radio is being worked by another client")
+        other.close()
+        second = self.owners_page(self.account, radio["id"])
+        self.assertEqual(second.lines(1), ["! busy"])
+
+        page.say("TX ON")
+        self.wait_for(lambda: self.radio.controls.get("TX") == "ON", "TX ON did not arrive")
+        page.close()
+        self.wait_for(lambda: self.radio.controls.get("TX") == "OFF",
+                      "the radio was left transmitting when the page went")
+
+    def test_only_the_owner_signed_in_works_a_radio_from_a_browser(self):
+        radio = self.switch_on_and_add()
+        other = self.make_account("VU2XYZ", "xyz@example.org")
+        self.assertIn("403", self.owners_page(other, radio["id"]).status)
+        port = self.remote.web.sockets[0].getsockname()[1]
+        nobody = Browser(port, self.service.settings.base_url, radio["id"], path="/work")
+        self.assertIn("403", nobody.status)
+        with self.service.store.open() as db:
+            cookie = self.service.new_session(db, self.account["id"])
+        elsewhere = Browser(port, "https://elsewhere.example", radio["id"], path="/work",
+                            cookie=cookie)
+        self.assertIn("403", elsewhere.status)
+        self.assertEqual(self.remote.sessions.get(radio["id"], 0), 0)
 
     def words_heard(self, browser, seconds=4):
         """the words, not the sound, that a browser is sent in a while"""

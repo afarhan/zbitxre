@@ -109,6 +109,16 @@ The work is done by pow.js, the only script on the site, which is served
 from here and does nothing else. With scripts turned off the form cannot
 be sent, and says so.
 
+WORKING A RADIO FROM THE BROWSER
+
+Beside each of the owner's radios is "operate": /operate, a page that
+works the radio as the window on the radio's own screen does, for a phone
+held on its side. The author asked for it. The page is nothing but a
+script and a stylesheet, static/operate.js and static/operate.css, which
+are served from here; operate.js says what it is and how it reaches the
+radio. It is for the radio's owner, signed in, and remote.py asks the same
+of the page's connection.
+
 THE GLOBE, AND LISTENING TO ANY RADIO
 
 /map is a page anyone may see and hear, signed in or not: the world as a
@@ -729,7 +739,22 @@ MAP_PAGE = """<!doctype html>
 # what is served from static/, by its name, and as what
 STATIC = {
     "land.json": "application/json",
+    "operate.js": "text/javascript; charset=utf-8",
+    "operate.css": "text/css; charset=utf-8",
 }
+
+OPERATE_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1,
+ user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>%s</title>
+<link rel="stylesheet" href="/static/operate.css">
+</head><body data-radio="%d" data-name="%s" data-sockets="%s">
+<script src="/static/operate.js"></script>
+</body></html>
+"""
 PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
@@ -773,6 +798,11 @@ class Settings:
         self.database = server.get("database", "accounts.db")
         self.registration = server.get("registration", "invite")
         self.pow_bits = int(server.get("pow_bits", str(POW_BITS)))
+        # where a page's WebSockets go: this site, unless they are said to
+        # go elsewhere, as when the site is tried with no nginx before it
+        site = urllib.parse.urlsplit(self.base_url)
+        self.sockets = server.get("sockets", (
+            "wss://" if site.scheme == "https" else "ws://") + site.netloc)
         self.invite_code = server.get("invite_code", "")
         self.support = server.get("support", "")
         self.smtp_host = mail.get("host", "")
@@ -1349,7 +1379,8 @@ class Handler(BaseHTTPRequestHandler):
         rows = ""
         for radio in self.service.radios(account["id"]):
             state = "on line" if radio["online"] else "off line"
-            state += " &middot; <a href=\"/map#%d\">listen</a>" % radio["id"]
+            state += (" &middot; <a href=\"/operate?radio=%d\">operate</a>"
+                      " &middot; <a href=\"/map#%d\">listen</a>" % (radio["id"], radio["id"]))
             kept = ""
             if self.service.snapshot(account, radio["id"]) is not None:
                 kept = ("<a href=\"/radios/settings?radio=%d\">settings</a> &middot; "
@@ -1463,6 +1494,19 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(account["callsign"]), PASSWORD_SHORTEST,
                                html.escape(secret), html.escape(account["callsign"]))))
 
+    def operate_page(self, account, number):
+        """the page that works one of the owner's radios"""
+        mine = [radio for radio in self.service.radios(account["id"])
+                if str(radio["id"]) == number]
+        if not mine:
+            self.send(404, page("Not found", "<p>You have no such radio.</p>", account))
+            return
+        name = radio_id(account["callsign"], mine[0]["suffix"])
+        sockets = self.service.settings.sockets
+        self.send(200, OPERATE_PAGE % (html.escape(name), mine[0]["id"], html.escape(name),
+                                       html.escape(sockets)),
+                  policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
+
     def kept_page(self, account, number, what):
         """a radio's settings or its logbook, as they were last copied"""
         kept = None
@@ -1509,9 +1553,13 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/pow.js":
             self.send(200, POW_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map":
-            site = urllib.parse.urlsplit(self.service.settings.base_url)
-            sockets = ("wss://" if site.scheme == "https" else "ws://") + site.netloc
-            self.send(200, MAP_PAGE, policy=PAGE_POLICY + "; connect-src 'self' " + sockets)
+            self.send(200, MAP_PAGE, policy=PAGE_POLICY + "; connect-src 'self' "
+                      + self.service.settings.sockets)
+        elif url.path == "/operate":
+            if account is None:
+                self.signin_form("Sign in first.")
+            else:
+                self.operate_page(account, query.get("radio", [""])[0])
         elif url.path == "/map.js":
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":
