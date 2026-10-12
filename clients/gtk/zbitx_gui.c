@@ -73,8 +73,11 @@
 // uses too: the window takes the waiting VFO's from there, and tells the
 // radio both when the VFOs are changed over. A VFO that has never been
 // used is put, once, where the radio was when the window first heard
-// from it. In the box's top right corner is the time in UTC, to the
-// second, with a Z after it, as on the panel, "01:15:22Z", and "--:--:--Z"
+// from it. The time is not in the box, where it was: the author moved it
+// to the window's title bar, with the station's callsign, the radio's
+// MYCALLSIGN, before it: "zbitx - VU2ESE - 06:49:25Z", and with no
+// callsign set, "zbitx - 06:49:25Z". It is the time in UTC, to the
+// second, with a Z after it, as on the panel, and "--:--:--Z"
 // while the radio does not know the time. It is the radio's time and not
 // this computer's: the window asks the radio the time once, on connecting,
 // and counts the seconds on from the answer by its own clock; the radio's
@@ -362,7 +365,6 @@
 #define ROW_MARGIN_SIDE 6
 #define TITLE_SIZE 11
 #define CORNER_SIZE 9
-#define CLOCK_SIZE 10
 #define WAITING_SIZE 12
 #define TITLE_ROOM_ABOVE 4
 #define VALUE_SIZE 13
@@ -530,6 +532,9 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define LOG_ROW 0
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
+#define CALLSIGN_CONTROL "MYCALLSIGN"
+#define WINDOW_NAME "zbitx"
+#define TITLE_MAX 160
 #define PAGE_MAIN "main"
 #define PAGE_SETTINGS "settings"
 #define PAGE_TEXT "text"
@@ -580,7 +585,6 @@ static double wheel_began_y;
 static int is_wheel_held;
 static GtkWidget *frequency_label;
 static GtkWidget *vfo_label;
-static GtkWidget *clock_label;
 static GtkWidget *spectrum_area;
 static GtkWidget *status_label;
 static GtkWidget *meter_label;
@@ -908,11 +912,14 @@ static gint64 steady_s(void) {
 	return g_get_monotonic_time() / MICROS_A_SECOND;
 }
 
-// the time in UTC, to the second, in the frequency's box
+// the window's title: its name, the station's callsign if one is set, and
+// the time in UTC, to the second
 static gboolean show_clock(gpointer unused) {
 	gint64 now = steady_s() + radio_ahead_s;
 	int second_of_day = (int)(now % SECONDS_A_DAY);
+	const char *callsign = value_of(CALLSIGN_CONTROL);
 	char time[TEXT_MAX];
+	char title[TITLE_MAX];
 
 	(void)unused;
 	snprintf(time, sizeof(time), "--:--:--Z");
@@ -920,7 +927,11 @@ static gboolean show_clock(gpointer unused) {
 		snprintf(time, sizeof(time), "%02d:%02d:%02dZ", second_of_day / SECONDS_AN_HOUR,
 			(second_of_day % SECONDS_AN_HOUR) / SECONDS_A_MINUTE,
 			second_of_day % SECONDS_A_MINUTE);
-	gtk_label_set_text(GTK_LABEL(clock_label), time);
+	if (callsign[0] != 0)
+		snprintf(title, sizeof(title), "%s - %s - %s", WINDOW_NAME, callsign, time);
+	else
+		snprintf(title, sizeof(title), "%s - %s", WINDOW_NAME, time);
+	gtk_window_set_title(GTK_WINDOW(main_window), title);
 	return G_SOURCE_CONTINUE;
 }
 
@@ -2856,7 +2867,6 @@ static void load_style(void) {
 		".tile.on { background-color: #B02020; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
 		".tile-title { font-size: %dpx; color: #00FFFF; }"
-		".clock { font-size: %dpx; color: #FFFFFF; }"
 		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #00FFFF; }"
 		".status.qso { color: #FFFFFF; background-color: #B02020; }"
@@ -2881,7 +2891,7 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), px(CLOCK_SIZE), px(WAITING_SIZE), px(VALUE_SIZE),
+		px(1), px(TITLE_SIZE), px(WAITING_SIZE), px(VALUE_SIZE),
 		px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
@@ -2947,9 +2957,8 @@ static void on_screen_sized(GtkWidget *widget, GdkRectangle *size, gpointer unus
 	is_lay_out_due = 1;
 }
 
-// the frequency's box: the VFO and the time over the figures
+// the frequency's box: the VFO in waiting over the figures
 static void create_frequency(void) {
-	GtkWidget *layers = gtk_overlay_new();
 	GtkWidget *lines = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
 	// the two lines are one column in the middle of the box, as wide as
@@ -2966,18 +2975,7 @@ static void create_frequency(void) {
 	gtk_widget_set_halign(lines, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(lines, GTK_ALIGN_CENTER);
 
-	// the time is laid over the box's top right corner
-	clock_label = gtk_label_new("");
-	add_label_class(clock_label, "clock");
-	gtk_widget_set_halign(clock_label, GTK_ALIGN_END);
-	gtk_widget_set_valign(clock_label, GTK_ALIGN_START);
-	gtk_widget_set_margin_top(clock_label, px(TITLE_ROOM_ABOVE));
-	gtk_widget_set_margin_end(clock_label, px(SPAN_LEFT));
-
-	gtk_container_add(GTK_CONTAINER(layers), lines);
-	gtk_overlay_add_overlay(GTK_OVERLAY(layers), clock_label);
-	gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(layers), clock_label, TRUE);
-	frequency_box = tile_new(layers);
+	frequency_box = tile_new(lines);
 	g_signal_connect(frequency_box, "scroll-event", G_CALLBACK(on_frequency_wheel), NULL);
 	g_signal_connect(frequency_box, "button-press-event",
 		G_CALLBACK(on_frequency_click), NULL);
@@ -3177,7 +3175,7 @@ static GtkWidget *create_window(void) {
 	main_window = window;
 
 	load_style();
-	gtk_window_set_title(GTK_WINDOW(window), "zbitx");
+	gtk_window_set_title(GTK_WINDOW(window), WINDOW_NAME);
 	gtk_window_set_default_size(GTK_WINDOW(window), WINDOW_WIDTH, WINDOW_HEIGHT);
 	gtk_window_maximize(GTK_WINDOW(window));
 	screen = gtk_layout_new(NULL, NULL);
