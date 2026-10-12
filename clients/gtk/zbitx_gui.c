@@ -105,9 +105,13 @@
 // buttons are CQ and HALT.
 //
 // In the graph's top right corner is the signal's strength as the radio
-// receives, the radio's SMETER: six boxes, as zbitxv2's window had, lit
-// green at S1, S3, S5, S7 and S9 and the last red for anything over S9,
-// with the figure before them, "S7" or "S9+". While the radio transmits
+// receives, the radio's SMETER, on a dial with a needle, as a radio's
+// meter has: the author asked for a dial in place of the six boxes
+// zbitxv2's window had. The scale is an arc, marked at S1, S3, S5, S7 and
+// S9, which is seven tenths of the way across, and from there to 20 dB
+// over S9 it is red. The needle's pivot is below the dial's box and is not
+// drawn, so that the dial covers little of the graph; the figure, "S7" or
+// "S9+", is beside the box, to its left. While the radio transmits
 // the graph is not the spectrum, of which there is none, but the envelope
 // of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
 // it: the radio sends it in the spectrum's place, a fifth of a second
@@ -400,17 +404,25 @@
 #define FALL_ROWS 256
 #define FULL_SCALE_DB 80
 #define MODULATION_FULL_SCALE 255.0
-// the S meter's boxes, in the panel's pixels, and what the radio's SMETER
+// the S meter's dial, in the panel's pixels, and what the radio's SMETER
 // is made of: the S units times a hundred, and the dB over
-#define SMETER_BOXES 6
-#define SMETER_BOX_WIDTH 7
-#define SMETER_BOX_HEIGHT 4
-#define SMETER_BOX_GAP 1
-#define SMETER_TOP 4
-#define SMETER_RIGHT 3
-#define SMETER_TEXT_ROOM 16
+#define SMETER_WIDTH 60
+#define SMETER_HEIGHT 26
+#define SMETER_TOP 2
+#define SMETER_RIGHT 2
+#define SMETER_RADIUS 34
+#define SMETER_ARC_TOP 9
+#define SMETER_SWEEP (48.0 * G_PI / 180.0)
+#define SMETER_TICK 3
+#define SMETER_MARK_ROOM 2
+#define SMETER_MARK_SIZE 5
+#define SMETER_FIGURE_GAP 3
+#define SMETER_NEEDLE_FROM 0.35
+#define SMETER_S9_AT 0.7
+#define SMETER_OVER_MOST_DB 20
 #define SMETER_PER_UNIT 100
 #define S_UNITS_MOST 9
+#define DB_PER_S_UNIT 6.0
 #define SHADES_PER_DB 2
 #define SHADES_A_BAND 32
 #define SHADE_STEP 8
@@ -2479,38 +2491,109 @@ static void draw_modulation(cairo_t *cr, int width, int height) {
 	cairo_stroke(cr);
 }
 
-// the signal's strength, in the graph's top right corner: the figure, and
-// after it the boxes for S1, S3, S5, S7 and S9, and one for over S9
+// how far across the dial a strength is, from 0 at its left end to 1 at
+// its right: S9 is SMETER_S9_AT of the way, and the rest is the dB over it
+static double smeter_place(int strength) {
+	double units = strength / SMETER_PER_UNIT + (strength % SMETER_PER_UNIT) / DB_PER_S_UNIT;
+	double over_db;
+
+	if (units <= S_UNITS_MOST)
+		return units / S_UNITS_MOST * SMETER_S9_AT;
+	over_db = (units - S_UNITS_MOST) * DB_PER_S_UNIT;
+	if (over_db > SMETER_OVER_MOST_DB)
+		over_db = SMETER_OVER_MOST_DB;
+	return SMETER_S9_AT + over_db / SMETER_OVER_MOST_DB * (1.0 - SMETER_S9_AT);
+}
+
+// a place on the dial as an angle for cairo, which counts from three
+// o'clock: the middle of the dial is straight up
+static double smeter_angle(double place) {
+	return -G_PI / 2 - SMETER_SWEEP + 2 * SMETER_SWEEP * place;
+}
+
+// a mark on the scale at an S unit: a tick outward from the arc, and its
+// figure over the tick
+static void draw_smeter_mark(cairo_t *cr, double x, double y, int units) {
+	double angle = smeter_angle((double)units / S_UNITS_MOST * SMETER_S9_AT);
+	double radius = px(SMETER_RADIUS);
+	double outer = radius + px(SMETER_TICK);
+	double lettered = outer + px(SMETER_MARK_ROOM);
+	cairo_text_extents_t size;
+	char text[TEXT_MAX];
+
+	cairo_move_to(cr, x + radius * cos(angle), y + radius * sin(angle));
+	cairo_line_to(cr, x + outer * cos(angle), y + outer * sin(angle));
+	cairo_stroke(cr);
+	snprintf(text, sizeof(text), "%d", units);
+	cairo_text_extents(cr, text, &size);
+	cairo_move_to(cr, x + lettered * cos(angle) - size.width / 2 - size.x_bearing,
+		y + lettered * sin(angle));
+	cairo_show_text(cr, text);
+}
+
+// the signal's strength, in the graph's top right corner: a dial, its
+// scale an arc with S9 seven tenths across and red beyond, and a needle
+// from a pivot that is below the box and out of sight
 static void draw_smeter(cairo_t *cr, int width) {
 	int strength = atoi(value_of("SMETER"));
 	int s_units = strength / SMETER_PER_UNIT;
 	int is_over = s_units > S_UNITS_MOST
 		|| (s_units == S_UNITS_MOST && strength % SMETER_PER_UNIT > 0);
-	double box_width = px(SMETER_BOX_WIDTH);
-	double pitch = px(SMETER_BOX_WIDTH + SMETER_BOX_GAP);
-	double left = width - px(SMETER_RIGHT) - SMETER_BOXES * pitch;
+	double box_width = px(SMETER_WIDTH);
+	double box_height = px(SMETER_HEIGHT);
+	double left = width - px(SMETER_RIGHT) - box_width;
+	double top = px(SMETER_TOP);
+	double radius = px(SMETER_RADIUS);
+	double x = left + box_width / 2;
+	double y = top + px(SMETER_ARC_TOP) + radius;
+	double angle = smeter_angle(smeter_place(strength));
+	cairo_text_extents_t size;
 	char text[TEXT_MAX];
-	int i;
+	int units;
+
+	cairo_save(cr);
+	cairo_rectangle(cr, left, top, box_width, box_height);
+	cairo_set_source_rgba(cr, 0.02, 0.04, 0.07, 0.85);
+	cairo_fill_preserve(cr);
+	cairo_set_source_rgb(cr, 0.2, 0.25, 0.3);
+	cairo_set_line_width(cr, 1.0);
+	cairo_stroke_preserve(cr);
+	cairo_clip(cr);
+
+	cairo_set_line_width(cr, px(1));
+	cairo_set_source_rgb(cr, 0.85, 0.88, 0.9);
+	cairo_arc(cr, x, y, radius, smeter_angle(0), smeter_angle(SMETER_S9_AT));
+	cairo_stroke(cr);
+	cairo_set_font_size(cr, px(SMETER_MARK_SIZE));
+	for (units = 1; units <= S_UNITS_MOST; units += 2)
+		draw_smeter_mark(cr, x, y, units);
+	cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
+	cairo_arc(cr, x, y, radius, smeter_angle(SMETER_S9_AT), smeter_angle(1));
+	cairo_stroke(cr);
+	cairo_move_to(cr, x + radius * cos(smeter_angle(1)), y + radius * sin(smeter_angle(1)));
+	cairo_line_to(cr, x + (radius + px(SMETER_TICK)) * cos(smeter_angle(1)),
+		y + (radius + px(SMETER_TICK)) * sin(smeter_angle(1)));
+	cairo_stroke(cr);
+
+	cairo_set_source_rgb(cr, 1.0, 0.9, 0.0);
+	cairo_move_to(cr, x + radius * SMETER_NEEDLE_FROM * cos(angle),
+		y + radius * SMETER_NEEDLE_FROM * sin(angle));
+	cairo_line_to(cr, x + (radius + px(SMETER_TICK)) * cos(angle),
+		y + (radius + px(SMETER_TICK)) * sin(angle));
+	cairo_stroke(cr);
 
 	if (s_units > S_UNITS_MOST)
 		s_units = S_UNITS_MOST;
-	for (i = 0; i < SMETER_BOXES; i++) {
-		cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
-		if (i < SMETER_BOXES - 1 && s_units >= 2 * i + 1)
-			cairo_set_source_rgb(cr, 0.0, 1.0, 0.0);
-		if (i == SMETER_BOXES - 1 && is_over)
-			cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-		cairo_rectangle(cr, left + i * pitch, px(SMETER_TOP), box_width,
-			px(SMETER_BOX_HEIGHT));
-		cairo_fill(cr);
-	}
 	if (is_over)
 		snprintf(text, sizeof(text), "S%d+", s_units);
 	else
 		snprintf(text, sizeof(text), "S%d", s_units);
+	cairo_restore(cr);
 	cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
 	cairo_set_font_size(cr, px(CORNER_SIZE));
-	cairo_move_to(cr, left - px(SMETER_TEXT_ROOM), px(SPAN_BASELINE));
+	cairo_text_extents(cr, text, &size);
+	cairo_move_to(cr, left - px(SMETER_FIGURE_GAP) - size.width - size.x_bearing,
+		px(SPAN_BASELINE));
 	cairo_show_text(cr, text);
 }
 
