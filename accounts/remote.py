@@ -17,20 +17,35 @@ WHO CONNECTS
 A radio at home cannot be connected to from outside, so its daemon,
 clients/remote/zbitx_remote.c, connects out to here and stays. A client, the
 window on another computer, connects to here as well. Both are met with a
-challenge and prove who they are with the key the website gave them when
-they were linked; neither is asked for a password, and nothing here is
-inside TLS: the author's ruling, since these are amateur radio
+challenge. Neither is asked for the account's password, and nothing here
+is inside TLS: the author's ruling, since these are amateur radio
 communications and all that is wanted is to be sure who is on the line.
 
-    CHALLENGE <32 hex digits>                  from here, first
-    AUTH <key id> <nonce> <proof>              from whoever connected
-    WELCOME <callsign> <proof>                 from here
+    CHALLENGE <32 hex digits>                      from here, first
+    AUTH radio <callsign> <nonce> <proof>          from a radio's daemon, or
+    AUTH client <radio's name> <nonce> <proof>     from a client
+    WELCOME <radio's name> <proof>                 from here
 
-The proof is HMAC-SHA256, with the key, of "zbitx-auth-1 client <challenge>
-<nonce>", in hex; the one sent back is of the same with "server" for
-"client", and shows that this end has the key too. A wrong proof is answered
-"ERROR AUTH" and the connection closed, and an address that gets it wrong
-ten times in a quarter of an hour is turned away for the rest of it.
+A radio answers with its cookie, the twelve letters it made for itself and
+its owner typed into the website when adding it. It says only whose it is,
+by the callsign set on it; which of the owner's radios it is, this end
+finds by trying the cookie of each, five at most. A client answers with
+the client password of the radio it names, vu2ese-home.
+
+The proof is HMAC-SHA256 of "zbitx-auth-1 <radio or client> <the name as
+sent> <challenge> <nonce>", in hex, and its key is not the twelve letters
+themselves but what PBKDF2 makes of them, so that someone who overhears an
+answer cannot find the letters by trying them all: accounts.stretch() is
+that, with the callsign as the salt for a cookie and the radio's name for a
+client password. The proof sent back is of the same text with "server"
+first, and shows that this end has the secret too.
+
+A wrong proof is answered "ERROR AUTH" and the connection closed. A radio
+that has not been added on the website yet is refused in just this way,
+every quarter of a minute, while it shows its cookie and waits; so an
+address is turned away only after a hundred wrong proofs in a quarter of an
+hour, which no radio waiting to be added comes near and which makes
+guessing at twelve letters over the network hopeless.
 
 WHAT A RADIO'S DAEMON SAYS NEXT
 
@@ -46,20 +61,16 @@ WHAT A RADIO'S DAEMON SAYS NEXT
                           here on every byte is passed between that and
                           whoever asked.
 
-WHAT A CLIENT SAYS NEXT
+WHAT HAPPENS NEXT FOR A CLIENT
 
-    radios                which radios the owner has, and which can be
-                          reached now:
-        RADIO <key id> online shack sbitx
-        RADIO <key id> offline portable
-        RADIOS END
-    connect <key id>      the daemon of that radio is told, and when its
-                          session connection arrives the client is sent
-        CONNECTED shack sbitx
-                          and is from then on talking to its radio, in the
-                          radio's own protocol.
+It has named its radio already. The radio's daemon is told, and when its
+session connection arrives the client is sent
 
-A client may only have the radios of the account it is linked to.
+    CONNECTED vu2ese-home
+
+and is from then on talking to its radio, in the radio's own protocol. If
+the radio is not on line, or does not answer, it is sent "ERROR connect"
+and the reason.
 
 NOTHING IS SENT THAT NOBODY ASKED FOR
 
@@ -109,7 +120,7 @@ COPY_MOST_S = 30
 LOG_WAIT_S = 5
 LINE_LONGEST = 512
 SESSIONS_A_RADIO = 4
-WRONG_PROOFS = 10
+WRONG_PROOFS = 100
 WINDOW_S = 15 * 60
 PIPE_BYTES = 4096
 PIPE_WAITING_MOST = 32 * 1024
@@ -119,15 +130,19 @@ NOT_CONTROLS = ("SPECTRUM", "MODULATION", "MESSAGE", "CW", "SAY", "WARN", "QSO",
                 "LOG_LIST", "TIME", "ERROR", "CONTROL")
 
 
-def proof(key, side, challenge, nonce):
-    text = "zbitx-auth-1 %s %s %s" % (side, challenge, nonce)
-    return hmac.new(key.encode(), text.encode(), hashlib.sha256).hexdigest()
+def proof(secret, salt, side, name, challenge, nonce):
+    """the answer to a challenge; side is radio, client or server, and name
+    is what the one connecting called itself"""
+    text = "zbitx-auth-1 %s %s %s %s" % (side, name, challenge, nonce)
+    return hmac.new(accounts.stretch(secret, salt).encode(), text.encode(),
+                    hashlib.sha256).hexdigest()
 
 
 class Remote:
     def __init__(self, settings):
         self.settings = settings
-        self.store = accounts.Store(settings.database)
+        self.service = accounts.Service(settings)
+        self.store = self.service.store
         self.lines = {}      # a radio's id -> the writer of its daemon's kept connection
         self.sessions = {}   # a radio's id -> how many sessions it has open
         self.awaited = {}    # a session's token -> (the radio's id, the future it fulfils)
@@ -146,13 +161,6 @@ class Remote:
         self.wrong[address] = times
         return len(times) >= WRONG_PROOFS
 
-    def device_of(self, key_id):
-        with self.store.open() as db:
-            return db.execute(
-                "select radios.*, accounts.callsign from radios join accounts "
-                "on accounts.id = radios.account where radios.key_id = ? "
-                "and accounts.status = 'active'", (key_id,)).fetchone()
-
     async def read_line(self, reader, wait_s):
         """a line without its end, '' at the end of the connection or when
         nothing comes in time"""
@@ -162,43 +170,66 @@ class Remote:
             return ""
         return line.decode("utf-8", "replace").strip()
 
+    def who_answered(self, side, name, challenge, nonce, answer):
+        """the radio whose secret made that answer, with the secret and its
+        salt, or None. A radio's daemon names only its callsign, and the
+        cookie of each of that callsign's radios is tried"""
+        if side == "radio":
+            tried = [(radio, radio["cookie"], name) for radio in self.service.radios_of(name)]
+        else:
+            radio = self.service.radio_called(name)
+            tried = [(radio, radio["client_password"], name)] if radio is not None else []
+        for radio, secret, salt in tried:
+            if hmac.compare_digest(answer, proof(secret, salt, side, name, challenge, nonce)):
+                return radio, secret, salt
+        return None
+
     async def greet(self, reader, writer, address):
-        """the challenge; the device that answered it, or None"""
+        """the challenge; returns the side that answered it, radio or
+        client, and the radio it is or wants, or (None, None)"""
         if self.is_turned_away(address):
             writer.write(b"ERROR AUTH too many wrong tries from here\n")
-            return None
+            return None, None
         challenge = secrets.token_hex(16)
         writer.write(("CHALLENGE %s\n" % challenge).encode())
         words = (await self.read_line(reader, HELLO_WAIT_S)).split()
-        if len(words) != 4 or words[0] != "AUTH" or not re.fullmatch(r"[0-9a-f]{32}", words[2]):
-            writer.write(b"ERROR AUTH expected: AUTH <key id> <nonce> <proof>\n")
-            return None
-        device = self.device_of(words[1])
-        key = device["key"] if device is not None else secrets.token_hex(16)
-        if device is None or not hmac.compare_digest(
-                words[3], proof(key, "client", challenge, words[2])):
+        if (len(words) != 5 or words[0] != "AUTH" or words[1] not in ("radio", "client")
+                or not re.fullmatch(r"[0-9a-f]{32}", words[3])):
+            writer.write(b"ERROR AUTH expected: AUTH radio|client <name> <nonce> <proof>\n")
+            return None, None
+        side, name, nonce = words[1], words[2][:40], words[3]
+        found = await asyncio.get_running_loop().run_in_executor(
+            None, self.who_answered, side, name, challenge, nonce, words[4])
+        if found is None:
             self.wrong.setdefault(address, []).append(time.time())
-            writer.write(b"ERROR AUTH that key is not known here\n")
-            return None
+            if side == "radio":
+                writer.write(b"ERROR AUTH no radio of that callsign has this cookie; "
+                             b"add it at the website\n")
+            else:
+                writer.write(b"ERROR AUTH that is not the radio's client password\n")
+            return None, None
+        radio, secret, salt = found
         writer.write(("WELCOME %s %s\n" % (
-            device["callsign"], proof(key, "server", challenge, words[2]))).encode())
-        with self.store.open() as db:
-            db.execute("update radios set last_seen = ? where id = ?",
-                       (accounts.now(), device["id"]))
-        return device
+            accounts.radio_id(radio["callsign"], radio["suffix"]),
+            proof(secret, salt, "server", name, challenge, nonce))).encode())
+        if side == "radio":
+            with self.store.open() as db:
+                db.execute("update radios set last_seen = ? where id = ?",
+                           (accounts.now(), radio["id"]))
+        return side, radio
 
     async def meet(self, reader, writer):
         address = writer.get_extra_info("peername")[0]
         writer.transport.set_write_buffer_limits(high=PIPE_WAITING_MOST)
         is_kept = False
         try:
-            device = await self.greet(reader, writer, address)
-            if device is None:
+            side, radio = await self.greet(reader, writer, address)
+            if side is None:
                 await writer.drain()
-            elif device["kind"] == "radio":
-                is_kept = await self.radio(device, reader, writer)
+            elif side == "radio":
+                is_kept = await self.radio(radio, reader, writer)
             else:
-                await self.client(device, reader, writer)
+                await self.join(radio, reader, writer)
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         finally:
@@ -227,6 +258,7 @@ class Remote:
 
     async def radio_line(self, device, reader, writer):
         radio = device["id"]
+        name = accounts.radio_id(device["callsign"], device["suffix"])
         before = self.lines.get(radio)
         if before is not None:
             before.close()
@@ -234,7 +266,7 @@ class Remote:
         with self.store.open() as db:
             db.execute("update radios set online = 1 where id = ?", (radio,))
         writer.write(b"OK\n")
-        self.say("%s's radio \"%s\" is on line" % (device["callsign"], device["name"]))
+        self.say("%s is on line" % name)
         copying = asyncio.ensure_future(self.keep_a_copy(radio))
         try:
             while True:
@@ -250,8 +282,7 @@ class Remote:
                 with self.store.open() as db:
                     db.execute("update radios set online = 0, last_seen = ? where id = ?",
                                (accounts.now(), radio))
-                self.say("%s's radio \"%s\" is off line" % (device["callsign"],
-                                                             device["name"]))
+                self.say("%s is off line" % name)
 
     async def open_session(self, radio):
         """a connection to the radio program of a radio that is on line, by
@@ -322,36 +353,8 @@ class Remote:
 
     # a client
 
-    async def client(self, device, reader, writer):
-        while True:
-            words = (await self.read_line(reader, CLIENT_QUIET_S)).split()
-            if not words:
-                return
-            if words == ["radios"]:
-                with self.store.open() as db:
-                    for radio in db.execute(
-                            "select * from radios where account = ? and kind = 'radio' "
-                            "order by name", (device["account"],)):
-                        state = "online" if radio["id"] in self.lines else "offline"
-                        writer.write(("RADIO %s %s %s\n" % (
-                            radio["key_id"], state, radio["name"])).encode())
-                writer.write(b"RADIOS END\n")
-                await writer.drain()
-            elif len(words) == 2 and words[0] == "connect":
-                await self.join(device, words[1], reader, writer)
-                return
-            else:
-                writer.write(b"ERROR expected: radios, or connect <key id>\n")
-                await writer.drain()
-
-    async def join(self, device, key_id, reader, writer):
-        with self.store.open() as db:
-            radio = db.execute(
-                "select * from radios where key_id = ? and account = ? and kind = 'radio'",
-                (key_id, device["account"])).fetchone()
-        if radio is None:
-            writer.write(b"ERROR connect you have no such radio\n")
-            return
+    async def join(self, radio, reader, writer):
+        name = accounts.radio_id(radio["callsign"], radio["suffix"])
         if radio["id"] not in self.lines:
             writer.write(b"ERROR connect that radio is not on line\n")
             return
@@ -360,10 +363,9 @@ class Remote:
             writer.write(b"ERROR connect the radio did not answer\n")
             return
         radio_reader, radio_writer = streams
-        writer.write(("CONNECTED %s\n" % radio["name"]).encode())
+        writer.write(("CONNECTED %s\n" % name).encode())
         self.sessions[radio["id"]] = self.sessions.get(radio["id"], 0) + 1
-        self.say("%s's client \"%s\" is on \"%s\"" % (device["callsign"], device["name"],
-                                                    radio["name"]))
+        self.say("a client is on %s" % name)
         ways = [asyncio.ensure_future(self.pass_on(reader, radio_writer)),
                 asyncio.ensure_future(self.pass_on(radio_reader, writer))]
         try:
@@ -373,8 +375,7 @@ class Remote:
                 way.cancel()
             radio_writer.close()
             self.sessions[radio["id"]] -= 1
-            self.say("%s's client \"%s\" has left \"%s\"" % (
-                device["callsign"], device["name"], radio["name"]))
+            self.say("a client has left %s" % name)
 
     async def pass_on(self, reader, writer):
         try:

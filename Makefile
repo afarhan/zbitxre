@@ -244,14 +244,13 @@ gui: $(GUI)
 
 # the window reads the sbitx's two knobs itself, with its own knob reader;
 # of hw/ it has the pins, and the boards for the radio's name
-# of clients/remote it has what gets this computer a key and answers the
-# service's challenge, for reaching a radio through my.sbitx.net
+# of clients/remote it has the keyed hash, to answer the service's
+# challenge with when it reaches a radio through my.sbitx.net
 GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c hw/gpio.c hw/board.c \
-	clients/remote/linking.c clients/remote/sha256.c
+	clients/remote/sha256.c
 
 $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
-		clients/gtk/logbook_window.h hw/gpio.h hw/board.h clients/remote/linking.h \
-		clients/remote/sha256.h
+		clients/gtk/logbook_window.h hw/gpio.h hw/board.h clients/remote/sha256.h
 	$(CC) $(CFLAGS) -Iclients/gtk -Iclients/remote $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread -lm
 
@@ -259,10 +258,9 @@ $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
 # clients/remote/zbitx_remote.c says why. It needs nothing but the C library
 remote: $(REMOTE)
 
-REMOTE_PARTS = clients/remote/linking.c clients/remote/sha256.c
+REMOTE_PARTS = clients/remote/sha256.c
 
-$(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/linking.h \
-		clients/remote/sha256.h
+$(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/sha256.h
 	$(CC) $(CFLAGS) -Iclients/remote -o $@ clients/remote/zbitx_remote.c $(REMOTE_PARTS)
 
 $(BUILD)/test_sha256: tests/test_sha256.c clients/remote/sha256.c clients/remote/sha256.h \

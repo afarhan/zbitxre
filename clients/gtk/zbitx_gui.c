@@ -5,51 +5,49 @@
 // network.
 //
 //     zbitx_gui [radio] [port]
-//     zbitx_gui remote [radio] [server] [port]
+//     zbitx_gui remote <radio> [server] [port]
 //
 // The radio is sbitx.local unless another name or address is given, and the
 // port 8081.
 //
 // With the word remote, the window reaches the owner's radio from anywhere,
 // through my.sbitx.net; PROTOCOL.md, at the top of the repository, says how
-// that works. The radio wanted is named by the name it has on the website
-// or by its key's id, and with none named it is the first of the owner's
-// radios that is on line. The server is my.sbitx.net and the port 8081
-// unless others are given.
+// that works. The radio is named as the website names it, the owner's
+// callsign and the radio's own name, vu2ese-home. The server is
+// my.sbitx.net and the port 8081 unless others are given.
 //
 // REACHING A RADIO THROUGH MY.SBITX.NET
 //
-// This computer needs a key of its own, as the radio has one. The first
-// time, it has none, and the window gets it as the radio's daemon gets the
-// radio's, with the same code, clients/remote/linking.c: the status line
-// says "to link this computer, type BCDF-GHJK at my.sbitx.net", the owner
-// signs in there and types it, and the key comes back and is kept in
-// ~/.config/zbitx/client.key, which only this user can read. The password
-// is typed into the website and never into this window.
+// The window has to show that it is the radio's owner asking. Each radio
+// has a client password for that, twelve letters that the website made and
+// shows beside the radio. The first time, the window asks for it, on the
+// screen that any text is typed on, and keeps it in
+// ~/.config/zbitx/<radio>.password, which only this user can read. The
+// account's own password is typed into the website and never into this
+// window.
 //
 // Then the window connects to the service and, before anything of the
 // radio's, there are a few lines between the two:
 //
-//     CHALLENGE ...            the service
-//     AUTH ...                 the window, with a proof made with its key
-//     WELCOME VU2ESE ...       the service, with a proof of its own, which
-//                              the window checks: it will not go on with
-//                              something that does not have its key
-//     radios                   the window
-//     RADIO r3f... online shack sbitx
-//     RADIOS END               the service
-//     connect r3f...           the window
-//     CONNECTED shack sbitx    the service
+//     CHALLENGE ...                the service
+//     AUTH client vu2ese-home ...  the window, with a proof made with the
+//                                  client password
+//     WELCOME vu2ese-home ...      the service, with a proof of its own,
+//                                  which the window checks: it will not go
+//                                  on with something that does not have the
+//                                  password too
+//     CONNECTED vu2ese-home        the service, when the radio has answered
 //
 // and from there on it is the radio's own protocol, as if the window had
-// connected to the radio itself, and everything below is the same. None of
-// it is inside TLS, by the author's ruling; the proof is there to say who
-// is on the line.
+// connected to the radio itself, and everything below is the same. The
+// password is never sent: it is the secret in the proof, stretched first,
+// as PROTOCOL.md says, so that twelve letters cannot be found by trying
+// them all. None of this is inside TLS, by the author's ruling; the proof
+// is there to say who is on the line.
 //
-// A key the service refuses is dropped, and the computer is linked afresh.
-// If none of the owner's radios is on line, the window says so and tries
-// again every three seconds, as it does for a radio that cannot be
-// reached.
+// A password the service refuses is forgotten and asked for again. If the
+// radio is not on line, the window says so and tries again every three
+// seconds, as it does for a radio that cannot be reached.
 //
 // THE WINDOW
 //
@@ -213,9 +211,10 @@
 // REMOTE is one of those rows: OFF or ON, whether the radio may be reached
 // from afar through my.sbitx.net; PROTOCOL.md says how that is done. Under
 // the rows is one that cannot be tapped, what the radio has to say of it,
-// its REMOTE_STATUS: the first time REMOTE is turned on it is a code of
-// eight letters to be typed at my.sbitx.net, which links the radio to its
-// owner's account, and after that ONLINE and the callsign. The settings
+// its REMOTE_STATUS: the first time REMOTE is turned on it is the radio's
+// cookie, twelve letters to be typed at my.sbitx.net when the radio is
+// added to its owner's account there, and after that ONLINE and the name
+// the radio was given. The settings
 // are shown afresh when any of them changes while they are on the screen.
 //
 // TYPING
@@ -359,6 +358,7 @@
 // It is built on the desktop with "make gui", which needs GTK 3.
 
 #include <gtk/gtk.h>
+#include <glib/gstdio.h>
 #include <pthread.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -372,7 +372,6 @@
 #include "board.h"
 #include "gpio.h"
 #include "knob.h"
-#include "linking.h"
 #include "logbook_window.h"
 #include "sha256.h"
 
@@ -382,9 +381,12 @@
 #define DEFAULT_SERVER "my.sbitx.net"
 #define NONCE_BYTES 16
 #define CHALLENGE_ROOM 72
-#define LINKING_TICK_MS 200
-#define MICROS_A_MILLI 1000
 #define KEY_FOLDER_MODE 0700
+#define KEY_FILE_MODE 0600
+#define PATH_ROOM 512
+#define PASSWORD_ROOM 32
+#define STRETCH_ROUNDS 50000
+#define SALT_BEGINS "zbitx-1 "
 #define RETRY_EVERY_MS 3000
 #define HZ_PER_MHZ 1000000
 #define HZ_PER_KHZ 1000
@@ -601,7 +603,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
 #define REMOTE_GROUP "REMOTE"
-#define CODE_WORD "CODE "
+#define COOKIE_WORD "COOKIE "
 #define ACCOUNT_SITE "my.sbitx.net"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
 #define WINDOW_NAME "zbitx"
@@ -735,7 +737,6 @@ enum through {
 	NOT_THROUGH,
 	TO_BE_CHALLENGED,
 	TO_BE_WELCOMED,
-	LISTING,
 	TO_BE_CONNECTED,
 	THROUGH,
 };
@@ -745,8 +746,9 @@ static enum through through = NOT_THROUGH;
 static const char *through_wanted = "";
 static char through_challenge[CHALLENGE_ROOM];
 static char through_nonce[2 * NONCE_BYTES + 1];
-static char through_choice[LINKING_KEY_ID_ROOM];
-static guint linking_timer;
+static char through_key[SHA256_HEX_ROOM];
+static int has_through_key;
+static struct known password_asked;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1770,6 +1772,9 @@ static void disconnect(const char *why) {
 
 /* reaching a radio through my.sbitx.net */
 
+static void open_text(struct known *k);
+static void show_page(const char *name);
+
 static void send_a_line(const char *line) {
 	if (writer == NULL)
 		return;
@@ -1777,72 +1782,142 @@ static void send_a_line(const char *line) {
 	g_output_stream_write_all(writer, "\n", 1, NULL, NULL, NULL);
 }
 
-// the service's challenge is answered with a proof made with this
-// computer's key, and the nonce the proof was made with is kept, to check
-// the service's own proof by
+// where the radio's client password is kept on this computer, in a folder
+// that is made if it is not there
+static void password_path(char *path, int room) {
+	char folder[PATH_ROOM];
+
+	snprintf(folder, sizeof(folder), "%s/zbitx", g_get_user_config_dir());
+	g_mkdir_with_parents(folder, KEY_FOLDER_MODE);
+	snprintf(path, room, "%.*s/%.40s.password", PATH_ROOM - 64, folder, through_wanted);
+}
+
+// the letters of a client password as the website keeps them: small, with
+// the strokes and spaces it is written with left out
+static void tidy_password(const char *typed_text, char *letters, int room) {
+	int used = 0;
+	int i;
+
+	for (i = 0; typed_text[i] != 0 && used < room - 1; i++) {
+		if (g_ascii_isalpha(typed_text[i]))
+			letters[used++] = g_ascii_tolower(typed_text[i]);
+	}
+	letters[used] = 0;
+}
+
+// the password is stretched as the service stretches it, with the radio's
+// name as salt, and what comes of it is the key of the proofs
+static void take_password(const char *typed_text) {
+	char letters[PASSWORD_ROOM];
+	char salt[LINE_MAX_LENGTH];
+	size_t i;
+
+	tidy_password(typed_text, letters, sizeof(letters));
+	snprintf(salt, sizeof(salt), "%s%.40s", SALT_BEGINS, through_wanted);
+	for (i = 0; salt[i] != 0; i++)
+		salt[i] = g_ascii_tolower(salt[i]);
+	pbkdf2_sha256_hex(letters, salt, STRETCH_ROUNDS, through_key);
+	has_through_key = letters[0] != 0;
+}
+
+static void save_password(const char *typed_text) {
+	char path[PATH_ROOM];
+	char letters[PASSWORD_ROOM];
+	FILE *file;
+
+	password_path(path, sizeof(path));
+	tidy_password(typed_text, letters, sizeof(letters));
+	file = fopen(path, "w");
+	if (file != NULL) {
+		g_chmod(path, KEY_FILE_MODE);
+		fprintf(file, "%s\n", letters);
+		fclose(file);
+	}
+	take_password(letters);
+}
+
+static void forget_password(void) {
+	char path[PATH_ROOM];
+
+	password_path(path, sizeof(path));
+	g_remove(path);
+	has_through_key = 0;
+}
+
+// says whether the window has the radio's client password; if it has not,
+// from an earlier time or from its file, the owner is asked to type it
+static int has_password_or_asks(void) {
+	char path[PATH_ROOM];
+	char line[LINE_MAX_LENGTH];
+	FILE *file;
+
+	if (has_through_key)
+		return 1;
+	password_path(path, sizeof(path));
+	file = fopen(path, "r");
+	if (file != NULL) {
+		if (fgets(line, sizeof(line), file) != NULL)
+			take_password(line);
+		fclose(file);
+	}
+	if (has_through_key)
+		return 1;
+	snprintf(password_asked.name, sizeof(password_asked.name), "CLIENT PASSWORD");
+	password_asked.value[0] = 0;
+	password_asked.is_text = 1;
+	open_text(&password_asked);
+	return 0;
+}
+
+// what was typed on the text screen was the password: it is kept, and the
+// radio is tried for
+static void take_typed_password(const char *typed_text) {
+	save_password(typed_text);
+	show_page(PAGE_MAIN);
+	try_to_connect();
+}
+
+// the service's challenge is answered with a proof made with the client
+// password, and the nonce the proof was made with is kept, to check the
+// service's own proof by
 static void answer_the_challenge(const char *challenge) {
-	char key_id[LINKING_KEY_ID_ROOM];
-	char key[LINKING_KEY_ROOM];
 	uint8_t random_bytes[NONCE_BYTES];
 	char text[LINE_MAX_LENGTH * 2];
 	char proof[SHA256_HEX_ROOM];
 	int i;
 
-	if (!linking_read_key(key_id, key)
-			|| getrandom(random_bytes, sizeof(random_bytes), 0) != sizeof(random_bytes)) {
-		disconnect("this computer has no key");
+	if (getrandom(random_bytes, sizeof(random_bytes), 0) != sizeof(random_bytes)) {
+		disconnect("no random numbers to be had");
 		return;
 	}
 	for (i = 0; i < NONCE_BYTES; i++)
 		snprintf(through_nonce + 2 * i, 3, "%02x", random_bytes[i]);
 	snprintf(through_challenge, sizeof(through_challenge), "%.*s",
 		(int)sizeof(through_challenge) - 1, challenge);
-	snprintf(text, sizeof(text), "zbitx-auth-1 client %s %s", through_challenge,
-		through_nonce);
-	hmac_sha256_hex(key, text, proof);
-	snprintf(text, sizeof(text), "AUTH %s %s %s", key_id, through_nonce, proof);
+	snprintf(text, sizeof(text), "zbitx-auth-1 client %.40s %s %s", through_wanted,
+		through_challenge, through_nonce);
+	hmac_sha256_hex(through_key, text, proof);
+	snprintf(text, sizeof(text), "AUTH client %.40s %s %s", through_wanted, through_nonce,
+		proof);
 	send_a_line(text);
 	through = TO_BE_WELCOMED;
 }
 
-// whether what answered has this computer's key too
+// whether what answered has the client password too
 static int is_the_service(const char *its_proof) {
-	char key_id[LINKING_KEY_ID_ROOM];
-	char key[LINKING_KEY_ROOM];
 	char text[LINE_MAX_LENGTH * 2];
 	char proof[SHA256_HEX_ROOM];
 	unsigned char differs = 0;
 	size_t i;
 
-	if (!linking_read_key(key_id, key) || strlen(its_proof) != SHA256_HEX_ROOM - 1)
+	if (strlen(its_proof) != SHA256_HEX_ROOM - 1)
 		return 0;
-	snprintf(text, sizeof(text), "zbitx-auth-1 server %s %s", through_challenge,
-		through_nonce);
-	hmac_sha256_hex(key, text, proof);
+	snprintf(text, sizeof(text), "zbitx-auth-1 server %.40s %s %s", through_wanted,
+		through_challenge, through_nonce);
+	hmac_sha256_hex(through_key, text, proof);
 	for (i = 0; i < SHA256_HEX_ROOM - 1; i++)
 		differs |= (unsigned char)(proof[i] ^ its_proof[i]);
 	return differs == 0;
-}
-
-// "RADIO <key id> online|offline <name>": the radio wanted, if this is it
-// and it is on line; with none wanted, the first that is on line
-static void take_a_listed_radio(char *rest) {
-	char *state = strchr(rest, ' ');
-	char *name;
-
-	if (state == NULL || through_choice[0] != 0)
-		return;
-	*state++ = 0;
-	name = strchr(state, ' ');
-	if (name == NULL)
-		return;
-	*name++ = 0;
-	if (strcmp(state, "online"))
-		return;
-	if (through_wanted[0] != 0 && g_ascii_strcasecmp(through_wanted, rest)
-			&& g_ascii_strcasecmp(through_wanted, name))
-		return;
-	snprintf(through_choice, sizeof(through_choice), "%s", rest);
 }
 
 // a line from the service, before the radio is on the line
@@ -1857,7 +1932,7 @@ static void take_through_line(char *line) {
 		rest = line + strlen(line);
 	if (!strcmp(line, "ERROR")) {
 		if (!strncmp(rest, "AUTH", strlen("AUTH")) && through == TO_BE_WELCOMED)
-			linking_forget_key();
+			forget_password();
 		disconnect(rest);
 		return;
 	}
@@ -1868,29 +1943,9 @@ static void take_through_line(char *line) {
 	if (through == TO_BE_WELCOMED && !strcmp(line, "WELCOME")) {
 		rest = strchr(rest, ' ');
 		if (rest == NULL || !is_the_service(rest + 1)) {
-			disconnect("what answered does not have this computer's key");
+			disconnect("what answered does not have the client password");
 			return;
 		}
-		through_choice[0] = 0;
-		through = LISTING;
-		send_a_line("radios");
-		return;
-	}
-	if (through == LISTING && !strcmp(line, "RADIO")) {
-		take_a_listed_radio(rest);
-		return;
-	}
-	if (through == LISTING && !strcmp(line, "RADIOS")) {
-		if (through_choice[0] == 0) {
-			if (through_wanted[0] != 0)
-				snprintf(text, sizeof(text), "%.40s is not on line", through_wanted);
-			else
-				snprintf(text, sizeof(text), "none of your radios is on line");
-			disconnect(text);
-			return;
-		}
-		snprintf(text, sizeof(text), "connect %s", through_choice);
-		send_a_line(text);
 		through = TO_BE_CONNECTED;
 		return;
 	}
@@ -1900,62 +1955,6 @@ static void take_through_line(char *line) {
 		snprintf(text, sizeof(text), "connected to %.40s through %.40s", rest, radio_name);
 		show_status(text);
 	}
-}
-
-// this computer is being linked: what there is to show, and when it has
-// its key, the connection is tried
-static gboolean on_linking_tick(gpointer unused) {
-	char said[LINKING_STATUS_ROOM];
-	char text[LINE_MAX_LENGTH];
-	enum linking_result result;
-
-	(void)unused;
-	result = linking_poll(g_get_monotonic_time() / MICROS_A_MILLI, said);
-	if (!strncmp(said, CODE_WORD, strlen(CODE_WORD))) {
-		snprintf(text, sizeof(text), "to link this computer, type %s at %.40s",
-			said + strlen(CODE_WORD), radio_name);
-		show_status(text);
-	}
-	if (result == LINKING_UNDER_WAY)
-		return G_SOURCE_CONTINUE;
-	linking_timer = 0;
-	if (result == LINKING_FAILED) {
-		snprintf(text, sizeof(text), "linking this computer: %s", said);
-		disconnect(text);
-	} else {
-		try_to_connect();
-	}
-	return G_SOURCE_REMOVE;
-}
-
-// says whether this computer has a key; if it has none, getting one is
-// begun
-static int has_key_or_links(void) {
-	char key_id[LINKING_KEY_ID_ROOM];
-	char key[LINKING_KEY_ROOM];
-
-	if (linking_read_key(key_id, key))
-		return 1;
-	if (linking_timer == 0) {
-		show_status("asking my.sbitx.net for a code to link this computer");
-		linking_begin();
-		linking_timer = g_timeout_add(LINKING_TICK_MS, on_linking_tick, NULL);
-	}
-	return 0;
-}
-
-// where this computer's key is kept, in a folder that is made if it is not
-// there
-static void open_linking(void) {
-	char folder[LINE_MAX_LENGTH * 2];
-	char path[LINE_MAX_LENGTH * 2 + 16];
-	char web[LINE_MAX_LENGTH];
-
-	snprintf(folder, sizeof(folder), "%s/zbitx", g_get_user_config_dir());
-	g_mkdir_with_parents(folder, KEY_FOLDER_MODE);
-	snprintf(path, sizeof(path), "%s/client.key", folder);
-	snprintf(web, sizeof(web), "https://%.80s", radio_name);
-	linking_open(web, path, g_get_host_name(), "client");
 }
 
 static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
@@ -2035,7 +2034,7 @@ static void try_to_connect(void) {
 
 	if (connection != NULL || is_connecting)
 		return;
-	if (is_remote && !has_key_or_links())
+	if (is_remote && !has_password_or_asks())
 		return;
 	is_connecting = 1;
 	snprintf(text, sizeof(text), "connecting to %s", radio_name);
@@ -2346,6 +2345,10 @@ static void rub_out(void) {
 // what was typed goes to the radio, if it is something and is new, and the
 // settings come back
 static void save_typed(void) {
+	if (typed_for == &password_asked) {
+		take_typed_password(typed);
+		return;
+	}
 	if (typed_for != NULL && typed[0] != 0 && strcmp(typed, typed_for->value)) {
 		snprintf(typed_for->value, CONTROL_VALUE_MAX, "%s", typed);
 		send_line(typed_for->name, typed_for->value);
@@ -2423,9 +2426,9 @@ static void fill_settings(void) {
 			continue;
 		row = list_row_new(known[i].name, &value);
 		snprintf(said, sizeof(said), "%s", known[i].value);
-		if (!strncmp(known[i].value, CODE_WORD, strlen(CODE_WORD)))
+		if (!strncmp(known[i].value, COOKIE_WORD, strlen(COOKIE_WORD)))
 			snprintf(said, sizeof(said), "type %s at %s",
-				known[i].value + strlen(CODE_WORD), ACCOUNT_SITE);
+				known[i].value + strlen(COOKIE_WORD), ACCOUNT_SITE);
 		gtk_label_set_text(GTK_LABEL(value), said);
 		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
 		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
@@ -3559,15 +3562,17 @@ int main(int argc, char **argv) {
 
 	gtk_init(&argc, &argv);
 	if (argc > 1 && !strcmp(argv[1], REMOTE_WORD)) {
+		if (argc < 3) {
+			printf("zbitx_gui remote <radio, as vu2ese-home> [server] [port]\n");
+			return 1;
+		}
 		is_remote = 1;
+		through_wanted = argv[2];
 		radio_name = DEFAULT_SERVER;
-		if (argc > 2)
-			through_wanted = argv[2];
 		if (argc > 3)
 			radio_name = argv[3];
 		if (argc > 4)
 			radio_port = atoi(argv[4]);
-		open_linking();
 	} else {
 		if (argc > 1)
 			radio_name = argv[1];

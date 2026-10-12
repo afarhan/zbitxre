@@ -161,58 +161,91 @@ Messages and log entries are not state and none is left out.
 
 ## What it is for
 
-The protocol is to be carried across the internet, between an owner's client
-and their radio by way of my.sbitx.net. Each end must then prove who it is, and
-the proof must not be something that a listener on the way can use again. A
+The protocol is carried across the internet, between an owner's client and
+their radio by way of my.sbitx.net. Each end must then prove who it is, and the
+proof must not be something that a listener on the way can use again. A
 password or a key sent down the connection would be exactly that. So the proof
 is an answer to a challenge.
 
-## Keys
+## A radio's cookie and its client password
 
-Each party that connects has a **key** of its own: 32 random bytes, written as
-text, with a short **key id** that names it and is not secret. A radio has one
-and each client on each computer has one. They are issued by my.sbitx.net when
-the owner links the radio or the client to their account, and each can be taken
-away there. The party keeps its key in a file only its user can read. The
-account's password is typed into the website and nowhere else.
+An owner has up to five radios at my.sbitx.net. Each has a name the owner gave
+it, and is known by the callsign with that after it: `vu2ese-home`,
+`vu2ese-zbitx`. Each radio has two secrets, both twelve letters written in
+fours, `abcd-jklm-wxyz`.
 
-my.sbitx.net keeps each key as well, since it has to work out the same answer.
-That is the cost of a challenge by keyed hash: whoever read the service's
-database would have the keys. The other way, a key pair on each party, keeps
-nothing secret at the service but needs public-key code at both ends.
+**The cookie** is the radio's own. The radio makes it, the first time remote
+access is turned on, and shows it among its settings. The owner, signed in at
+the website, adds a radio by giving it a name and typing the cookie. Nothing is
+typed on the radio, and no file on it is edited: the author's design, a zbitx
+having no keyboard. The radio answers the service's challenge with the cookie
+from then on, and no longer shows it.
+
+**The client password** is made by the website and shown there beside the
+radio. It is what the owner types into a client, with the radio's name, to
+reach the radio from afar. It is apart from the cookie so that it can be
+changed at the website, when a laptop is lost, with nothing done at the radio,
+and so that whoever has it cannot pass for the radio.
+
+The account's own password is typed into the website and nowhere else.
+
+my.sbitx.net keeps both secrets as they are and not as hashes, since it has to
+work out the same answer to its challenge, and has to show the owner the
+client password. Whoever read the service's database would have them.
+
+## Stretching
+
+Twelve letters are few enough to find by trying them all, for someone who
+overheard a challenge and its answer and can check each guess against them. So
+the letters are not the key of the proof. The key is what PBKDF2, with
+HMAC-SHA256 and 50,000 rounds, makes of the twelve letters, written small and
+without the strokes, with the salt `zbitx-1 ` followed by, in small letters,
+the callsign for a cookie and the radio's name for a client password; the
+result is used as the 64 hex digits it is written in. Each guess then costs
+50,000 times what it would.
 
 ## The handshake
 
-The side that is connected to speaks first, with a challenge: 32 hex digits it
-has never used before.
+The service speaks first, with a challenge: 32 hex digits it has never used
+before.
 
-    CHALLENGE 5f1c0a...                         (the one connected to)
-    AUTH <key id> <nonce> <proof>               (the one connecting)
-    WELCOME <callsign> <proof>                  (the one connected to)
+    CHALLENGE 5f1c0a...                             the service
+    AUTH radio VU2ESE <nonce> <proof>               a radio's daemon, or
+    AUTH client vu2ese-home <nonce> <proof>         a client
+    WELCOME vu2ese-home <proof>                     the service
 
-The connecting side makes a nonce of its own, 32 hex digits, and its proof is
+The one connecting makes a nonce of its own, 32 hex digits. Its proof is
 
-    HMAC-SHA256(key, "zbitx-auth-1 client <challenge> <nonce>")
+    HMAC-SHA256(key, "zbitx-auth-1 radio VU2ESE <challenge> <nonce>")
+    HMAC-SHA256(key, "zbitx-auth-1 client vu2ese-home <challenge> <nonce>")
 
-in hex. The answer's proof is the same with `server` in place of `client`, and
-shows that the side connected to has the key too, so that a client is not
-talking to an impostor. A wrong proof, a key id that is not known, or no `AUTH`
-within ten seconds, and the connection is closed, with `ERROR AUTH` and a
-reason. Repeated failures from one address are made to wait.
+in hex, the key being the stretched cookie or the stretched client password,
+and the name in it being the name exactly as it was sent. The service's proof
+is the same with `server` in place of `radio` or `client`, and shows that the
+service has the secret too, so that nobody is talking to an impostor.
 
-After `WELCOME` the protocol is the one above, unchanged.
+A radio says only whose it is, by the callsign set on it. It does not know the
+name it was given on the website. The service tries the cookie of each of that
+callsign's radios, five at most, and the one that made the proof is the radio;
+`WELCOME` says its name.
+
+A wrong proof, and the connection is closed with `ERROR AUTH` and a reason. A
+radio that has not been added at the website is refused in just this way, and
+goes on showing its cookie and asking, every quarter of a minute, until it is
+added. An address that sends a hundred wrong proofs in a quarter of an hour is
+turned away for the rest of it.
 
 ## Where it is asked for
 
 Only on the internet side. The author's ruling: the home network stays as it
 is, and what is guarded is what crosses the internet.
 
-| Connection | Who challenges | Whose key answers |
+| Connection | Who challenges | What answers |
 |---|---|---|
-| the radio's side to my.sbitx.net | the service | the radio's |
-| a client to my.sbitx.net | the service | the client's |
-| a client straight to a radio on the home network | nobody | none |
-| a program on the radio itself, to the radio | nobody | none |
+| the radio's side to my.sbitx.net | the service | the radio's cookie |
+| a client to my.sbitx.net | the service | the radio's client password |
+| a client straight to a radio on the home network | nobody | nothing |
+| a program on the radio itself, to the radio | nobody | nothing |
 
 So the radio's own server, `server.c` on port 8081, is not changed by any of
 this. The challenge is spoken by my.sbitx.net and answered by whoever connects
@@ -229,9 +262,8 @@ communications are to be unencrypted by law, and what is wanted here is only
 to be sure who is accessing the radio. So what passes between a client, the
 service and a radio is plain text that anyone on the way can read.
 
-The website is another matter and is served over HTTPS: a password is typed
-there, and a key is handed to a radio or a client there once, when it is
-linked. Neither is a radio communication.
+The website is another matter and is served over HTTPS: the account's password
+is typed there, and so is a radio's cookie when the radio is added.
 
 ---
 
@@ -246,28 +278,40 @@ the owner's router.
 ## The daemon on the radio
 
 That something is not the radio program. `sdr` is a server and stays one. A
-small program of its own, written in C, runs beside it on the radio. To `sdr`
-it is one more client on 127.0.0.1; to my.sbitx.net it is the radio. It holds
-the radio's key and answers the challenge. Whatever goes wrong with it or with
-the internet, the radio program is not touched.
+small program of its own, written in C, runs beside it on the radio:
+`clients/remote/zbitx_remote.c`. To `sdr` it is one more client on 127.0.0.1;
+to my.sbitx.net it is the radio. It makes and keeps the radio's cookie and
+answers the challenge. Whatever goes wrong with it or with the internet, the
+radio program is not touched.
 
 ## It is the owner's to switch on and off
 
-The author's ruling. The owner turns remote access on and off, on the radio,
-and it is off until they turn it on. While it is off the daemon holds no
-connection to anything outside the radio.
+The author's ruling. The radio has a control, `REMOTE`, `OFF` or `ON`, among
+the station's settings, and it is off until the owner turns it on. While it is
+off the daemon holds no connection to anything outside the radio. What the
+daemon has to say it says in another control, `REMOTE_STATUS`:
+
+    OFF
+    SET MYCALLSIGN FIRST          the radio has no callsign to say whose it is
+    CONNECTING
+    COOKIE abcd-jklm-wxyz         the website does not know this radio: add it
+                                  there, with this cookie
+    ONLINE vu2ese-home
+    NO ANSWER FROM SERVER
+
+`sdr` keeps the two controls and does nothing with them.
 
 ## Nothing is sent that nobody asked for
 
-While it is on and nobody is using it, the daemon holds one connection to
-my.sbitx.net and says nothing on it, beyond a word a minute to show that it is
-still there. That connection is how the service knows the radio can be
-reached, and how it tells the daemon that somebody wants it. No spectrum, no
-controls and no log go down it.
+While remote access is on and nobody is using it, the daemon holds one
+connection to my.sbitx.net and says nothing on it, beyond a word a minute to
+show that it is still there. That connection is how the service knows the
+radio can be reached, and how it tells the daemon that somebody wants it. No
+spectrum, no controls and no log go down it.
 
 When the owner's client asks my.sbitx.net for the radio, the service tells the
 daemon, and the daemon then opens two connections for that client alone: one
-to my.sbitx.net and one to `sdr`, and passes each line from the one to the
+to my.sbitx.net and one to `sdr`, and passes each byte from the one to the
 other. The client is then talking the protocol above to its radio, and is sent
 what any client is sent and no more: the spectrum only if it asks for it. When
 the client goes, both connections are closed.
@@ -275,8 +319,7 @@ the client goes, both connections are closed.
 The backup of the settings and the copy of the logbook are taken the same way
 and are not kept up continuously: the service asks the daemon for a
 connection, reads the controls' values and the log's entries as a client
-would, and closes it. That is done when the radio comes on line, and when the
-owner asks for it on the website.
+would, and closes it. That is done when the radio comes on line.
 
 ## What is said, after the handshake
 
@@ -302,21 +345,15 @@ Every byte after that `OK` is passed between this connection and the visitor,
 and the daemon passes it between this connection and one it has made to the
 radio program. A session nobody is waiting for is refused.
 
-**A client.** It asks which of the owner's radios there are, and for one:
+**A client.** It named its radio in the handshake, and has nothing more to
+say. When the radio's daemon has answered, the service says
 
-    radios                     the client
-    RADIO r3f9a1c2b4d5e online shack sbitx
-    RADIO r77ab01c9e2f4 offline portable
-    RADIOS END                 the service
-    connect r3f9a1c2b4d5e      the client
-    CONNECTED shack sbitx      the service
+    CONNECTED vu2ese-home
 
-A radio is named by its key's id. After `CONNECTED` the client is talking to
-its radio in the radio's own protocol, the first part of this file, beginning
-with every control's value, as if it had just connected to the radio itself.
-A client is given only the radios of the account it is linked to, and a radio
-that is not on line, or does not answer within ten seconds, is an `ERROR
-connect` with the reason.
+and the client is from then on talking to its radio in the radio's own
+protocol, the first part of this file, beginning with every control's value,
+as if it had just connected to the radio itself. A radio that is not on line,
+or does not answer within ten seconds, is an `ERROR connect` with the reason.
 
 At most four visitors are on one radio at once.
 

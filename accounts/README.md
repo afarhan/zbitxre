@@ -2,14 +2,16 @@
 
 The service behind `https://my.sbitx.net`. An owner registers a callsign with
 an email address, confirms the address through a mailed link, and chooses a
-password. Signed in, they link their radios: each radio is given a key of its
-own, which it saves and presents to the online services.
+password. Signed in, they add their radios, five at most, each by a name and
+the cookie the radio shows in its settings; the radio is then `vu2ese-home`.
+Beside each radio the site shows its client password, which with the radio's
+name is what a client is given to reach the radio from afar.
 
 There are two programs, and each one's header says how it works:
 
-- `accounts.py` is the website: registering, signing in, linking a radio or a
-  client, and the pages that show an owner the copy kept of each radio's
-  settings and logbook.
+- `accounts.py` is the website: registering, signing in, adding a radio, and
+  the pages that show an owner the copy kept of each radio's settings and
+  logbook.
 - `remote.py` is reached over plain TCP, on port 8081: a radio's daemon
   connects to it and stays, the owner's client connects to it, and it passes
   what they say from the one to the other. `PROTOCOL.md`, at the top of the
@@ -56,19 +58,15 @@ On the server, as the service's user:
 and likewise `show CALLSIGN`, `suspend`, `restore`, `set-email CALLSIGN EMAIL`,
 `rename OLD NEW`, `delete CALLSIGN`, `note CALLSIGN TEXT`.
 
-## For the radio
+## For the radio and for a client
 
-    POST /api/radio/link        {"name": "shack sbitx", "kind": "radio"}
-        -> {"device_code", "user_code", "verify_url", "expires_in", "interval"}
-    POST /api/radio/link/poll   {"device_code": "..."}
-        -> {"status": "pending"} | {"status": "expired"}
-         | {"status": "linked", "key_id", "key", "callsign"}
-    GET  /api/radio/whoami      Authorization: Bearer <key>
-        -> {"callsign", "radio"}
+Neither asks the website anything. The radio's daemon,
+`clients/remote/zbitx_remote`, and a client both connect to `remote.py` on
+port 8081 and answer its challenge, the radio with its cookie and a client
+with the radio's client password. `PROTOCOL.md` has every line of it, and
+`remote_client.py` is a client in a page:
 
-The radio shows `user_code`; the owner types it at `verify_url`, signed in.
-The key is given once. A client is linked in the same way, with
-`"kind": "client"`. On the radio this is done by `clients/remote/zbitx_remote`.
+    python3 accounts/remote_client.py vu2ese-home
 
 ## Not built yet
 

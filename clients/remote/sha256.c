@@ -19,9 +19,15 @@
 // then the hash of the message, all hashed again with the key xored with
 // another. A key longer than a block is hashed first.
 //
+// PBKDF2 is as RFC 8018 gives it, for a result of one hash's length: the
+// keyed hash of the salt with the number 1 after it, then the keyed hash of
+// that, and of that, as many rounds as are asked, all of them xored
+// together. It makes a short secret, twelve letters typed by a person, slow
+// to guess: each guess costs the rounds. PROTOCOL.md says where it is used.
+//
 // The message is hashed in one go, from memory, which is all that is needed
-// of it here. tests/test_sha256.c checks both against the published test
-// vectors.
+// of it here. tests/test_sha256.c checks all three against the published
+// test vectors.
 
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +42,7 @@
 #define INNER_PAD 0x36
 #define OUTER_PAD 0x5c
 #define HMAC_MESSAGE_MAX 512
+#define BLOCK_NUMBER_BYTES 4
 
 static const uint32_t round_constants[ROUNDS] = {
 	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -154,6 +161,33 @@ void hmac_sha256(const uint8_t *key, size_t key_length, const uint8_t *data,
 	memcpy(inner + BLOCK_BYTES, data, length);
 	sha256(inner, BLOCK_BYTES + length, outer + BLOCK_BYTES);
 	sha256(outer, sizeof(outer), hash);
+}
+
+// a secret that is text, stretched with a salt that is text, written in hex
+void pbkdf2_sha256_hex(const char *secret, const char *salt, int rounds,
+		char hex[SHA256_HEX_ROOM]) {
+	uint8_t salted[HMAC_MESSAGE_MAX];
+	uint8_t round[SHA256_BYTES];
+	uint8_t all[SHA256_BYTES];
+	size_t salt_length = strlen(salt);
+	int i;
+	int n;
+
+	if (salt_length > sizeof(salted) - BLOCK_NUMBER_BYTES)
+		salt_length = sizeof(salted) - BLOCK_NUMBER_BYTES;
+	memcpy(salted, salt, salt_length);
+	memset(salted + salt_length, 0, BLOCK_NUMBER_BYTES);
+	salted[salt_length + BLOCK_NUMBER_BYTES - 1] = 1;
+	hmac_sha256((const uint8_t *)secret, strlen(secret), salted,
+		salt_length + BLOCK_NUMBER_BYTES, round);
+	memcpy(all, round, sizeof(all));
+	for (n = 1; n < rounds; n++) {
+		hmac_sha256((const uint8_t *)secret, strlen(secret), round, sizeof(round), round);
+		for (i = 0; i < SHA256_BYTES; i++)
+			all[i] ^= round[i];
+	}
+	for (i = 0; i < SHA256_BYTES; i++)
+		snprintf(hex + 2 * i, 3, "%02x", all[i]);
 }
 
 // the keyed hash of a text with a key that is text, written in hex

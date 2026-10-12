@@ -4,9 +4,8 @@
 // zbitx_remote.c — the radio's way out to my.sbitx.net, so that its owner
 // can reach it from anywhere.
 //
-//     zbitx_remote [--server my.sbitx.net] [--port 8081]
-//                  [--web https://my.sbitx.net] [--radio-port 8081]
-//                  [--key data/remote.key] [--name sbitx]
+//     zbitx_remote [--server my.sbitx.net] [--port 8081] [--radio-port 8081]
+//                  [--key data/remote.key]
 //
 // PROTOCOL.md, at the top of the repository, says what is spoken and why;
 // accounts/remote.py is the other end.
@@ -27,21 +26,48 @@
 // in the settings of every client and is OFF until the owner turns it on.
 // This program watches it, as any client is told of a control. While it is
 // OFF this program holds no connection to anything outside the radio. What
-// it has to tell the owner it says in another control, REMOTE_STATUS: OFF,
-// ASKING, CODE BCDF-GHJK, CONNECTING, ONLINE VU2ESE, and when things go
-// wrong, CODE RAN OUT, KEY REFUSED, NO ANSWER FROM SERVER. The radio
-// program keeps the two controls and does nothing with them.
+// it has to tell the owner it says in another control, REMOTE_STATUS. The
+// radio program keeps the two controls and does nothing with them.
+//
+// THE COOKIE
+//
+// The radio proves who it is to my.sbitx.net with a secret, and the author
+// settled how the two come to share it: the radio makes it, and the owner
+// carries it to the website. A zbitx has no keyboard, and a secret that had
+// to be typed into the radio, or into a file on it, would be a trial. So
+// the first time REMOTE is turned on, this program makes a cookie of twelve
+// letters, from the system's source of random numbers, and keeps it in a
+// file only the radio's user can read, data/remote.key. While my.sbitx.net
+// does not know the radio, REMOTE_STATUS shows the cookie, "COOKIE
+// abcd-jklm-wxyz", and the owner, signed in at my.sbitx.net, adds a radio
+// there, gives it a name and types the cookie. Within a quarter of a
+// minute the radio is on line, and from then on the cookie is not shown:
+// REMOTE_STATUS says "ONLINE vu2ese-home".
+//
+// The radio does not know the name it was given on the website and does
+// not need to. It says whose it is, by the callsign set on it, MYCALLSIGN,
+// which this program is told as any client is; the website finds which of
+// that owner's radios has this cookie, and says the name back. So the
+// callsign has to be set before any of this, and REMOTE_STATUS says so if
+// it is not.
+//
+// The cookie is never sent. It is the secret in the answer to the
+// service's challenge, and first it is stretched, by PBKDF2 with the
+// callsign as salt, so that twelve letters cannot be found by someone who
+// overheard an answer and tries them all. The stretching takes a moment
+// and is done once for each callsign.
+//
+// Removing the radio on the website makes the cookie show again; deleting
+// data/remote.key makes this program think up another.
 //
 // WHAT IT DOES WHILE REMOTE IS ON
 //
-// If the radio has no key, it gets one: linking.c says how, and the code
-// to be typed at my.sbitx.net is shown in REMOTE_STATUS.
-//
-// Then it connects to my.sbitx.net, answers the challenge with the key,
-// says "radio", and keeps that connection. Nothing goes down it but PING a
-// minute from here and PONG back, the author's other rule being that
-// nothing is sent that nobody asked for. If it is lost it is made again,
-// after five seconds, then ten, up to a minute.
+// It connects to my.sbitx.net, answers the challenge, says "radio", and
+// keeps that connection. Nothing goes down it but PING a minute from here
+// and PONG back, the author's other rule being that nothing is sent that
+// nobody asked for. If it is lost it is made again, after five seconds,
+// then ten, up to a minute; while the website does not know the radio, it
+// is tried every quarter of a minute.
 //
 // When the service sends "SESSION <token>", somebody the service has
 // vouched for wants the radio. This program then makes two connections for
@@ -52,9 +78,6 @@
 // is sent the spectrum only if it asks for it. There may be SESSIONS_MAX
 // visitors at once.
 //
-// A key the service refuses is not tried again. Turning REMOTE off and on
-// drops it and links the radio afresh.
-//
 // HOW IT RUNS
 //
 // One thread and one loop around poll(). The connections that carry a
@@ -64,7 +87,8 @@
 // four seconds at most for each step, during which a visitor already on the
 // radio is held up; that is the price of keeping this small.
 //
-// The key is never printed. What this program prints is who came and went.
+// What this program prints is what it says in REMOTE_STATUS, and who came
+// and went.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -83,12 +107,10 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
-#include "linking.h"
 #include "sha256.h"
 
 #define DEFAULT_SERVER "my.sbitx.net"
 #define DEFAULT_PORT "8081"
-#define DEFAULT_WEB "https://my.sbitx.net"
 #define DEFAULT_RADIO_PORT "8081"
 #define DEFAULT_KEY_FILE "data/remote.key"
 #define LOCAL_HOST "127.0.0.1"
@@ -98,6 +120,18 @@
 #define NONCE_HEX_ROOM (2 * NONCE_BYTES + 1)
 #define CALLSIGN_ROOM 20
 #define CHALLENGE_ROOM 72
+#define NAME_ROOM 40
+#define STATUS_ROOM 32
+#define PATH_ROOM 512
+#define COOKIE_LETTERS "abcdefghjkmnpqrstuvwxyz"
+#define COOKIE_LENGTH 12
+#define COOKIE_GROUP 4
+#define COOKIE_ROOM (COOKIE_LENGTH + 1)
+#define COOKIE_SHOWN_ROOM (COOKIE_LENGTH + COOKIE_LENGTH / COOKIE_GROUP)
+#define KEY_FILE_MODE 0600
+#define STRETCH_ROUNDS 50000
+#define SALT_BEGINS "zbitx-1 "
+#define REFUSED_RETRY_MS 15000
 #define STEP_WAIT_MS 4000
 #define LOOP_WAIT_MS 200
 #define RADIO_RETRY_MS 2000
@@ -117,11 +151,9 @@
 
 enum state {
 	OFF,
-	LINKING,
 	TO_CONNECT,
 	ONLINE,
 	WAITING_TO_RETRY,
-	STOPPED_UNTIL_OFF,
 };
 
 struct lines {
@@ -145,9 +177,15 @@ static const char *server = DEFAULT_SERVER;
 static const char *port = DEFAULT_PORT;
 static const char *radio_port = DEFAULT_RADIO_PORT;
 
+static const char *key_file = DEFAULT_KEY_FILE;
+
 static enum state state = OFF;
 static int is_wanted;
-static int is_key_refused;
+static char callsign[CALLSIGN_ROOM];
+static int is_callsign_new;
+static char cookie[COOKIE_ROOM];
+static char stretched[SHA256_HEX_ROOM];
+static char stretched_for[CALLSIGN_ROOM];
 static int radio_fd = NOT_OPEN;
 static struct lines radio_lines;
 static long radio_retry_ms;
@@ -157,7 +195,7 @@ static long next_ping_ms;
 static long last_heard_ms;
 static long retry_ms;
 static long retry_after_ms = RETRY_FIRST_MS;
-static char status_said[LINKING_STATUS_ROOM];
+static char status_said[STATUS_ROOM];
 static struct session sessions[SESSIONS_MAX];
 
 static long now_ms(void) {
@@ -265,11 +303,106 @@ static int is_same(const char *a, const char *b) {
 	return differs == 0;
 }
 
-// the challenge is answered with the radio's key, and the service's own
-// proof that it has the key is checked; PROTOCOL.md has the handshake
-static int authenticate(int fd, char *callsign) {
-	char key_id[LINKING_KEY_ID_ROOM];
-	char key[LINKING_KEY_ROOM];
+/* the cookie */
+
+static int is_a_cookie(const char *text) {
+	int i;
+
+	if (strlen(text) != COOKIE_LENGTH)
+		return 0;
+	for (i = 0; i < COOKIE_LENGTH; i++) {
+		if (strchr(COOKIE_LETTERS, text[i]) == NULL)
+			return 0;
+	}
+	return 1;
+}
+
+// twelve letters, each as likely as another: a random byte too large to
+// divide evenly among the letters is thrown away and another taken
+static int make_a_cookie(void) {
+	int letters = (int)strlen(COOKIE_LETTERS);
+	int evenly = 256 - 256 % letters;
+	uint8_t byte;
+	int made = 0;
+	int file;
+	int is_written;
+
+	while (made < COOKIE_LENGTH) {
+		if (getrandom(&byte, 1, 0) != 1)
+			return -1;
+		if (byte < evenly)
+			cookie[made++] = COOKIE_LETTERS[byte % letters];
+	}
+	cookie[COOKIE_LENGTH] = 0;
+	file = open(key_file, O_WRONLY | O_CREAT | O_TRUNC, KEY_FILE_MODE);
+	if (file < 0)
+		return -1;
+	is_written = write(file, cookie, COOKIE_LENGTH) == COOKIE_LENGTH
+		&& write(file, "\n", 1) == 1;
+	close(file);
+	if (!is_written)
+		return -1;
+	return 0;
+}
+
+// the radio's cookie, from its file, or a new one if it has none; says
+// whether there is one
+static int have_a_cookie(void) {
+	char line[LINE_ROOM];
+	FILE *file;
+
+	if (is_a_cookie(cookie))
+		return 1;
+	file = fopen(key_file, "r");
+	if (file != NULL) {
+		if (fgets(line, sizeof(line), file) != NULL) {
+			line[strcspn(line, "\r\n")] = 0;
+			if (is_a_cookie(line))
+				snprintf(cookie, sizeof(cookie), "%s", line);
+		}
+		fclose(file);
+	}
+	if (is_a_cookie(cookie))
+		return 1;
+	return make_a_cookie() == 0;
+}
+
+// "COOKIE abcd-jklm-wxyz", for the owner to type at the website
+static void show_the_cookie(char *text, int room) {
+	char shown[COOKIE_SHOWN_ROOM];
+	int used = 0;
+	int i;
+
+	for (i = 0; i < COOKIE_LENGTH; i++) {
+		if (i > 0 && i % COOKIE_GROUP == 0)
+			shown[used++] = '-';
+		shown[used++] = cookie[i];
+	}
+	shown[used] = 0;
+	snprintf(text, room, "COOKIE %s", shown);
+}
+
+// the cookie made slow to guess, with the callsign as salt; done once for
+// a callsign, since it takes a moment
+static void stretch_the_cookie(void) {
+	char salt[sizeof(SALT_BEGINS) + CALLSIGN_ROOM];
+	size_t i;
+
+	if (!strcmp(stretched_for, callsign))
+		return;
+	snprintf(salt, sizeof(salt), "%s%s", SALT_BEGINS, callsign);
+	for (i = 0; salt[i] != 0; i++) {
+		if (salt[i] >= 'A' && salt[i] <= 'Z')
+			salt[i] = (char)(salt[i] - 'A' + 'a');
+	}
+	pbkdf2_sha256_hex(cookie, salt, STRETCH_ROUNDS, stretched);
+	snprintf(stretched_for, sizeof(stretched_for), "%s", callsign);
+}
+
+// the challenge is answered with the radio's cookie, and the service's own
+// proof that it has the cookie is checked; PROTOCOL.md has the handshake.
+// name is what the website calls this radio, vu2ese-home
+static int authenticate(int fd, char *name) {
 	uint8_t random_bytes[NONCE_BYTES];
 	char nonce[NONCE_HEX_ROOM];
 	char line[LINE_ROOM];
@@ -279,9 +412,8 @@ static int authenticate(int fd, char *callsign) {
 	char theirs[SHA256_HEX_ROOM + 16];
 	int i;
 
-	callsign[0] = 0;
-	if (!linking_read_key(key_id, key))
-		return AUTH_REFUSED;
+	name[0] = 0;
+	stretch_the_cookie();
 	if (read_line_waiting(fd, line, sizeof(line)) < 0)
 		return AUTH_NO_ANSWER;
 	if (sscanf(line, "CHALLENGE %64s", challenge) != 1)
@@ -290,19 +422,19 @@ static int authenticate(int fd, char *callsign) {
 		return AUTH_NO_ANSWER;
 	for (i = 0; i < NONCE_BYTES; i++)
 		snprintf(nonce + 2 * i, 3, "%02x", random_bytes[i]);
-	snprintf(text, sizeof(text), "zbitx-auth-1 client %s %s", challenge, nonce);
-	hmac_sha256_hex(key, text, proof);
-	snprintf(line, sizeof(line), "AUTH %s %s %s\n", key_id, nonce, proof);
+	snprintf(text, sizeof(text), "zbitx-auth-1 radio %s %s %s", callsign, challenge, nonce);
+	hmac_sha256_hex(stretched, text, proof);
+	snprintf(line, sizeof(line), "AUTH radio %s %s %s\n", callsign, nonce, proof);
 	if (send_text(fd, line) < 0)
 		return AUTH_NO_ANSWER;
 	if (read_line_waiting(fd, line, sizeof(line)) < 0)
 		return AUTH_NO_ANSWER;
 	if (!strncmp(line, "ERROR AUTH", strlen("ERROR AUTH")))
 		return AUTH_REFUSED;
-	if (sscanf(line, "WELCOME %19s %80s", callsign, theirs) != 2)
+	if (sscanf(line, "WELCOME %39s %80s", name, theirs) != 2)
 		return AUTH_NO_ANSWER;
-	snprintf(text, sizeof(text), "zbitx-auth-1 server %s %s", challenge, nonce);
-	hmac_sha256_hex(key, text, proof);
+	snprintf(text, sizeof(text), "zbitx-auth-1 server %s %s %s", callsign, challenge, nonce);
+	hmac_sha256_hex(stretched, text, proof);
 	if (!is_same(proof, theirs))
 		return AUTH_NO_ANSWER;
 	return AUTH_OK;
@@ -361,9 +493,11 @@ static void say_status(const char *text) {
 
 static void radio_poll(long now) {
 	char line[LINE_ROOM];
-	char said[LINKING_STATUS_ROOM];
+	char said[STATUS_ROOM];
+	char callsign_heard[CALLSIGN_ROOM];
 	int got;
 
+	snprintf(callsign_heard, sizeof(callsign_heard), "%s", callsign);
 	if (radio_fd == NOT_OPEN) {
 		if (now < radio_retry_ms)
 			return;
@@ -383,12 +517,22 @@ static void radio_poll(long now) {
 			is_wanted = 1;
 		if (!strcmp(line, "REMOTE OFF"))
 			is_wanted = 0;
+		if (!strncmp(line, "MYCALLSIGN", strlen("MYCALLSIGN"))) {
+			callsign_heard[0] = 0;
+			sscanf(line, "MYCALLSIGN %19s", callsign_heard);
+		}
 		got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	}
 	// with no radio program there is nothing to offer anyone
 	if (got < 0) {
 		close_fd(&radio_fd);
 		is_wanted = 0;
+	}
+	// a radio that changes hands, or whose callsign is put right, begins
+	// again under the new one
+	if (strcmp(callsign_heard, callsign)) {
+		snprintf(callsign, sizeof(callsign), "%s", callsign_heard);
+		is_callsign_new = 1;
 	}
 }
 
@@ -410,7 +554,7 @@ static void sessions_close(void) {
 
 static void session_open(const char *token) {
 	struct session *s = NULL;
-	char callsign[CALLSIGN_ROOM];
+	char name[NAME_ROOM];
 	char line[LINE_ROOM];
 	int i;
 
@@ -424,7 +568,7 @@ static void session_open(const char *token) {
 	if (s->service_fd == NOT_OPEN)
 		return;
 	snprintf(line, sizeof(line), "session %.64s\n", token);
-	if (authenticate(s->service_fd, callsign) != AUTH_OK || send_text(s->service_fd, line) < 0
+	if (authenticate(s->service_fd, name) != AUTH_OK || send_text(s->service_fd, line) < 0
 			|| read_line_waiting(s->service_fd, line, sizeof(line)) < 0
 			|| strcmp(line, "OK")) {
 		session_close(s);
@@ -481,20 +625,24 @@ static void line_close(long now) {
 }
 
 static void line_open(long now) {
-	char callsign[CALLSIGN_ROOM];
+	char name[NAME_ROOM];
 	char line[LINE_ROOM];
-	char said[LINKING_STATUS_ROOM];
+	char said[STATUS_ROOM];
 	int result = AUTH_NO_ANSWER;
 
 	say_status("CONNECTING");
 	line_fd = dial(server, port);
 	if (line_fd != NOT_OPEN)
-		result = authenticate(line_fd, callsign);
+		result = authenticate(line_fd, name);
+	// the website does not know this radio, not yet or no longer: the
+	// cookie is shown, for the owner to add the radio with, and the
+	// website is asked again before long
 	if (result == AUTH_REFUSED) {
 		close_fd(&line_fd);
-		is_key_refused = 1;
-		state = STOPPED_UNTIL_OFF;
-		say_status("KEY REFUSED");
+		state = WAITING_TO_RETRY;
+		retry_ms = now + REFUSED_RETRY_MS;
+		show_the_cookie(said, sizeof(said));
+		say_status(said);
 		return;
 	}
 	if (result != AUTH_OK || send_text(line_fd, "radio\n") < 0
@@ -508,7 +656,7 @@ static void line_open(long now) {
 	last_heard_ms = now;
 	retry_after_ms = RETRY_FIRST_MS;
 	state = ONLINE;
-	snprintf(said, sizeof(said), "ONLINE %.16s", callsign);
+	snprintf(said, sizeof(said), "ONLINE %.22s", name);
 	say_status(said);
 }
 
@@ -537,7 +685,6 @@ static void line_poll(long now) {
 /* what the owner wants, carried out */
 
 static void switch_off(void) {
-	linking_stop();
 	close_fd(&line_fd);
 	sessions_close();
 	state = OFF;
@@ -546,35 +693,27 @@ static void switch_off(void) {
 }
 
 static void follow_the_owner(long now) {
-	char key_id[LINKING_KEY_ID_ROOM];
-	char key[LINKING_KEY_ROOM];
-	char said[LINKING_STATUS_ROOM];
-	enum linking_result linked;
-
 	if (!is_wanted) {
 		if (state != OFF)
 			switch_off();
 		return;
 	}
-	if (state == OFF) {
-		// a key the service refused is dropped, and the radio linked afresh
-		if (is_key_refused)
-			linking_forget_key();
-		is_key_refused = 0;
-		state = TO_CONNECT;
-		if (!linking_read_key(key_id, key)) {
-			linking_begin();
-			state = LINKING;
-		}
+	if (is_callsign_new && state != OFF) {
+		close_fd(&line_fd);
+		sessions_close();
+		state = OFF;
 	}
-	if (state == LINKING) {
-		linked = linking_poll(now, said);
-		if (said[0] != 0 && linked != LINKING_LINKED)
-			say_status(said);
-		if (linked == LINKING_LINKED)
-			state = TO_CONNECT;
-		if (linked == LINKING_FAILED)
-			state = STOPPED_UNTIL_OFF;
+	is_callsign_new = 0;
+	if (state == OFF) {
+		if (callsign[0] == 0) {
+			say_status("SET MYCALLSIGN FIRST");
+			return;
+		}
+		if (!have_a_cookie()) {
+			say_status("COOKIE NOT SAVED");
+			return;
+		}
+		state = TO_CONNECT;
 	}
 	if (state == WAITING_TO_RETRY && now >= retry_ms)
 		state = TO_CONNECT;
@@ -639,31 +778,22 @@ static void wait_and_pass_on(void) {
 }
 
 int main(int argc, char **argv) {
-	const char *web = DEFAULT_WEB;
-	const char *key_file = DEFAULT_KEY_FILE;
-	char name[TEXT_ROOM] = "radio";
 	int i;
 
-	gethostname(name, sizeof(name) - 1);
 	for (i = 1; i + 1 < argc; i += 2) {
 		if (!strcmp(argv[i], "--server"))
 			server = argv[i + 1];
 		else if (!strcmp(argv[i], "--port"))
 			port = argv[i + 1];
-		else if (!strcmp(argv[i], "--web"))
-			web = argv[i + 1];
 		else if (!strcmp(argv[i], "--radio-port"))
 			radio_port = argv[i + 1];
 		else if (!strcmp(argv[i], "--key"))
 			key_file = argv[i + 1];
-		else if (!strcmp(argv[i], "--name"))
-			snprintf(name, sizeof(name), "%s", argv[i + 1]);
 		else
 			i = argc;
 	}
 	if (i != argc) {
-		printf("zbitx_remote [--server host] [--port n] [--web url] [--radio-port n] "
-			"[--key file] [--name text]\n");
+		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]\n");
 		return EXIT_FAILURE;
 	}
 	signal(SIGPIPE, SIG_IGN);
@@ -671,7 +801,6 @@ int main(int argc, char **argv) {
 		sessions[i].service_fd = NOT_OPEN;
 		sessions[i].radio_fd = NOT_OPEN;
 	}
-	linking_open(web, key_file, name, "radio");
 	snprintf(status_said, sizeof(status_said), "OFF");
 	printf("remote: for %s port %s, the radio program on port %s\n", server, port, radio_port);
 	fflush(stdout);

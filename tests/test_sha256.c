@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Ashhar Farhan
 //
 // test_sha256.c — clients/remote/sha256.c against the published vectors:
-// SHA-256's from FIPS 180-4 and NIST's examples, HMAC's from RFC 4231.
+// SHA-256's from FIPS 180-4 and NIST's examples, HMAC's from RFC 4231, and
+// PBKDF2's, with HMAC-SHA256, the ones in common use for it.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +77,16 @@ int main(void) {
 	to_hex(hash, hex);
 	expect(!strcmp(hex, "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"),
 		"HMAC with a key longer than a block, its sixth case");
+
+	pbkdf2_sha256_hex("password", "salt", 1, hex);
+	expect(!strcmp(hex, "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"),
+		"PBKDF2, one round");
+	pbkdf2_sha256_hex("password", "salt", 2, hex);
+	expect(!strcmp(hex, "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43"),
+		"PBKDF2, two rounds");
+	pbkdf2_sha256_hex("password", "salt", 4096, hex);
+	expect(!strcmp(hex, "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"),
+		"PBKDF2, 4096 rounds");
 
 	if (checks_failed) {
 		printf("sha256: %d checks FAILED\n", checks_failed);

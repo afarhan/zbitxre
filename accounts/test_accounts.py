@@ -138,33 +138,10 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("Signed in as <strong>%s</strong>" % callsign, text)
         return browser
 
-    def radio_ask(self, path, asked):
-        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
-        connection.request("POST", path, body=json.dumps(asked),
-                           headers={"Content-Type": "application/json"})
-        answer = connection.getresponse()
-        got = json.loads(answer.read().decode())
-        connection.close()
-        return answer.status, got
-
-    def whoami(self, key):
-        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
-        connection.request("GET", "/api/radio/whoami",
-                           headers={"Authorization": "Bearer " + key})
-        answer = connection.getresponse()
-        got = json.loads(answer.read().decode())
-        connection.close()
-        return answer.status, got
-
-    def link_radio(self, browser, name="shack sbitx"):
-        _, started = self.radio_ask("/api/radio/link", {"name": name})
-        _, text = browser.get("/radios/link")
-        status, text = browser.post("/radios/link", {
-            "guard": browser.hidden(text, "guard"), "code": started["user_code"]})
-        self.assertIn("is linked", text)
-        _, polled = self.radio_ask("/api/radio/link/poll",
-                                   {"device_code": started["device_code"]})
-        return polled
+    def add_radio(self, browser, suffix="home", cookie="abcd-efgh-jkmn"):
+        _, text = browser.get("/")
+        return browser.post("/radios/add", {"guard": browser.hidden(text, "guard"),
+                                            "suffix": suffix, "cookie": cookie})[1]
 
     # registering
 
@@ -339,81 +316,86 @@ class AccountsTest(unittest.TestCase):
 
     # radios
 
-    def test_a_radio_is_linked_and_its_key_says_whose_it_is(self):
+    def test_a_radio_is_added_with_its_cookie_and_given_a_client_password(self):
         browser = self.make_account()
-        _, started = self.radio_ask("/api/radio/link", {"name": "shack sbitx"})
-        self.assertRegex(started["user_code"], r"^[A-Z]{4}-[A-Z]{4}$")
-        _, polled = self.radio_ask("/api/radio/link/poll",
-                                   {"device_code": started["device_code"]})
-        self.assertEqual(polled, {"status": "pending"})
-        _, text = browser.get("/radios/link")
-        _, text = browser.post("/radios/link", {
-            "guard": browser.hidden(text, "guard"),
-            "code": started["user_code"].lower().replace("-", " ")})
-        self.assertIn("shack sbitx", text)
-        _, polled = self.radio_ask("/api/radio/link/poll",
-                                   {"device_code": started["device_code"]})
-        self.assertEqual(polled["status"], "linked")
-        self.assertEqual(polled["callsign"], "VU2ESE")
-        status, who = self.whoami(polled["key"])
-        self.assertEqual((status, who), (200, {"callsign": "VU2ESE", "radio": "shack sbitx"}))
-        _, again = self.radio_ask("/api/radio/link/poll",
-                                  {"device_code": started["device_code"]})
-        self.assertEqual(again, {"status": "expired"})
+        text = self.add_radio(browser, "Home", "ABCD EFGH JKMN")
+        self.assertIn("vu2ese-home is added", text)
+        radio = self.service.radio_called("VU2ESE-home")
+        self.assertEqual(radio["cookie"], "abcdefghjkmn")
+        self.assertRegex(radio["client_password"], r"^[a-z]{12}$")
+        self.assertNotEqual(radio["client_password"], radio["cookie"])
+        self.assertIn(accounts.show_secret(radio["client_password"]), text)
+        self.assertNotIn("abcd-efgh-jkmn", text.split("Add a radio")[0])
 
-    def test_a_key_comes_with_an_id_that_says_its_kind(self):
+    def test_what_is_not_a_cookie_or_a_name_is_refused(self):
         browser = self.make_account()
-        radio = self.link_radio(browser)
-        self.assertRegex(radio["key_id"], r"^r[0-9a-f]{12}$")
-        self.assertNotIn(radio["key_id"], radio["key"])
-        _, started = self.radio_ask("/api/radio/link", {"name": "laptop", "kind": "client"})
-        _, text = browser.get("/radios/link")
-        browser.post("/radios/link", {"guard": browser.hidden(text, "guard"),
-                                      "code": started["user_code"]})
-        _, client = self.radio_ask("/api/radio/link/poll",
-                                   {"device_code": started["device_code"]})
-        self.assertRegex(client["key_id"], r"^c[0-9a-f]{12}$")
+        self.assertIn("That is not a cookie", self.add_radio(browser, "home", "abcd-efgh"))
+        self.assertIn("That is not a cookie", self.add_radio(browser, "home", "1234-5678-9012"))
+        self.assertIn("up to ten letters and figures",
+                      self.add_radio(browser, "my home", "abcd-efgh-jkmn"))
+        self.assertEqual(self.service.radios_of("VU2ESE"), [])
+
+    def test_a_name_is_used_once_and_there_is_room_for_five(self):
+        browser = self.make_account()
+        for suffix in ("a", "b", "c", "d", "e"):
+            self.assertIn("is added", self.add_radio(browser, suffix))
+        self.assertIn("room for 5 radios", self.add_radio(browser, "f"))
+        self.assertEqual(len(self.service.radios_of("VU2ESE")), 5)
+        other = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        self.add_radio(other, "home")
+        self.assertIn("called home already", self.add_radio(other, "home"))
+
+    def test_a_new_client_password_replaces_the_old(self):
+        browser = self.make_account()
+        self.add_radio(browser)
+        before = self.service.radio_called("vu2ese-home")
         _, text = browser.get("/")
-        self.assertIn("a client", text)
+        browser.post("/radios/password", {"guard": browser.hidden(text, "guard"),
+                                          "radio": str(before["id"])})
+        after = self.service.radio_called("vu2ese-home")
+        self.assertNotEqual(after["client_password"], before["client_password"])
+        self.assertEqual(after["cookie"], before["cookie"])
 
-    def test_a_wrong_code_links_nothing(self):
-        browser = self.make_account()
-        _, text = browser.get("/radios/link")
-        _, text = browser.post("/radios/link", {"guard": browser.hidden(text, "guard"),
-                                                "code": "BCDF-GHJK"})
-        self.assertIn("No radio is showing that code", text)
-
-    def test_linking_needs_a_sign_in(self):
-        _, started = self.radio_ask("/api/radio/link", {"name": "x"})
-        _, text = self.browser.post("/radios/link", {"guard": "x",
-                                                     "code": started["user_code"]})
-        self.assertIn("Sign in first", text)
-        _, polled = self.radio_ask("/api/radio/link/poll",
-                                   {"device_code": started["device_code"]})
-        self.assertEqual(polled, {"status": "pending"})
-
-    def test_a_removed_radios_key_is_refused(self):
-        browser = self.make_account()
-        key = self.link_radio(browser)["key"]
-        _, text = browser.get("/")
-        browser.post("/radios/remove", {"guard": browser.hidden(text, "guard"),
-                                        "radio": browser.hidden(text, "radio")})
-        status, _ = self.whoami(key)
-        self.assertEqual(status, 401)
-
-    def test_one_owner_cannot_remove_anothers_radio(self):
+    def test_a_radio_is_removed_only_by_its_owner(self):
         first = self.make_account()
-        key = self.link_radio(first)["key"]
-        _, text = first.get("/")
-        radio = first.hidden(text, "radio")
+        self.add_radio(first)
+        radio = self.service.radio_called("vu2ese-home")["id"]
         second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         _, text = second.get("/")
-        second.post("/radios/remove", {"guard": second.hidden(text, "guard"), "radio": radio})
-        self.assertEqual(self.whoami(key)[0], 200)
+        second.post("/radios/remove", {"guard": second.hidden(text, "guard"),
+                                       "radio": str(radio)})
+        self.assertIsNotNone(self.service.radio_called("vu2ese-home"))
+        _, text = first.get("/")
+        first.post("/radios/remove", {"guard": first.hidden(text, "guard"),
+                                      "radio": str(radio)})
+        self.assertIsNone(self.service.radio_called("vu2ese-home"))
 
-    def test_a_key_of_no_radio_is_refused(self):
-        self.assertEqual(self.whoami("sbx_" + "a" * 43)[0], 401)
-        self.assertEqual(self.whoami("nonsense")[0], 401)
+    def test_adding_a_radio_needs_a_sign_in(self):
+        _, text = self.browser.post("/radios/add", {"guard": "x", "suffix": "home",
+                                                    "cookie": "abcd-efgh-jkmn"})
+        self.assertIn("Sign in first", text)
+        self.assertEqual(self.service.radios_of("VU2ESE"), [])
+
+    def test_what_is_kept_of_a_radio_is_shown_to_its_owner_alone(self):
+        first = self.make_account()
+        self.add_radio(first)
+        radio = self.service.radio_called("vu2ese-home")["id"]
+        with self.service.store.open() as db:
+            db.execute("insert into snapshots (radio, taken, controls, log) values (?, ?, ?, ?)",
+                       (radio, accounts.now(), "FREQ 7074000\nMODE USB",
+                        "972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59"))
+        _, text = first.get("/radios/settings?radio=%d" % radio)
+        self.assertIn("<td>FREQ</td><td>7074000</td>", text)
+        _, text = first.get("/radios/log?radio=%d" % radio)
+        self.assertIn("VU2XZ", text)
+        second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        status, text = second.get("/radios/log?radio=%d" % radio)
+        self.assertEqual(status, 404)
+        self.assertNotIn("VU2XZ", text)
+
+    def test_a_secret_is_stretched_as_the_radio_stretches_it(self):
+        # what clients/remote/sha256.c makes of the same, by its own test
+        self.assertEqual(accounts.stretch("abcdjklmwxyz", "VU2ESE")[:16], "450331079366c98f")
 
     # customer service
 
@@ -424,32 +406,33 @@ class AccountsTest(unittest.TestCase):
         parser_args.value = words[2] if len(words) > 2 else None
         return accounts.admin(self.service.settings, parser_args)
 
-    def test_a_suspended_account_cannot_sign_in_and_its_radio_is_refused(self):
+    def test_a_suspended_account_cannot_sign_in_and_its_radios_are_not_found(self):
         browser = self.make_account()
-        key = self.link_radio(browser)["key"]
+        self.add_radio(browser)
         self.assertEqual(self.admin("suspend", "VU2ESE"), 0)
         _, text = browser.get("/")
         self.assertNotIn("Signed in as", text)
         _, text = Browser(self.port).post("/signin", {"callsign": "VU2ESE",
                                                       "password": PASSWORD})
         self.assertIn("suspended", text)
-        self.assertEqual(self.whoami(key)[0], 401)
+        self.assertIsNone(self.service.radio_called("vu2ese-home"))
         self.assertEqual(self.admin("restore", "VU2ESE"), 0)
-        self.assertEqual(self.whoami(key)[0], 200)
+        self.assertIsNotNone(self.service.radio_called("vu2ese-home"))
 
     def test_a_callsign_is_given_to_another_name_and_the_radio_follows(self):
         browser = self.make_account()
-        key = self.link_radio(browser)["key"]
+        self.add_radio(browser)
         self.assertEqual(self.admin("rename", "VU2ESE", "VU2ZZZ"), 0)
-        self.assertEqual(self.whoami(key)[1]["callsign"], "VU2ZZZ")
+        self.assertIsNone(self.service.radio_called("vu2ese-home"))
+        self.assertIsNotNone(self.service.radio_called("vu2zzz-home"))
         self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         self.assertEqual(self.admin("rename", "VU2ZZZ", "VU2XYZ"), 1)
 
     def test_a_deleted_account_takes_its_radios_with_it(self):
         browser = self.make_account()
-        key = self.link_radio(browser)["key"]
+        self.add_radio(browser)
         self.assertEqual(self.admin("delete", "VU2ESE"), 0)
-        self.assertEqual(self.whoami(key)[0], 401)
+        self.assertIsNone(self.service.radio_called("vu2ese-home"))
         _, text = Browser(self.port).register("VU2ESE", "new@example.org")
         self.assertIn("We have mailed a link", text)
 

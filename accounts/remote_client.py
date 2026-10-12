@@ -4,119 +4,85 @@
 """
 remote_client.py — a radio reached through my.sbitx.net, from a terminal.
 
-    remote_client.py                 the owner's radios, and which are on line
-    remote_client.py <key id>        that radio: what it says is printed, and
+    remote_client.py vu2ese-home     that radio: what it says is printed, and
                                      what is typed is sent to it, as with nc
-    remote_client.py first           the first radio that is on line
 
 It is the smallest client there can be, written to try the service with and
 as a model for a client on any platform: PROTOCOL.md says what is spoken,
 and this is all of it in a page.
 
-The first time it is run, this computer has no key. It asks the website
-for a code and prints it; the owner signs in at my.sbitx.net, chooses to
-link a radio or a client, and types the code. The key then comes back and
-is kept in ~/.config/zbitx/client.key, which only this user can read.
+The radio is named as the website names it, the owner's callsign and the
+radio's own name. The first time, the radio's client password is asked
+for, the twelve letters the website shows beside the radio; it is kept in
+~/.config/zbitx/<radio>.password, which only this user can read, where
+zbitx_gui keeps it too. A password the service refuses is forgotten.
 
---web and --server point it at another service than my.sbitx.net.
+--server and --port point it at another service than my.sbitx.net.
 """
 
 import argparse
+import getpass
 import hashlib
 import hmac
-import json
 import os
+import re
 import secrets
 import socket
 import sys
 import threading
-import time
-import urllib.request
 
-KEY_FILE = os.path.expanduser("~/.config/zbitx/client.key")
+STRETCH_ROUNDS = 50000
 
 
-def ask(web, path, asked):
-    request = urllib.request.Request(web + path, json.dumps(asked).encode(),
-                                     {"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=20) as answer:
-        return json.load(answer)
+def password_file(radio):
+    return os.path.expanduser("~/.config/zbitx/%s.password" % radio)
 
 
-def link(web):
-    started = ask(web, "/api/radio/link", {"name": socket.gethostname(), "kind": "client"})
-    print("To link this computer, sign in at %s and type the code  %s"
-          % (started["verify_url"], started["user_code"]))
-    ends = time.time() + started["expires_in"]
-    while time.time() < ends:
-        time.sleep(started["interval"])
-        answer = ask(web, "/api/radio/link/poll", {"device_code": started["device_code"]})
-        if answer["status"] == "linked":
-            os.makedirs(os.path.dirname(KEY_FILE), mode=0o700, exist_ok=True)
-            with open(os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-                f.write("%s %s\n" % (answer["key_id"], answer["key"]))
-            print("Linked, as %s." % answer["callsign"])
-            return
-        if answer["status"] != "pending":
-            break
-    sys.exit("The code ran out. Run this again for another.")
+def password_of(radio):
+    """the radio's client password, its twelve letters, from the file or
+    asked for and then kept"""
+    path = password_file(radio)
+    if os.path.exists(path):
+        with open(path) as file:
+            return file.read().strip()
+    letters = re.sub(r"[^a-z]", "", getpass.getpass(
+        "The client password of %s, from my.sbitx.net: " % radio).lower())
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
+        file.write(letters + "\n")
+    return letters
 
 
-def proof(key, side, challenge, nonce):
-    text = "zbitx-auth-1 %s %s %s" % (side, challenge, nonce)
+def proof(password, side, radio, challenge, nonce):
+    """the answer to a challenge: a keyed hash whose key is the password
+    stretched, with the radio's name as salt"""
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                              ("zbitx-1 " + radio.lower()).encode(), STRETCH_ROUNDS).hex()
+    text = "zbitx-auth-1 %s %s %s %s" % (side, radio, challenge, nonce)
     return hmac.new(key.encode(), text.encode(), hashlib.sha256).hexdigest()
-
-
-def connect(server, port):
-    with open(KEY_FILE) as file:
-        key_id, key = file.read().split()
-    line = socket.create_connection((server, port), timeout=20)
-    said = line.makefile("r", newline="\n")
-    challenge = said.readline().split()[1]
-    nonce = secrets.token_hex(16)
-    line.sendall(("AUTH %s %s %s\n" % (key_id, nonce,
-                                       proof(key, "client", challenge, nonce))).encode())
-    welcome = said.readline().split()
-    if len(welcome) != 3 or welcome[0] != "WELCOME":
-        sys.exit("The service refused this computer's key: %s" % " ".join(welcome))
-    if not hmac.compare_digest(welcome[2], proof(key, "server", challenge, nonce)):
-        sys.exit("Whatever answered at %s does not have this computer's key." % server)
-    return line, said, welcome[1]
-
-
-def radios(line, said):
-    line.sendall(b"radios\n")
-    found = []
-    while True:
-        words = said.readline().split(None, 3)
-        if not words or words[:2] == ["RADIOS", "END"]:
-            return found
-        found.append((words[1], words[2], words[3] if len(words) > 3 else ""))
 
 
 def main():
     parser = argparse.ArgumentParser(description="a radio reached through my.sbitx.net")
-    parser.add_argument("radio", nargs="?")
-    parser.add_argument("--web", default="https://my.sbitx.net")
+    parser.add_argument("radio", help="as the website names it: vu2ese-home")
     parser.add_argument("--server", default="my.sbitx.net")
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args()
-    if not os.path.exists(KEY_FILE):
-        link(args.web)
-    line, said, callsign = connect(args.server, args.port)
-    found = radios(line, said)
-    if args.radio is None:
-        print("%s's radios:" % callsign)
-        for key_id, state, name in found:
-            print("  %-14s %-8s %s" % (key_id, state, name))
-        return
-    wanted = args.radio
-    if wanted == "first":
-        on_line = [key_id for key_id, state, _ in found if state == "online"]
-        if not on_line:
-            sys.exit("None of %s's radios is on line." % callsign)
-        wanted = on_line[0]
-    line.sendall(("connect %s\n" % wanted).encode())
+    password = password_of(args.radio)
+
+    line = socket.create_connection((args.server, args.port), timeout=20)
+    said = line.makefile("r", newline="\n")
+    challenge = said.readline().split()[1]
+    nonce = secrets.token_hex(16)
+    line.sendall(("AUTH client %s %s %s\n" % (
+        args.radio, nonce, proof(password, "client", args.radio, challenge, nonce))).encode())
+    welcome = said.readline().split()
+    if len(welcome) != 3 or welcome[0] != "WELCOME":
+        os.remove(password_file(args.radio))
+        sys.exit("The service refused: %s" % " ".join(welcome))
+    if not hmac.compare_digest(welcome[2],
+                               proof(password, "server", args.radio, challenge, nonce)):
+        sys.exit("Whatever answered at %s does not have the client password." % args.server)
     answer = said.readline().strip()
     print(answer)
     if not answer.startswith("CONNECTED"):

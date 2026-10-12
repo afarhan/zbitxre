@@ -31,48 +31,43 @@ An account is "pending" until its address is verified, then "active", and
 "suspended" when customer service has shut it: a suspended account cannot
 sign in and its radios' keys are refused.
 
-A RADIO'S KEY, AND A CLIENT'S
+A RADIO, ITS COOKIE AND ITS CLIENT PASSWORD
 
-A radio does not sign in with its owner's password, and neither does a
-client, the program on another computer that works the radio from afar.
-Each is given a key of its own, which it saves, and which its owner can take
-away again. A radio and a client are linked in the same way, and what is
-said of the radio below is so of both; a client says "kind": "client" when
-it asks. It is linked as a television is:
+An owner has up to five radios here. Each has a name of the owner's
+choosing, home or zbitx, and is known by the callsign with that after it:
+vu2ese-home, vu2ese-zbitx. The author's design.
 
-    the radio      POST /api/radio/link          is given a device code, kept
-                                                 to itself, and a short user
-                                                 code, which it shows
-    the owner      signs in here, "Link a radio", types the user code
-    the radio      POST /api/radio/link/poll     with its device code, every
-                                                 few seconds: "pending", and
-                                                 once the owner has typed the
-                                                 code, the key, once only
+A radio is not given a secret by this site: it makes its own. The first
+time remote access is turned on, the radio makes a cookie of twelve letters
+and shows it among its settings, "abcd-jklm-wxyz". The owner, signed in
+here, adds a radio by giving it a name and typing the cookie. Nothing is
+typed on the radio, which on a zbitx has no keyboard, and no file on it is
+edited. From then on the cookie is what the radio answers this service's
+challenge with, and the radio no longer shows it.
 
-    the radio      GET /api/radio/whoami         Authorization: Bearer <key>
-                                                 says whose radio the key is
+Each radio also has a client password, twelve letters that this site makes
+and shows beside the radio. That, with the radio's name, is what the owner
+types into a client, the window on another computer, to reach the radio
+from afar. It is apart from the cookie so that it can be changed here, when
+a laptop is lost, without anything being done at the radio, and so that
+whoever has it cannot pass for the radio.
 
-The key is made at the moment the radio collects it, and comes with a key
-id, a short name for it that is not secret.
-
-The key is kept here as it is, and not as a hash of it. The radio proves
-who it is to remote.py, the part of this service that is reached over plain
-TCP, by answering a challenge with a keyed hash, and to check the answer
-the service has to work out the same hash, for which it needs the key;
-PROTOCOL.md says how and why. The cost is that whoever read this database
-would have every radio's key. The file is readable by the service's user
-alone.
+Neither is ever sent to remote.py, the part of this service that is reached
+over plain TCP: each is the secret in the answer to a challenge. PROTOCOL.md
+says how. To check an answer the service has to work out the same answer,
+so both are kept here as they are and not as hashes; the client password
+has to be shown to the owner anyway. The database is readable by the
+service's user alone.
 
 WHAT IS KEPT, AND HOW
 
     accounts   callsign, email, the password's hash, status, a note
     tokens     the links mailed out, to verify an address or reset a password
     sessions   who is signed in, in which browser
-    radios     each radio's or client's name, its key and its key id, and
+    radios     each radio's name, its cookie and its client password, and
                whether it is on line now, which remote.py says
     snapshots  the newest copy of each radio's settings and logbook, which
                remote.py takes when the radio comes on line
-    links      a radio's linking under way
     attempts   what has been tried lately, to slow down guessing
     spent      the proof-of-work challenges already answered
 
@@ -144,7 +139,6 @@ import contextlib
 import hashlib
 import hmac
 import html
-import json
 import os
 import re
 import secrets
@@ -160,19 +154,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 VERIFY_LINK_S = 48 * 3600
 RESET_LINK_S = 2 * 3600
 SESSION_S = 30 * 24 * 3600
-LINK_CODE_S = 10 * 60
-LINK_POLL_S = 5
 WINDOW_S = 15 * 60
 SIGNIN_TRIES_A_CALLSIGN = 5
 SIGNIN_TRIES_AN_ADDRESS = 20
 MAILS_AN_ADDRESS = 6
-LINKS_AN_ADDRESS = 20
-CODE_TRIES_AN_ACCOUNT = 10
 PASSWORD_SHORTEST = 10
 PASSWORD_LONGEST = 200
 BODY_LONGEST = 16 * 1024
-RADIO_NAME_LONGEST = 40
-RADIOS_AN_ACCOUNT = 20
+RADIOS_AN_ACCOUNT = 5
 SCRYPT_N = 2 ** 15
 SCRYPT_R = 8
 SCRYPT_P = 1
@@ -180,14 +169,18 @@ SCRYPT_MEMORY = 64 * 1024 * 1024
 HASHES_AT_ONCE = 2
 POW_BITS = 18
 POW_LIFE_S = 10 * 60
-KEY_PREFIX = "sbx_"
-KINDS = ("radio", "client")
-# a user code is of letters that are not mistaken for one another or for
-# figures, and spell no words
-CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ"
-CODE_LENGTH = 8
+# a cookie and a client password are twelve letters, written in fours, of an
+# alphabet without the letters that are mistaken for one another or for
+# figures: no i, l or o. zbitx_remote.c makes a radio's cookie of the same
+SECRET_LETTERS = "abcdefghjkmnpqrstuvwxyz"
+SECRET_LENGTH = 12
+SECRET_GROUP = 4
+# a secret is stretched before it is used, so that twelve letters are slow
+# to guess for someone who overheard an answer to a challenge
+STRETCH_ROUNDS = 50000
 
 CALLSIGN_FORM = re.compile(r"^[A-Z0-9]{3,10}$")
+SUFFIX_FORM = re.compile(r"^[a-z0-9]{1,10}$")
 EMAIL_FORM = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s.]{2,}$")
 
 SCHEMA = """
@@ -214,27 +207,19 @@ create table if not exists sessions (
 create table if not exists radios (
     id integer primary key,
     account integer not null references accounts(id) on delete cascade,
-    name text not null,
-    kind text not null,
-    key_id text not null unique,
-    key text not null unique,
+    suffix text not null,
+    cookie text not null,
+    client_password text not null,
     created integer not null,
     last_seen integer,
-    online integer not null default 0
+    online integer not null default 0,
+    unique (account, suffix)
 );
 create table if not exists snapshots (
     radio integer primary key references radios(id) on delete cascade,
     taken integer not null,
     controls text not null,
     log text not null
-);
-create table if not exists links (
-    device_hash text primary key,
-    user_code text not null unique,
-    name text not null,
-    kind text not null,
-    account integer references accounts(id) on delete cascade,
-    expires integer not null
 );
 create table if not exists attempts (
     bucket text not null,
@@ -337,7 +322,7 @@ input[type=text], input[type=email], input[type=password] {
 button { margin-top: 1.2em; padding: 0.5em 1.2em; font-size: 1em; }
 table { border-collapse: collapse; width: 100%; }
 td, th { text-align: left; padding: 0.4em 0.6em 0.4em 0; border-bottom: 1px solid #ddd; }
-td form { margin: 0; }
+td form { margin: 0; display: inline; }
 td button { margin: 0; padding: 0.2em 0.8em; }
 .said { background: #eef6ee; border-left: 4px solid #3a3; padding: 0.6em 0.8em; }
 .wrong { background: #fbeeee; border-left: 4px solid #c33; padding: 0.6em 0.8em; }
@@ -412,16 +397,45 @@ def zero_bits(data):
     return bits
 
 
-def new_user_code():
-    letters = "".join(secrets.choice(CODE_LETTERS) for _ in range(CODE_LENGTH))
-    return letters[:CODE_LENGTH // 2] + "-" + letters[CODE_LENGTH // 2:]
+def new_secret():
+    return "".join(secrets.choice(SECRET_LETTERS) for _ in range(SECRET_LENGTH))
 
 
-def tidy_user_code(typed):
-    letters = re.sub(r"[^A-Za-z]", "", typed).upper()
-    if len(letters) != CODE_LENGTH:
+def tidy_secret(typed):
+    """a cookie or a client password as it is kept, twelve small letters, or
+    '' if what was typed is not one; capitals, strokes and spaces are let by"""
+    letters = re.sub(r"[^a-z]", "", typed.lower())
+    if len(letters) != SECRET_LENGTH:
         return ""
-    return letters[:CODE_LENGTH // 2] + "-" + letters[CODE_LENGTH // 2:]
+    return letters
+
+
+def show_secret(letters):
+    return "-".join(letters[at:at + SECRET_GROUP]
+                    for at in range(0, len(letters), SECRET_GROUP))
+
+
+stretched = {}
+
+
+def stretch(secret, salt):
+    """a secret made slow to guess, as zbitx_remote.c and the clients make
+    it: PBKDF2 with HMAC-SHA256, in hex. What has been stretched is
+    remembered, since a radio that is not yet registered asks again and
+    again"""
+    known = stretched.get((secret, salt))
+    if known is None:
+        if len(stretched) > 1000:
+            stretched.clear()
+        known = hashlib.pbkdf2_hmac("sha256", secret.encode(),
+                                    ("zbitx-1 " + salt.lower()).encode(),
+                                    STRETCH_ROUNDS).hex()
+        stretched[(secret, salt)] = known
+    return known
+
+
+def radio_id(callsign, suffix):
+    return "%s-%s" % (callsign.lower(), suffix)
 
 
 def tidy_callsign(typed):
@@ -441,10 +455,12 @@ class Store:
     def __init__(self, path):
         self.path = path
         with self.open() as db:
-            # the radios were first kept with a hash of the key and no key;
-            # none of those can answer a challenge, and they are let go
+            # radios were first given a key by this site, through a code;
+            # now a radio makes its own cookie. The few of the first kind
+            # are let go, to be added again with their cookies
             columns = [row["name"] for row in db.execute("pragma table_info(radios)")]
-            if columns and "key" not in columns:
+            if columns and "cookie" not in columns:
+                db.execute("drop table if exists snapshots")
                 db.execute("drop table radios")
                 db.execute("drop table if exists links")
             db.executescript(SCHEMA)
@@ -701,101 +717,68 @@ class Service:
 
     def radios(self, account_id):
         with self.store.open() as db:
-            return db.execute("select * from radios where account = ? order by created",
+            return db.execute("select * from radios where account = ? order by suffix",
                               (account_id,)).fetchall()
 
-    def link_start(self, name, address, kind="radio"):
-        """for the radio: a device code to keep and a user code to show"""
-        if kind not in KINDS:
-            kind = "radio"
-        name = re.sub(r"[^\w .-]", "", name or "")[:RADIO_NAME_LONGEST].strip() or kind
+    def radio_add(self, account, suffix_typed, cookie_typed):
+        """the owner adds a radio: a name for it and the cookie it shows.
+        Returns (ok, what to tell the owner)"""
+        suffix = suffix_typed.strip().lower()
+        if not SUFFIX_FORM.match(suffix):
+            return False, ("A radio's name is up to ten letters and figures, with nothing "
+                           "else: home, zbitx, shack2.")
+        cookie = tidy_secret(cookie_typed)
+        if not cookie:
+            return False, ("That is not a cookie. It is the twelve letters the radio "
+                           "shows in its settings, like abcd-jklm-wxyz.")
         with self.store.open() as db:
-            if tried_too_often(db, "link " + address, LINKS_AN_ADDRESS):
-                return None
-            note_attempt(db, "link " + address)
-            db.execute("delete from links where expires < ?", (now(),))
-            device = secrets.token_urlsafe(32)
-            user_code = new_user_code()
-            db.execute("insert into links (device_hash, user_code, name, kind, expires) "
+            had = db.execute("select suffix from radios where account = ?",
+                             (account["id"],)).fetchall()
+            if len(had) >= RADIOS_AN_ACCOUNT:
+                return False, "An account has room for %d radios. Remove one first." % (
+                    RADIOS_AN_ACCOUNT)
+            if suffix in [row["suffix"] for row in had]:
+                return False, "You have a radio called %s already." % suffix
+            db.execute("insert into radios (account, suffix, cookie, client_password, created) "
                        "values (?, ?, ?, ?, ?)",
-                       (digest(device), user_code, name, kind, now() + LINK_CODE_S))
-        return {
-            "device_code": device,
-            "user_code": user_code,
-            "verify_url": self.settings.base_url + "/radios/link",
-            "expires_in": LINK_CODE_S,
-            "interval": LINK_POLL_S,
-        }
+                       (account["id"], suffix, cookie, new_secret(), now()))
+        return True, ("%s is added. It will come on line within a quarter of a minute, "
+                      "if it is switched on and its remote access is on."
+                      % radio_id(account["callsign"], suffix))
 
-    def link_approve(self, account, typed):
-        """for the owner, signed in: the code the radio shows. Returns (ok, text)"""
-        user_code = tidy_user_code(typed)
+    def radio_new_password(self, account, radio):
         with self.store.open() as db:
-            bucket = "code %d" % account["id"]
-            if tried_too_often(db, bucket, CODE_TRIES_AN_ACCOUNT):
-                return False, "Too many wrong codes. Try again in a quarter of an hour."
-            link = db.execute(
-                "select * from links where user_code = ? and expires > ? and account is null",
-                (user_code, now())).fetchone()
-            if link is None:
-                note_attempt(db, bucket)
-                return False, ("No radio is showing that code just now. Codes last ten "
-                               "minutes; ask the radio for a new one.")
-            count = db.execute("select count(*) from radios where account = ?",
-                               (account["id"],)).fetchone()[0]
-            if count >= RADIOS_AN_ACCOUNT:
-                return False, "This account has as many radios as it can. Remove one first."
-            db.execute("update links set account = ? where device_hash = ?",
-                       (account["id"], link["device_hash"]))
-            return True, "\"%s\" is linked. It will say so in a few seconds." % (
-                link["name"])
+            db.execute("update radios set client_password = ? where id = ? and account = ?",
+                       (new_secret(), radio, account["id"]))
 
-    def link_poll(self, device):
-        """for the radio: pending, or once the owner has typed the code, the key"""
-        with self.store.open() as db:
-            link = db.execute("select * from links where device_hash = ? and expires > ?",
-                              (digest(device), now())).fetchone()
-            if link is None:
-                return {"status": "expired"}
-            if link["account"] is None:
-                return {"status": "pending"}
-            account = db.execute("select * from accounts where id = ?",
-                                 (link["account"],)).fetchone()
-            key = KEY_PREFIX + secrets.token_urlsafe(32)
-            key_id = link["kind"][0] + secrets.token_hex(6)
-            db.execute("insert into radios (account, name, kind, key_id, key, created) "
-                       "values (?, ?, ?, ?, ?, ?)",
-                       (account["id"], link["name"], link["kind"], key_id, key, now()))
-            db.execute("delete from links where device_hash = ?", (link["device_hash"],))
-            return {"status": "linked", "key_id": key_id, "key": key,
-                    "callsign": account["callsign"]}
-
-    def radio_of_key(self, key):
-        """whose radio a key is, or None; the services ask this of every request"""
-        if not key or not key.startswith(KEY_PREFIX):
-            return None
-        with self.store.open() as db:
-            radio = db.execute(
-                "select radios.id, radios.name, accounts.callsign from radios join accounts "
-                "on accounts.id = radios.account where radios.key = ? "
-                "and accounts.status = 'active'", (key,)).fetchone()
-            if radio is None:
-                return None
-            db.execute("update radios set last_seen = ? where id = ?", (now(), radio["id"]))
-            return {"callsign": radio["callsign"], "radio": radio["name"]}
-
-    def radio_remove(self, account, radio_id):
+    def radio_remove(self, account, radio):
         with self.store.open() as db:
             db.execute("delete from radios where id = ? and account = ?",
-                       (radio_id, account["id"]))
+                       (radio, account["id"]))
 
-    def snapshot(self, account, radio_id):
+    def radios_of(self, callsign):
+        """for remote.py: the radios of a callsign whose account is active"""
+        with self.store.open() as db:
+            return db.execute(
+                "select radios.*, accounts.callsign from radios join accounts "
+                "on accounts.id = radios.account where accounts.callsign = ? "
+                "and accounts.status = 'active'", (callsign.upper(),)).fetchall()
+
+    def radio_called(self, name):
+        """for remote.py: the radio of a name like vu2ese-home, or None"""
+        callsign, _, suffix = name.lower().partition("-")
+        for radio in self.radios_of(callsign):
+            if radio["suffix"] == suffix:
+                return radio
+        return None
+
+    def snapshot(self, account, radio):
         """the newest copy of one of the account's radios' settings and logbook"""
         with self.store.open() as db:
             return db.execute(
-                "select snapshots.*, radios.name from snapshots join radios "
+                "select snapshots.*, radios.suffix from snapshots join radios "
                 "on radios.id = snapshots.radio where radios.id = ? and radios.account = ?",
-                (radio_id, account["id"])).fetchone()
+                (radio, account["id"])).fetchone()
 
 
 def page(title, body, account=None):
@@ -886,9 +869,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
-    def send_json(self, status, answer):
-        self.send(status, json.dumps(answer) + "\n", "application/json")
-
     def redirect(self, where, headers=()):
         self.send(303, "", headers=(("Location", where),) + tuple(headers))
 
@@ -908,33 +888,45 @@ class Handler(BaseHTTPRequestHandler):
         guard = self.form_guard(self.session_secret())
         rows = ""
         for radio in self.service.radios(account["id"]):
-            state = "a client"
-            if radio["kind"] == "radio":
-                state = "on line" if radio["online"] else "off line"
+            state = "on line" if radio["online"] else "off line"
             kept = ""
             if self.service.snapshot(account, radio["id"]) is not None:
                 kept = ("<a href=\"/radios/settings?radio=%d\">settings</a> &middot; "
                         "<a href=\"/radios/log?radio=%d\">logbook</a>"
                         % (radio["id"], radio["id"]))
-            rows += ("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-                     "<td><form method=\"post\" action=\"/radios/remove\">"
-                     "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                     "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
-                     "<button>Remove</button></form></td></tr>"
-                     % (html.escape(radio["name"]), state, when(radio["created"]),
-                        when(radio["last_seen"]), kept, guard, radio["id"]))
+            buttons = ""
+            for action, label in (("password", "New password"), ("remove", "Remove")):
+                buttons += ("<form method=\"post\" action=\"/radios/%s\">"
+                            "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                            "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
+                            "<button>%s</button></form> " % (action, guard, radio["id"], label))
+            rows += ("<tr><td><strong>%s</strong></td><td>%s</td><td class=\"code\">%s</td>"
+                     "<td>%s</td><td>%s</td></tr>"
+                     % (html.escape(radio_id(account["callsign"], radio["suffix"])), state,
+                        show_secret(radio["client_password"]), kept, buttons))
         if rows:
-            radios = ("<table><tr><th>Name</th><th></th><th>Linked</th><th>Last seen</th>"
-                      "<th>Kept here</th><th></th></tr>%s</table>" % rows)
+            radios = ("<table><tr><th>Radio</th><th></th><th>Client password</th>"
+                      "<th>Kept here</th><th></th></tr>%s</table>"
+                      "<p>To reach a radio from another computer, give the client its "
+                      "name and its client password.</p>" % rows)
         else:
-            radios = "<p>Nothing is linked yet.</p>"
+            radios = "<p>You have added no radio yet.</p>"
         body = (said(told, is_wrong)
-                + "<p>Address on record: %s</p><h2>Your radios and clients</h2>%s"
-                "<p><a href=\"/radios/link\">Link a radio or a client</a></p>"
+                + "<p>Address on record: %s</p><h2>Your radios</h2>%s"
+                "<h2>Add a radio</h2>"
+                "<p>On the radio, turn REMOTE on in its settings. It shows a cookie of "
+                "twelve letters. Give the radio a name and type the cookie here.</p>"
+                "<form method=\"post\" action=\"/radios/add\">"
+                "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                "<label>A name for it, such as home <input type=\"text\" name=\"suffix\" "
+                "maxlength=\"10\" autocomplete=\"off\" required></label>"
+                "<label>The radio's cookie <input type=\"text\" name=\"cookie\" "
+                "class=\"code\" maxlength=\"20\" autocomplete=\"off\" required></label>"
+                "<button>Add the radio</button></form>"
                 "<form method=\"post\" action=\"/signout\">"
                 "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                 "<button>Sign out</button></form>"
-                % (html.escape(account["email"]), radios, guard))
+                % (html.escape(account["email"]), radios, guard, guard))
         self.send(200, page(account["callsign"], body, account))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
@@ -1008,24 +1000,24 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(account["callsign"]), PASSWORD_SHORTEST,
                                html.escape(secret), html.escape(account["callsign"]))))
 
-    def kept_page(self, account, radio_id, what):
+    def kept_page(self, account, number, what):
         """a radio's settings or its logbook, as they were last copied"""
         kept = None
-        if radio_id.isdigit():
-            kept = self.service.snapshot(account, int(radio_id))
+        if number.isdigit():
+            kept = self.service.snapshot(account, int(number))
         if kept is None:
             self.send(404, page("Not found", "<p>Nothing is kept for that radio.</p>", account))
             return
         rows = ""
         if what == "settings":
-            title = "Settings of %s" % kept["name"]
+            title = "Settings of %s" % radio_id(account["callsign"], kept["suffix"])
             for line in kept["controls"].splitlines():
                 name, _, value = line.partition(" ")
                 rows += "<tr><td>%s</td><td>%s</td></tr>" % (html.escape(name),
                                                              html.escape(value))
             table = "<table><tr><th>Control</th><th>Value</th></tr>%s</table>" % rows
         else:
-            title = "Logbook of %s" % kept["name"]
+            title = "Logbook of %s" % radio_id(account["callsign"], kept["suffix"])
             for line in kept["log"].splitlines():
                 fields = (line.split("|") + [""] * 8)[:8]
                 rows += "<tr>%s</tr>" % "".join(
@@ -1039,20 +1031,6 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(title),
                                time.strftime("%Y-%m-%d %H:%M", time.gmtime(kept["taken"])),
                                table), account))
-
-    def link_form(self, account, told="", is_wrong=False, code=""):
-        guard = self.form_guard(self.session_secret())
-        self.send(200, page("Link a radio or a client", said(told, is_wrong)
-                            + "<p>On the radio, or in the client, choose to link it to "
-                            "your account. It shows a code of eight letters. Type it "
-                            "here.</p>"
-                            "<form method=\"post\" action=\"/radios/link\">"
-                            "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                            "<label>The code <input type=\"text\" name=\"code\" "
-                            "class=\"code\" value=\"%s\" maxlength=\"12\" autocomplete=\"off\" "
-                            "required></label><button>Link it</button></form>"
-                            "<p><a href=\"/\">Back</a></p>" % (guard, html.escape(code)),
-                            account))
 
     # requests
 
@@ -1077,40 +1055,21 @@ class Handler(BaseHTTPRequestHandler):
             self.forgot_form()
         elif url.path == "/password":
             self.password_form(query.get("t", [""])[0])
-        elif url.path == "/radios/link":
-            if account is None:
-                self.signin_form("Sign in first, then link the radio.")
-            else:
-                self.link_form(account, code=query.get("code", [""])[0])
         elif url.path in ("/radios/settings", "/radios/log"):
             if account is None:
                 self.signin_form("Sign in first.")
             else:
                 self.kept_page(account, query.get("radio", [""])[0],
                                url.path.rpartition("/")[2])
-        elif url.path == "/api/radio/whoami":
-            self.whoami()
         else:
             self.send(404, page("Not found", "<p>There is no such page.</p>"))
 
-    def whoami(self):
-        scheme, _, key = self.headers.get("Authorization", "").partition(" ")
-        radio = None
-        if scheme.lower() == "bearer":
-            radio = self.service.radio_of_key(key.strip())
-        if radio is None:
-            self.send_json(401, {"error": "no such key"})
-        else:
-            self.send_json(200, radio)
 
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
         body = self.read_body()
         if body is None:
             self.send(413, "too long\n", "text/plain")
-            return
-        if url.path.startswith("/api/"):
-            self.post_api(url.path, body)
             return
         if not self.is_from_this_site():
             self.send(403, page("Refused", "<p>That form did not come from this site.</p>"))
@@ -1159,37 +1118,20 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/signout":
             self.service.sign_out(secret)
             self.redirect("/", [self.session_cookie("", 0)])
-        elif url.path == "/radios/link":
-            ok, told = self.service.link_approve(account, form.get("code", ""))
-            if ok:
-                self.home(account, told)
-            else:
-                self.link_form(account, told, True, form.get("code", ""))
-        elif url.path == "/radios/remove":
+        elif url.path == "/radios/add":
+            ok, told = self.service.radio_add(account, form.get("suffix", ""),
+                                              form.get("cookie", ""))
+            self.home(account, told, not ok)
+        elif url.path in ("/radios/password", "/radios/remove"):
             if form.get("radio", "").isdigit():
-                self.service.radio_remove(account, int(form["radio"]))
+                if url.path == "/radios/remove":
+                    self.service.radio_remove(account, int(form["radio"]))
+                else:
+                    self.service.radio_new_password(account, int(form["radio"]))
             self.redirect("/")
         else:
             self.send(404, page("Not found", "<p>There is no such page.</p>"))
 
-    def post_api(self, path, body):
-        try:
-            asked = json.loads(body or "{}")
-        except ValueError:
-            asked = None
-        if not isinstance(asked, dict):
-            self.send_json(400, {"error": "the body must be a JSON object"})
-        elif path == "/api/radio/link":
-            answer = self.service.link_start(str(asked.get("name", "")), self.address(),
-                                             str(asked.get("kind", "radio")))
-            if answer is None:
-                self.send_json(429, {"error": "too many tries; wait a quarter of an hour"})
-            else:
-                self.send_json(200, answer)
-        elif path == "/api/radio/link/poll":
-            self.send_json(200, self.service.link_poll(str(asked.get("device_code", ""))))
-        else:
-            self.send_json(404, {"error": "no such request"})
 
 
 def serve(settings):
@@ -1222,8 +1164,8 @@ def admin(settings, args):
                 print("%-9s %s" % (name, account[name]))
             print("%-9s %s" % ("created", when(account["created"])))
             for r in db.execute("select * from radios where account = ?", (account["id"],)):
-                print("%-9s %-20s %s  linked %s, last seen %s" % (
-                    r["kind"], r["name"], r["key_id"], when(r["created"]),
+                print("radio     %-22s added %s, last seen %s" % (
+                    radio_id(account["callsign"], r["suffix"]), when(r["created"]),
                     when(r["last_seen"])))
         elif args.command == "suspend":
             db.execute("update accounts set status = 'suspended' where id = ?", (account["id"],))
