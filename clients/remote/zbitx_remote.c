@@ -106,6 +106,19 @@
 // changes, and no oftener than once a second, a dial being turned changing
 // the frequency many times in one.
 //
+// WHAT THE RADIO COPIES IN FT8
+//
+// The author asked that the service be sent whatever the radio copies in
+// FT8 and keep it, for anyone to see what a radio is hearing; what a radio
+// hears is as public as what it plays. So this program asks the radio
+// program for its messages, as a client that shows them does, and sends
+// each one on the connection that is kept, with where the dial was:
+// "DECODE 14074000 043015|-12|1797|CQ VU2ESE MK97". It does so for as long
+// as it is on line, which is for as long as the owner has REMOTE on; what
+// the radio copies while it is not is not sent. Should this program lose
+// the radio program and find it again, it is told its last messages over
+// again; the service knows one it has had already.
+//
 // SPEECH TO TRANSMIT
 //
 // The other way, when the owner speaks into a telephone afar and the radio
@@ -160,6 +173,7 @@
 #define DEFAULT_SERVER "my.sbitx.net"
 #define DEFAULT_PORT "8081"
 #define DEFAULT_RADIO_PORT "8081"
+#define MESSAGE_WORD "MESSAGE "
 // where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
 #define DEFAULT_MICROPHONE_PORT "5006"
 #define DEFAULT_KEY_FILE "data/remote.key"
@@ -567,6 +581,17 @@ static void say_status(const char *text) {
 		close_fd(&radio_fd);
 }
 
+// a message the radio has copied in FT8 goes to the service, with where
+// the dial is, if this program is on line
+static void decode_pass_on(const char *message) {
+	char line[LINE_ROOM];
+
+	if (state != ONLINE || line_fd == NOT_OPEN || tuned_hz[0] == 0)
+		return;
+	snprintf(line, sizeof(line), "DECODE %s %.200s\n", tuned_hz, message);
+	send_text(line_fd, line);
+}
+
 static void radio_poll(long now) {
 	char line[LINE_ROOM];
 	char said[STATUS_ROOM];
@@ -582,6 +607,8 @@ static void radio_poll(long now) {
 		if (radio_fd == NOT_OPEN)
 			return;
 		radio_lines.used = 0;
+		// its messages copied in FT8 are asked for, to be sent on
+		send_text(radio_fd, "messages on\n");
 		// what there is to say is said afresh to a radio program just found
 		snprintf(said, sizeof(said), "%s", status_said);
 		status_said[0] = 0;
@@ -595,6 +622,8 @@ static void radio_poll(long now) {
 			is_wanted = 0;
 		sscanf(line, "FREQ %15s", tuned_hz);
 		sscanf(line, "MODE %15s", tuned_mode);
+		if (!strncmp(line, MESSAGE_WORD, strlen(MESSAGE_WORD)))
+			decode_pass_on(line + strlen(MESSAGE_WORD));
 		if (!strncmp(line, "MYGRID", strlen("MYGRID"))) {
 			grid[0] = 0;
 			sscanf(line, "MYGRID %11s", grid);

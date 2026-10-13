@@ -16,7 +16,9 @@ that the answer it finds is one the service takes.
 
 import hashlib
 import http.client
+import decodes
 import json
+import time
 import os
 import re
 import shutil
@@ -107,6 +109,7 @@ class AccountsTest(unittest.TestCase):
         self.folder = tempfile.mkdtemp()
         settings = accounts.Settings()
         settings.database = os.path.join(self.folder, "accounts.db")
+        settings.decodes = os.path.join(self.folder, "decodes.db")
         settings.registration = "invite"
         settings.invite_code = INVITE
         settings.support = "support@example.org"
@@ -447,6 +450,32 @@ class AccountsTest(unittest.TestCase):
                                              "listening": 0, "listeners": []}])
         for hidden in ("home", "fj", "abcd", home["client_password"]):
             self.assertNotIn(hidden, text)
+
+    def test_what_a_radio_on_the_globe_copies_in_ft8_is_anyones_to_read(self):
+        browser = self.make_account()
+        self.add_radio(browser, "home")
+        with self.service.store.open() as db:
+            db.execute("update radios set online = 1, grid = 'MK97fj' where suffix = 'home'")
+        home = self.service.radio_called("vu2ese-home")
+        # the newest last, and then what has come since
+        kept = decodes.Decodes(self.service.settings.decodes)
+        now = int(time.time())
+        kept.add([(home["id"], now - 3600, 14074000, "030000", -3, 900, "CQ OLD ONE"),
+                  (home["id"], now, 14074000, "043015", -12, 1797, "CQ VU2ESE MK97"),
+                  (home["id"], now, 14074000, "043015", None, 1500, "VU2ESE W1AW FN31"),
+                  (home["id"] + 77, now, 7074000, "043015", -1, 800, "CQ NOT ON THE GLOBE")])
+        status, text = Browser(self.port).get("/decodes.json?radio=%d" % home["id"])
+        self.assertEqual(status, 200)
+        copied = json.loads(text)
+        self.assertEqual([row["text"] for row in copied], ["CQ VU2ESE MK97", "VU2ESE W1AW FN31"])
+        self.assertEqual((copied[0]["strength"], copied[0]["pitch"], copied[0]["hz"],
+                          copied[0]["sent"]), (-12, 1797, 14074000, "043015"))
+        self.assertIsNone(copied[1]["strength"], "one the radio sent itself")
+        _, text = Browser(self.port).get("/decodes.json?radio=%d&after=%d" % (home["id"], copied[0]["id"]))
+        self.assertEqual([row["text"] for row in json.loads(text)], ["VU2ESE W1AW FN31"])
+        for asked in ("/decodes.json?radio=%d" % (home["id"] + 77), "/decodes.json?radio=x",
+                      "/decodes.json", "/decodes.json?radio=%d&after=x" % home["id"]):
+            self.assertEqual(json.loads(Browser(self.port).get(asked)[1]), [], asked)
 
     def test_the_globe_and_what_draws_it_need_no_sign_in_and_nothing_from_elsewhere(self):
         visitor = Browser(self.port)

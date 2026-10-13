@@ -163,6 +163,21 @@ There is a stream only while somebody listens; the owner's page always
 does, and speech with no stream to go by is dropped. Nothing here says
 when the radio is to send: that is TX, a line like any other.
 
+WHAT THE RADIOS COPY IN FT8
+
+A radio's daemon, while it is on line, sends each message its radio copies
+in FT8 on the connection it keeps:
+
+    DECODE 14074000 043015|-12|1797|CQ VU2ESE MK97
+
+the dial's frequency, and then the radio's own words for the message: the
+time it was sent, its strength in dB or TX for one the radio sent itself,
+its pitch and its text. The author asked that all of them be kept, apart
+from everything else, and be public. They are put in decodes.py's file,
+every two seconds what has come since; decodes.py says what is kept of
+each. A message a radio has said already is not kept twice. The globe asks
+the website for them, /decodes.json.
+
 HOW MUCH IT IS USED
 
 The author asked for this when he made the globe's address public and his
@@ -237,6 +252,7 @@ and is read and written as it comes, without a thread of its own.
 import argparse
 import asyncio
 import base64
+import collections
 import hmac
 import hashlib
 import os
@@ -248,6 +264,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accounts
+import decodes
 import ip_places
 
 HELLO_WAIT_S = 10
@@ -274,6 +291,10 @@ LISTENERS_AN_ADDRESS = 6
 REQUEST_LONGEST = 8192
 PAGE_QUIET_S = 20
 USAGE_EVERY_S = 300
+DECODES_KEPT_EVERY_S = 2
+DECODES_REMEMBERED = 400
+DECODE_LINE = re.compile(
+    r"^DECODE ([0-9]{3,9}) ([0-9]{6})\|(TX|-?[0-9]{1,3})\|([0-9]{1,5})\|([ -~]{1,40})$")
 MESSAGE_LONGEST = 65536
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WRONG_PROOFS = 100
@@ -335,12 +356,15 @@ class Remote:
         self.spoken = 0      # and of speech sent
         # how much the service was used since tell_usage() last said
         self.usage = dict.fromkeys(("came", "turned away", "most", "heard", "sent",
-                                    "kept back", "spoken"), 0)
+                                    "kept back", "spoken", "decodes"), 0)
         self.heard_at_start = 0
         self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
             db.execute("update radios set online = 0, listeners = 0, listener_places = ''")
         self.places = ip_places.Places(settings.ip_places)
+        self.decodes = decodes.Decodes(settings.decodes)
+        self.decodes_waiting = []  # what radios have copied and is not yet in the file
+        self.decodes_said = {}     # a radio's id -> the last messages it said, to know a repeat
 
     def say(self, text):
         print("remote: %s" % text, flush=True)
@@ -477,6 +501,8 @@ class Remote:
                 elif TUNED_LINE.match(line):
                     self.tuned[radio] = line[len("TUNED "):]
                     self.tell_listeners(radio, "tuned " + self.tuned[radio])
+                elif line.split(" ")[0] == "DECODE":
+                    self.take_decode(radio, line)
                 else:
                     break
         finally:
@@ -751,14 +777,16 @@ class Remote:
         while True:
             await asyncio.sleep(USAGE_EVERY_S)
             used = self.usage
-            if not (used["came"] or used["turned away"] or used["heard"] or self.listening()):
+            if not (used["came"] or used["turned away"] or used["heard"] or used["decodes"]
+                    or self.listening()):
                 continue
             self.say("usage, last %d min: radios on line %d, listening now %d, most at once %d, "
                      "came %d, turned away %d, packets from radios %d, to listeners %d, "
-                     "kept from slow listeners %d, speech packets %d, working a radio now %d" % (
+                     "kept from slow listeners %d, speech packets %d, FT8 messages kept %d, "
+                     "working a radio now %d" % (
                          USAGE_EVERY_S // 60, len(self.lines), self.listening(), used["most"],
                          used["came"], used["turned away"], used["heard"], used["sent"],
-                         used["kept back"], used["spoken"],
+                         used["kept back"], used["spoken"], used["decodes"],
                          sum(self.sessions.values())))
             self.usage = dict.fromkeys(used, 0)
             self.usage["most"] = self.listening()
@@ -826,6 +854,41 @@ class Remote:
             radio_writer.close()
             self.sessions[radio["id"]] -= 1
             self.say("the owner's browser has left %s" % name)
+
+    def take_decode(self, radio, line):
+        """a message a radio has copied in FT8, "DECODE 14074000
+        043015|-12|1797|CQ VU2ESE MK97", waits to be kept, unless it is not
+        one or is one this radio has said before: a daemon that loses its
+        radio program and finds it again is told the last messages over
+        again"""
+        found = DECODE_LINE.match(line)
+        if found is None:
+            return
+        hz, sent, strength, pitch, text = found.groups()
+        said = self.decodes_said.setdefault(radio, collections.OrderedDict())
+        mark = (sent, pitch, text)
+        if mark in said:
+            return
+        said[mark] = True
+        if len(said) > DECODES_REMEMBERED:
+            said.popitem(last=False)
+        self.decodes_waiting.append((radio, int(time.time()), int(hz), sent,
+                                     None if strength == "TX" else int(strength),
+                                     int(pitch), text))
+        self.usage["decodes"] += 1
+
+    async def keep_decodes(self):
+        """every DECODES_KEPT_EVERY_S what radios have copied since is put
+        in the file, all at once: a radio copies a couple of dozen at a
+        stroke, and each put by itself would open and close the file as
+        often"""
+        while True:
+            await asyncio.sleep(DECODES_KEPT_EVERY_S)
+            waiting, self.decodes_waiting = self.decodes_waiting, []
+            try:
+                self.decodes.add(waiting)
+            except Exception as failed:
+                self.say("what the radios copied could not be kept: %s" % failed)
 
     def keep_the_grid(self, radio, said):
         """a grid locator of four or six characters is kept with the radio,
@@ -962,6 +1025,7 @@ class Remote:
         self.web = await asyncio.start_server(self.meet_browser, web_host, web_port,
                                               limit=REQUEST_LONGEST)
         self.usage_teller = asyncio.ensure_future(self.tell_usage())
+        self.decodes_keeper = asyncio.ensure_future(self.keep_decodes())
         self.say("listening on %s:%d, and for browsers on %s:%d" % (
             host, port, web_host, self.web.sockets[0].getsockname()[1]))
         return server

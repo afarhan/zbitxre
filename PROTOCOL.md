@@ -465,6 +465,29 @@ first for there to be a way back to it.
 A text message `lost 2` says that so many packets did not come before the
 next that did, so that a player can cover the gap.
 
+## What a radio copies in FT8
+
+The author's ruling: every message a radio copies in FT8 is sent to the
+service and kept there, all of them, apart from the accounts, and is public,
+as what the radio plays is. The daemon asks the radio program for its
+messages, `messages on`, as a client that shows them does, and for as long as
+it is on line sends each one on the connection it keeps, with where the dial
+is before it:
+
+    DECODE 14074000 043015|-12|1797|CQ VU2ESE MK97
+
+The service keeps the radio's number, when it was told, the dial, and the
+message's own time, strength, pitch and text; a message a radio has said
+already is not kept again. Anyone may read what a radio that is on the globe
+has copied in the last quarter of an hour, or since a message they have:
+
+    https://my.sbitx.net/decodes.json?radio=1
+    https://my.sbitx.net/decodes.json?radio=1&after=5012
+
+which answers a list, oldest first, of `id`, `heard` (seconds since 1970),
+`hz`, `sent`, `strength` (null for one the radio sent itself), `pitch` and
+`text`. The globe shows it in a box beside the radio that is chosen.
+
 ## Speech to transmit
 
 The same path, the other way: the author's design. Whoever works the radio

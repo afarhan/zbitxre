@@ -37,6 +37,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import accounts
+import decodes
 import ip_places
 import remote
 
@@ -64,6 +65,8 @@ class RadioProgram:
                          "MYGRID": "MK97",
                          "REMOTE": "OFF", "REMOTE_STATUS": ""}
         self.clients = []
+        self.messages = []
+        self.wanting_messages = []
         self.lock = threading.Lock()
         self.listener = socket.create_server(("127.0.0.1", 0))
         self.port = self.listener.getsockname()[1]
@@ -112,12 +115,30 @@ class RadioProgram:
         client.close()
 
     def take(self, client, line):
+        # a client that asks for the messages copied in FT8 is told those
+        # there are, and is told each one after as it is copied
+        if line == "messages on":
+            with self.lock:
+                self.wanting_messages.append(client)
+                for message in self.messages:
+                    client.sendall(("MESSAGE %s\n" % message).encode())
+            return
         if line == "log":
             client.sendall(b"LOG_LIST 2 \nLOG 972|2026-04-08|04:45|7130|LSB|VU2XZ|59|59\n"
                            b"LOG 961|2026-04-02|14:10|14074|FT8|VU2ESE|-14 MK97|-09 MK81\n")
             return
         name, _, value = line.partition(" ")
         self.set(name, value, client)
+
+    def copy(self, message):
+        """a message is copied in FT8: those who asked are told"""
+        with self.lock:
+            self.messages.append(message)
+            for client in self.wanting_messages:
+                try:
+                    client.sendall(("MESSAGE %s\n" % message).encode())
+                except OSError:
+                    pass
 
     def set(self, name, value, but=None):
         with self.lock:
@@ -283,6 +304,7 @@ class RemoteTest(unittest.TestCase):
         self.folder = tempfile.mkdtemp()
         settings = accounts.Settings()
         settings.database = os.path.join(self.folder, "accounts.db")
+        settings.decodes = os.path.join(self.folder, "decodes.db")
         # where the listeners' made-up addresses are said to be
         settings.ip_places = os.path.join(self.folder, "places.bin")
         with open(settings.ip_places, "wb") as out:
@@ -598,6 +620,30 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(told(first), "listening 1")
         first.close()
         self.wait_for(lambda: kept() == 0, "the count was not put back to nothing")
+
+    def test_what_a_radio_copies_in_ft8_is_kept_once_each(self):
+        # copied before the radio was on line: it is not sent
+        self.radio.copy("042945|-07|1210|CQ W1AW FN31")
+        radio = self.switch_on_and_add()
+        self.radio.set("FREQ", "14074000")
+        time.sleep(0.5)
+        self.radio.copy("043015|-12|1797|CQ VU2ESE MK97")
+        self.radio.copy("043015|TX|1500|W1AW VU2ESE MK97")
+        self.radio.copy("not a message at all")
+        self.radio.copy("043015|-12|1797|CQ VU2ESE MK97")
+
+        def kept():
+            return decodes.Decodes(self.service.settings.decodes).recent(radio["id"])
+        self.wait_for(lambda: len(kept()) >= 2, "what the radio copied was not kept")
+        time.sleep(2.5)
+        rows = kept()
+        self.assertEqual([row["text"] for row in rows], ["CQ VU2ESE MK97", "W1AW VU2ESE MK97"],
+                         "each once, and not the one from before it was on line")
+        self.assertEqual((rows[0]["hz"], rows[0]["sent"], rows[0]["strength"], rows[0]["pitch"]),
+                         (14074000, "043015", -12, 1797))
+        self.assertIsNone(rows[1]["strength"])
+        self.assertEqual(self.status(), "ONLINE vu2ese-home",
+                         "what was not a message put the radio off line")
 
     def test_a_listener_is_told_how_many_packets_did_not_come(self):
         radio = self.switch_on_and_add()

@@ -209,7 +209,10 @@ import threading
 import time
 import urllib.parse
 from email.message import EmailMessage
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import decodes
 
 VERIFY_LINK_S = 48 * 3600
 RESET_LINK_S = 2 * 3600
@@ -640,9 +643,53 @@ MAP_SCRIPT = """
       + (chosen.listening ? "  \u00b7  " + heads(chosen.listening) : "");
   }
 
+  /* what the chosen radio is copying in FT8, in a box at the side: the
+     author asked that a radio on FT8 could be touched and what it is
+     hearing read, as the page that works a radio shows it to its owner.
+     The service keeps every message a radio copies; this asks for those
+     of the last quarter of an hour and then, every few seconds, for what
+     has come since. With none, there is no box: the radio is not on FT8. */
+
+  var heard = document.getElementById("heard");
+  var heardTitle = document.getElementById("heard-title");
+  var heardList = document.getElementById("heard-list");
+  var heardOf = 0, heardAfter = 0;
+
+  function askForCopied() {
+    if (!chosen) { return; }
+    var asked = chosen.radio;
+    if (asked !== heardOf) {
+      heardOf = asked; heardAfter = 0;
+      heardList.textContent = ""; heard.className = "";
+    }
+    get("/decodes.json?radio=" + asked + "&after=" + heardAfter, function (rows) {
+      var i, row, line, isAtFoot;
+      if (!chosen || chosen.radio !== asked || rows.length === 0) { return; }
+      isAtFoot = heardList.scrollTop + heardList.clientHeight >= heardList.scrollHeight - 4;
+      for (i = 0; i < rows.length; i++) {
+        row = rows[i];
+        if (row.id <= heardAfter) { continue; }
+        heardAfter = row.id;
+        line = document.createElement("div");
+        line.textContent = row.sent.slice(0, 2) + ":" + row.sent.slice(2, 4) + ":" + row.sent.slice(4)
+          + ("    " + (row.strength === null ? "TX" : row.strength)).slice(-4)
+          + ("     " + row.pitch).slice(-5) + "  " + row.text;
+        line.className = row.strength === null ? "sent" : row.text.indexOf("CQ ") === 0 ? "cq" : "";
+        heardList.appendChild(line);
+      }
+      while (heardList.childNodes.length > 300) { heardList.removeChild(heardList.firstChild); }
+      heardTitle.textContent = "FT8 copied by " + chosen.callsign + " on "
+        + (rows[rows.length - 1].hz / 1e6).toFixed(3) + " MHz";
+      heard.className = "shown";
+      if (isAtFoot) { heardList.scrollTop = heardList.scrollHeight; }
+    });
+  }
+  setInterval(askForCopied, 5000);
+
   function choose(radio) {
     if (chosen && chosen.radio !== radio.radio) { stop(""); }
     chosen = radio;
+    askForCopied();
     showWho();
     panel.className = "shown";
     draw();
@@ -790,6 +837,15 @@ html, body { height: 100%; margin: 0; font-family: sans-serif; background: #0508
 #panel label { display: block; margin-top: 0.8em; font-size: 0.9em; color: #9ab; }
 #panel input { width: 100%; }
 #state { margin-left: 0.8em; color: #9ab; }
+#heard { display: none; position: absolute; right: 1em; top: 3.4em; bottom: 4.6em;
+    width: 25em; max-width: 46vw; background: rgba(16,24,32,0.9); border: 1px solid #405060;
+    border-radius: 6px; z-index: 2; flex-direction: column; overflow: hidden; }
+#heard.shown { display: flex; }
+#heard-title { padding: 0.5em 0.8em; color: #7cf; font-size: 0.9em; border-bottom: 1px solid #405060; }
+#heard-list { flex: 1; overflow-y: auto; padding: 0.3em 0.8em; font: 12px/1.5 monospace;
+    white-space: pre; color: #dde; -webkit-overflow-scrolling: touch; }
+#heard-list .cq { color: #50ff8c; }
+#heard-list .sent { color: #ff6060; }
 #hint { position: absolute; right: 1em; bottom: 1em; color: #678; font-size: 0.85em; z-index: 2;
     text-align: right; line-height: 1.5; }
 #hint a { color: #789; }
@@ -808,6 +864,7 @@ MAP_PAGE = """<!doctype html>
 <button id="listen">Listen</button><span id="state"></span>
 <label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
 </div>
+<div id="heard"><div id="heard-title"></div><div id="heard-list"></div></div>
 <div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen
 <br>blue dots are listeners, placed to the nearest grid square by their network address
 &middot; <a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></div>
@@ -928,6 +985,8 @@ class Settings:
         self.database = server.get("database", "accounts.db")
         # ip_places.py's file, for putting listeners on the globe; none, no dots
         self.ip_places = server.get("ip_places", "")
+        # decodes.py's file, of what the radios copy in FT8
+        self.decodes = server.get("decodes", "decodes.db")
         self.registration = server.get("registration", "invite")
         self.pow_bits = int(server.get("pow_bits", str(POW_BITS)))
         # where a page's WebSockets go: this site, unless they are said to
@@ -1415,6 +1474,19 @@ class Service:
                                   "listeners": listeners_of(row["listener_places"])})
         return found
 
+    def copied_by(self, radio, after):
+        """what a radio that is on the globe has copied in FT8 lately, for
+        anyone: each message's number, when it was heard, the dial, the
+        radio's own time for it, its strength, pitch and text. What it has
+        copied since the message of a number, if one is given"""
+        if not radio.isdigit() or not after.isdigit():
+            return []
+        if not any(shown["radio"] == int(radio) for shown in self.on_the_map()):
+            return []
+        return [{name: row[name] for name in ("id", "heard", "hz", "sent", "strength", "pitch",
+                                              "text")}
+                for row in decodes.Decodes(self.settings.decodes).recent(int(radio), int(after))]
+
     def snapshot(self, account, radio):
         """the newest copy of one of the account's radios' settings and logbook"""
         with self.store.open() as db:
@@ -1726,6 +1798,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/operate.webmanifest":
             self.send(200, json.dumps(operate_manifest(query.get("radio", [""])[0])),
                       "application/manifest+json")
+        elif url.path == "/decodes.json":
+            self.send(200, json.dumps(self.service.copied_by(
+                query.get("radio", [""])[0], query.get("after", ["0"])[0])), "application/json")
         elif url.path == "/map.json":
             self.send(200, json.dumps(self.service.on_the_map()), "application/json")
         elif url.path.startswith("/static/") and url.path[len("/static/"):] in STATIC:
