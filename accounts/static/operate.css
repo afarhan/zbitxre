@@ -43,8 +43,6 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
     overflow: hidden; text-overflow: ellipsis; padding: 0 0.4vw; background: #000; }
 #status.qso { color: #fff; background: #b02020; }
 #status.warning { color: #ffe000; font-weight: bold; }
-#power { position: absolute; right: 0; top: 0; height: 4.6vh; line-height: 4.6vh;
-    font-size: 3vh; color: #ffc000; background: #000; padding: 0 0.6vw; }
 #views { flex: 1; display: flex; min-height: 0; }
 #scope-box { flex: 1; }
 #scope { touch-action: none; }

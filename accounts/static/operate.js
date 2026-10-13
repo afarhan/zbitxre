@@ -218,8 +218,6 @@
   middle.id = "middle";
   var status = make("div", "", "", middle);
   status.id = "status";
-  var power = make("div", "", "", middle);
-  power.id = "power";
   var views = make("div", "", null, middle);
   views.id = "views";
   var messages = make("div", "", null, views);
@@ -315,6 +313,9 @@
     if (keyedTimer && (name === "SMETER" || name === "POWER" || name === "SWR"
         || name === "BATTERY" || name === "CLOCK")) {
       values[name] = value;
+      // the power and the SWR are wanted while sending, and the dial alone
+      // is little to draw
+      if (name === "POWER" || name === "SWR") { drawMeter(); }
       return;
     }
     if (name === "CONTROL") { takeSchema(value); return; }
@@ -519,10 +520,6 @@
         + (label === "RX" && !isSending() ? " focused" : "");
     }
     app.className = isFt8() ? "ft8" : "";
-
-    var watts = Number(values.POWER || 0), swr = Number(values.SWR || 0);
-    power.textContent = watts > 0 ? (watts / 10).toFixed(1) + " W  SWR " + (swr / 10).toFixed(1) : "";
-    power.style.display = watts > 0 ? "block" : "none";
 
     showList();
     drawMeter();
@@ -1234,6 +1231,12 @@
 
   /* the meter: the signal's strength on a dial with a needle */
 
+  // While the radio receives, the dial is the signal's strength, S1 to S9
+  // and 20 dB over. While it sends, the same dial is the power, nought to
+  // a hundred watts, and under it a bar is the SWR: empty at 1, full at 3
+  // and beyond, green to 1.5, yellow to 2 and red above. The author asked
+  // for the two here: they were written at the end of the status line,
+  // where they flickered through what the line was saying.
   function drawMeter() {
     var scale = window.devicePixelRatio || 1;
     var wide = meter.clientWidth, high = meter.clientHeight;
@@ -1245,6 +1248,8 @@
     var radius = wide * 0.8 / (2 * Math.sin(sweep)), x = wide / 2, y = high * 0.36 + radius;
     var strength = Number(values.SMETER || 0), units = Math.floor(strength / 100) + (strength % 100) / 6;
     var place = units <= 9 ? units / 9 * 0.7 : 0.7 + Math.min(20, (units - 9) * 6) / 20 * 0.3;
+    var watts = Number(values.POWER || 0) / 10, swr = Number(values.SWR || 0) / 10;
+    var bar = high * 0.13, barLeft = wide * 0.08, barWide = wide * 0.84, filled;
     function angle(p) { return -Math.PI / 2 - sweep + 2 * sweep * p; }
     function ray(a, from, to) {
       pen.beginPath();
@@ -1252,23 +1257,46 @@
       pen.lineTo(x + to * Math.cos(a), y + to * Math.sin(a));
       pen.stroke();
     }
+    function mark(p, text) {
+      var a = angle(p);
+      ray(a, radius, radius * 1.09);
+      // a figure at the scale's end is kept inside the dial's edge
+      var half = text ? pen.measureText(text).width / 2 + 2 : 0;
+      if (text) {
+        pen.fillText(text, Math.max(half, Math.min(wide - half, x + radius * 1.15 * Math.cos(a))),
+          y + radius * 1.15 * Math.sin(a));
+      }
+    }
     pen.setTransform(scale, 0, 0, scale, 0, 0);
     pen.fillStyle = "#101820"; pen.fillRect(0, 0, wide, high);
     pen.strokeStyle = "#405060"; pen.lineWidth = 1; pen.strokeRect(0.5, 0.5, wide - 1, high - 1);
     pen.lineWidth = Math.max(1, high / 48);
     pen.strokeStyle = "#d9e0e6"; pen.fillStyle = "#d9e0e6";
-    pen.beginPath(); pen.arc(x, y, radius, angle(0), angle(0.7)); pen.stroke();
     pen.font = (radius * 0.17) + "px sans-serif"; pen.textAlign = "center";
-    [1, 3, 5, 7, 9].forEach(function (unit) {
-      var a = angle(unit / 9 * 0.7);
-      ray(a, radius, radius * 1.09);
-      pen.fillText(String(unit), x + radius * 1.15 * Math.cos(a), y + radius * 1.15 * Math.sin(a));
-    });
-    pen.strokeStyle = "#ff4033";
-    pen.beginPath(); pen.arc(x, y, radius, angle(0.7), angle(1)); pen.stroke();
-    ray(angle(1), radius, radius * 1.09);
+    if (isSending()) {
+      pen.beginPath(); pen.arc(x, y, radius, angle(0), angle(1)); pen.stroke();
+      mark(0, "0"); mark(0.25, ""); mark(0.5, "50"); mark(0.75, ""); mark(1, "100");
+      place = Math.max(0, Math.min(1, watts / 100));
+    } else {
+      pen.beginPath(); pen.arc(x, y, radius, angle(0), angle(0.7)); pen.stroke();
+      [1, 3, 5, 7, 9].forEach(function (unit) { mark(unit / 9 * 0.7, String(unit)); });
+      pen.strokeStyle = "#ff4033";
+      pen.beginPath(); pen.arc(x, y, radius, angle(0.7), angle(1)); pen.stroke();
+      ray(angle(1), radius, radius * 1.09);
+    }
     pen.strokeStyle = "#ffe600";
     ray(angle(place), radius * 0.3, radius * 1.09);
+    if (!isSending()) { return; }
+    // the SWR's bar, across the foot of the dial and over the needle's foot
+    pen.fillStyle = "#101820"; pen.fillRect(1, high - bar * 1.9, wide - 2, bar * 1.9 - 1);
+    pen.fillStyle = "#26323d"; pen.fillRect(barLeft, high - bar * 1.45, barWide, bar);
+    filled = swr <= 1 ? 0 : Math.min(1, (swr - 1) / 2);
+    pen.fillStyle = swr < 1.5 ? "#30d060" : swr < 2 ? "#ffe000" : "#ff4033";
+    pen.fillRect(barLeft, high - bar * 1.45, barWide * filled, bar);
+    // marks at 1.5 and 2
+    pen.fillStyle = "#101820";
+    pen.fillRect(barLeft + barWide * 0.25 - 0.5, high - bar * 1.45, 1, bar);
+    pen.fillRect(barLeft + barWide * 0.5 - 0.5, high - bar * 1.45, 1, bar);
   }
 
   /* FT8's messages */

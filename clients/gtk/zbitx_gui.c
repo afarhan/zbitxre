@@ -162,8 +162,12 @@
 // the graph is not the spectrum, of which there is none, but the envelope
 // of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
 // it: the radio sends it in the spectrum's place, a fifth of a second
-// across, and the waterfall stays as it was. The power and the SWR are
-// then at the right end of the status line.
+// across, and the waterfall stays as it was. The dial is then the power,
+// nought to a hundred watts, marked at 0, 50 and 100, and a bar under it
+// is the SWR: empty at 1, full at 3 and beyond, green to 1.5, yellow to 2
+// and red above. The author asked for the two there; they were written at
+// the right end of the status line, where they flickered through what the
+// line was saying.
 //
 // In FT8 the graph and the waterfall are not shown. In their place, and
 // down to the foot of the window, the left half is the list of the
@@ -490,6 +494,16 @@
 // is made of: the S units times a hundred, and the dB over
 #define SMETER_ARC_SHARE 0.8
 #define SMETER_ARC_TOP 0.36
+#define POWER_DIAL_WATTS 100.0
+#define POWER_MARK_EDGE 2
+#define SWR_BAR_HEIGHT 0.13
+#define SWR_BAR_MARGIN 0.08
+#define SWR_BAR_FROM_FOOT 1.45
+#define SWR_BAR_ROOM 1.9
+#define SWR_BAR_EMPTY 1.0
+#define SWR_BAR_FULL 3.0
+#define SWR_GOOD_BELOW 1.5
+#define SWR_FAIR_BELOW 2.0
 #define SMETER_SWEEP (48.0 * G_PI / 180.0)
 #define SMETER_TICK 0.09
 #define SMETER_MARK_ROOM 0.06
@@ -1119,19 +1133,10 @@ static void show_buttons(void) {
 	gtk_widget_set_visible(column_box[FT8_HALT_ROW], TRUE);
 }
 
-// the power and the SWR, at the right end of the status line while the
-// radio says there is power
+// the power and the SWR are on the dial, which is drawn again; the status
+// line's own place for them is no longer used
 static void show_meter(void) {
-	int power = atoi(value_of("POWER"));
-	int swr = atoi(value_of("SWR"));
-	char text[TEXT_MAX];
-
-	text[0] = 0;
-	if (power > 0)
-		snprintf(text, sizeof(text), "%d.%d W  SWR %d.%d", power / TENTHS,
-			power % TENTHS, swr / TENTHS, swr % TENTHS);
-	gtk_label_set_text(GTK_LABEL(meter_label), text);
-	gtk_widget_set_visible(meter_label, text[0] != 0);
+	gtk_widget_set_visible(meter_label, FALSE);
 	gtk_widget_queue_draw(dial_area);
 }
 
@@ -2924,8 +2929,69 @@ static void draw_smeter_mark(cairo_t *cr, double x, double y, double radius, int
 	cairo_show_text(cr, text);
 }
 
-// the signal's strength, in the meter's place on the top row: a dial, its
-// scale an arc with S9 seven tenths across and red beyond, and a needle.
+// a mark on the power's scale, with its figure if it has one
+static void draw_power_mark(cairo_t *cr, double x, double y, double radius, double place,
+		const char *text) {
+	double angle = smeter_angle(place);
+	double outer = radius * (1.0 + SMETER_TICK);
+	double lettered = outer + radius * SMETER_MARK_ROOM;
+	double left;
+	cairo_text_extents_t size;
+
+	draw_smeter_ray(cr, x, y, angle, radius, outer);
+	if (text == NULL)
+		return;
+	cairo_text_extents(cr, text, &size);
+	// a figure at the scale's end is kept inside the dial's edge
+	left = x + lettered * cos(angle) - size.width / 2;
+	if (left < POWER_MARK_EDGE)
+		left = POWER_MARK_EDGE;
+	if (left + size.width > 2 * x - POWER_MARK_EDGE)
+		left = 2 * x - POWER_MARK_EDGE - size.width;
+	cairo_move_to(cr, left - size.x_bearing, y + lettered * sin(angle));
+	cairo_show_text(cr, text);
+}
+
+// the SWR as a bar across the foot of the dial, over the needle's foot
+static void draw_swr_bar(cairo_t *cr, int width, int height) {
+	double swr = atoi(value_of("SWR")) / (double)TENTHS;
+	double bar = height * SWR_BAR_HEIGHT;
+	double left = width * SWR_BAR_MARGIN;
+	double across = width * (1.0 - 2 * SWR_BAR_MARGIN);
+	double top = height - bar * SWR_BAR_FROM_FOOT;
+	double filled = 0;
+
+	if (swr > SWR_BAR_EMPTY)
+		filled = (swr - SWR_BAR_EMPTY) / (SWR_BAR_FULL - SWR_BAR_EMPTY);
+	if (filled > 1)
+		filled = 1;
+	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
+	cairo_rectangle(cr, 1, height - bar * SWR_BAR_ROOM, width - 2, bar * SWR_BAR_ROOM - 1);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 0.15, 0.20, 0.24);
+	cairo_rectangle(cr, left, top, across, bar);
+	cairo_fill(cr);
+	if (swr < SWR_GOOD_BELOW)
+		cairo_set_source_rgb(cr, 0.19, 0.82, 0.38);
+	else if (swr < SWR_FAIR_BELOW)
+		cairo_set_source_rgb(cr, 1.0, 0.88, 0.0);
+	else
+		cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
+	cairo_rectangle(cr, left, top, across * filled, bar);
+	cairo_fill(cr);
+	// marks at 1.5 and at 2
+	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
+	cairo_rectangle(cr, left + across * (SWR_GOOD_BELOW - SWR_BAR_EMPTY)
+		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
+	cairo_rectangle(cr, left + across * (SWR_FAIR_BELOW - SWR_BAR_EMPTY)
+		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
+	cairo_fill(cr);
+}
+
+// the meter's place on the top row: a dial with a needle. While the radio
+// receives it is the signal's strength, its scale an arc with S9 seven
+// tenths across and red beyond. While it sends it is the power, nought to
+// a hundred watts, with the SWR as a bar under it.
 // The arc is as wide as the place allows and its radius follows from that
 static gboolean on_draw_meter(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 	int width = gtk_widget_get_allocated_width(widget);
@@ -2934,6 +3000,8 @@ static gboolean on_draw_meter(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 	double x = width / 2.0;
 	double y = height * SMETER_ARC_TOP + radius;
 	double angle = smeter_angle(smeter_place(atoi(value_of("SMETER"))));
+	double watts = atoi(value_of("POWER")) / (double)TENTHS;
+	int is_sending = is_on("TX");
 	int units;
 
 	(void)unused;
@@ -2949,19 +3017,35 @@ static gboolean on_draw_meter(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 
 	cairo_set_line_width(cr, px(1));
 	cairo_set_source_rgb(cr, 0.85, 0.88, 0.9);
-	cairo_arc(cr, x, y, radius, smeter_angle(0), smeter_angle(SMETER_S9_AT));
-	cairo_stroke(cr);
 	cairo_set_font_size(cr, radius * SMETER_MARK_SIZE);
-	for (units = 1; units <= S_UNITS_MOST; units += 2)
-		draw_smeter_mark(cr, x, y, radius, units);
-	cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
-	cairo_arc(cr, x, y, radius, smeter_angle(SMETER_S9_AT), smeter_angle(1));
-	cairo_stroke(cr);
-	draw_smeter_ray(cr, x, y, smeter_angle(1), radius, radius * (1.0 + SMETER_TICK));
+	if (is_sending) {
+		cairo_arc(cr, x, y, radius, smeter_angle(0), smeter_angle(1));
+		cairo_stroke(cr);
+		draw_power_mark(cr, x, y, radius, 0, "0");
+		draw_power_mark(cr, x, y, radius, 0.25, NULL);
+		draw_power_mark(cr, x, y, radius, 0.5, "50");
+		draw_power_mark(cr, x, y, radius, 0.75, NULL);
+		draw_power_mark(cr, x, y, radius, 1, "100");
+		if (watts > POWER_DIAL_WATTS)
+			watts = POWER_DIAL_WATTS;
+		angle = smeter_angle(watts / POWER_DIAL_WATTS);
+	}
+	else {
+		cairo_arc(cr, x, y, radius, smeter_angle(0), smeter_angle(SMETER_S9_AT));
+		cairo_stroke(cr);
+		for (units = 1; units <= S_UNITS_MOST; units += 2)
+			draw_smeter_mark(cr, x, y, radius, units);
+		cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
+		cairo_arc(cr, x, y, radius, smeter_angle(SMETER_S9_AT), smeter_angle(1));
+		cairo_stroke(cr);
+		draw_smeter_ray(cr, x, y, smeter_angle(1), radius, radius * (1.0 + SMETER_TICK));
+	}
 
 	cairo_set_source_rgb(cr, 1.0, 0.9, 0.0);
 	draw_smeter_ray(cr, x, y, angle, radius * SMETER_NEEDLE_FROM,
 		radius * (1.0 + SMETER_TICK));
+	if (is_sending)
+		draw_swr_bar(cr, width, height);
 	return TRUE;
 }
 
