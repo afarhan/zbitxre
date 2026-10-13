@@ -15,7 +15,8 @@
 # the earphone from the desktop's Bluetooth menu first. The author asked for
 # this to be kept: a Bluetooth earphone on the radio was a much wanted
 # thing, and this is all it took. It is run by hand, or by the gateway when
-# BLUETOOTH among the radio's CONNECTIONS is turned on.
+# BLUETOOTH among the radio's CONNECTIONS is turned on. The last line it
+# says begins "STATUS ", and the gateway shows the rest of that line.
 #
 # It was ffplay that played it, when the sound was the telephone's, which
 # any player of RTP knows without being told. The sound as it is now has no
@@ -48,6 +49,7 @@ sink=$(pactl list short sinks 2>/dev/null | awk '$2 ~ /^bluez_output/ { print $2
 if [ -z "$sink" ]; then
 	echo "no Bluetooth sound output is connected: connect the earphone from the desktop's"
 	echo "Bluetooth menu, or switch it on, and run this again"
+	echo "STATUS NO EARPHONE CONNECTED"
 	exit 1
 fi
 
@@ -55,6 +57,7 @@ case "${1:-start}" in
 start)
 	if pgrep -f "$MARK" > /dev/null; then
 		echo "already playing into $sink"
+		echo "STATUS PLAYING"
 		exit 0
 	fi
 	# each packet is RTP's 12 bytes and then the samples
@@ -72,6 +75,7 @@ while True:
 ' | pacat --raw --format=s16be --rate=48000 --channels=1 --latency-msec=60 \
 		--device='$sink' --client-name=zbitx" < /dev/null > /dev/null 2>&1 &
 	echo "playing the radio into $sink"
+	echo "STATUS PLAYING"
 	;;
 [+-][0-9]*)
 	pactl set-sink-volume "$sink" "$1%"

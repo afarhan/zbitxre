@@ -510,6 +510,21 @@ static struct control bluetooth_status = {
 	.group = "REMOTE", .name = "BLUETOOTH_STATUS", .kind = CONTROL_TEXT,
 };
 
+// SOUND_CARD is the fourth: whether other programs on the radio are given
+// two sound devices to hear the receiver by and to send by, WSJT-X and
+// FreeDV among them. The gateway sees to it, with setup/sound_card.py, and
+// SOUND_CARD_STATUS is the names of the two devices, to be chosen in the
+// other program
+static struct control sound_card = {
+	.group = "CONNECTIONS", .name = "SOUND_CARD", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF",
+};
+
+static struct control sound_card_status = {
+	.group = "REMOTE", .name = "SOUND_CARD_STATUS", .kind = CONTROL_TEXT,
+};
+
 static struct control span = {
 	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
 	.choices = "25K/10K/6K/2.5K",
@@ -1351,6 +1366,8 @@ int main(int argc, char **argv) {
 	control_register(&remote_status);
 	control_register(&bluetooth);
 	control_register(&bluetooth_status);
+	control_register(&sound_card);
+	control_register(&sound_card_status);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();

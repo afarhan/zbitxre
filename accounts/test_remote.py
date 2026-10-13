@@ -355,7 +355,7 @@ class RemoteTest(unittest.TestCase):
         # with, and says what the real one says when it plays
         self.bluetooth_script = os.path.join(self.folder, "bluetooth.sh")
         self.bluetooth_run = os.path.join(self.folder, "bluetooth.run")
-        self.write_bluetooth_script("playing the radio into bluez_output.11_22")
+        self.write_bluetooth_script("PLAYING")
         # in place of the radio program's port for speech to transmit
         self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.microphone.bind(("127.0.0.1", 0))
@@ -396,7 +396,8 @@ class RemoteTest(unittest.TestCase):
 
     def write_bluetooth_script(self, says):
         with open(self.bluetooth_script, "w") as file:
-            file.write("#!/bin/sh\necho \"$1\" >> %s\necho '%s'\n" % (self.bluetooth_run, says))
+            file.write("#!/bin/sh\necho \"$1\" >> %s\necho 'STATUS %s'\n" % (
+                self.bluetooth_run, says))
         os.chmod(self.bluetooth_script, 0o755)
 
     def bluetooth_words(self):
@@ -672,7 +673,7 @@ class RemoteTest(unittest.TestCase):
         self.wait_for(lambda: said() == "OFF", "it was not said to be off")
         self.assertEqual(self.bluetooth_words()[-1], "stop")
         # with no earphone there, the script says so, and so does the radio
-        self.write_bluetooth_script("no Bluetooth sound output is connected: connect it")
+        self.write_bluetooth_script("NO EARPHONE CONNECTED")
         self.radio.set("BLUETOOTH", "ON")
         self.wait_for(lambda: said() == "NO EARPHONE CONNECTED", "the want of an earphone was not said")
 
