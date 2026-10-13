@@ -54,6 +54,17 @@
 // and then putting the new: the stopping is the audio thread's to do, a
 // sample later, and it would drop the new text with the old.
 //
+// WHAT WAS SENT
+//
+// Each character is noted as it begins to be sent, for whoever shows the
+// operator the CW that is read off the air to show what goes out among it,
+// which the author asked for and zbitxv2 did. cw_text_take_sent() gives
+// what has been noted since it was last asked. A character keyed on a
+// client is noted as the letter its dots and dashes make, or "*" if they
+// make none, with a space before it if the key was up for a word's space,
+// five dots or more. The audio thread notes and the thread that owns the
+// controls takes, through a ring of their own.
+//
 // WHO CALLS
 //
 // cw_text_put() is for the thread that owns the controls: it puts
@@ -83,6 +94,9 @@
 // every mark, and these make it up to three, and for a space to seven
 #define MORE_DOTS_AFTER_A_CHARACTER 2
 #define MORE_DOTS_FOR_A_SPACE 4
+#define SENT_SIZE 256
+#define WORD_GAP_DOTS 5
+#define NO_SUCH_LETTER '*'
 #define CODE_BEGINS '\001'
 #define CODE_ENDS '\002'
 #define CODE_SYMBOLS_MOST 12
@@ -157,6 +171,9 @@ static atomic_uint ring_put;
 static atomic_uint ring_taken;
 static atomic_int dot_samples = SAMPLES_A_MINUTE_PER_WORD / 20;
 static atomic_int is_busy;
+static char sent[SENT_SIZE];
+static atomic_uint sent_put;
+static atomic_uint sent_taken;
 static atomic_uint afresh_from;
 static atomic_int is_afresh_wanted;
 
@@ -176,6 +193,44 @@ static const char *code_of(char c) {
 			return morse_tx_table[i].code;
 	}
 	return NULL;
+}
+
+// the audio thread's: a character that is beginning to be sent is noted.
+// With no room, it is not; nothing waits for whoever reads them
+static void note_sent(char c) {
+	unsigned int put = atomic_load(&sent_put);
+
+	if (put - atomic_load(&sent_taken) >= SENT_SIZE)
+		return;
+	sent[put % SENT_SIZE] = (char)toupper((unsigned char)c);
+	atomic_store(&sent_put, put + 1);
+}
+
+// what has begun to be sent since this was last asked, no more than there
+// is room for; says how many characters. For the thread that owns the
+// controls
+int cw_text_take_sent(char *text, int room) {
+	unsigned int taken = atomic_load(&sent_taken);
+	unsigned int put = atomic_load(&sent_put);
+	int count = 0;
+
+	while (taken != put && count < room) {
+		text[count++] = sent[taken % SENT_SIZE];
+		taken++;
+	}
+	atomic_store(&sent_taken, taken);
+	return count;
+}
+
+// the letter that dots and dashes make
+static char letter_of(const char *code) {
+	int i;
+
+	for (i = FIRST_REAL_ENTRY; i < MORSE_TX_COUNT; i++) {
+		if (!strcmp(morse_tx_table[i].code, code))
+			return morse_tx_table[i].c;
+	}
+	return NO_SUCH_LETTER;
 }
 
 void cw_text_reset(void) {
@@ -273,6 +328,9 @@ static const char *take_a_code(unsigned int *taken) {
 	}
 	keyed_code[count] = 0;
 	gap_samples = ms * SAMPLES_A_MS;
+	if (gap_samples >= WORD_GAP_DOTS * atomic_load(&dot_samples))
+		note_sent(' ');
+	note_sent(letter_of(keyed_code));
 	return keyed_code;
 }
 
@@ -283,10 +341,14 @@ static int take_a_character(void) {
 
 	gap_samples = 0;
 	while (code == NULL && taken != atomic_load(&ring_put)) {
-		if (ring[taken % RING_SIZE] == CODE_BEGINS)
+		if (ring[taken % RING_SIZE] == CODE_BEGINS) {
 			code = take_a_code(&taken);
-		else
+		}
+		else {
 			code = code_of(ring[taken % RING_SIZE]);
+			if (code != NULL)
+				note_sent(ring[taken % RING_SIZE]);
+		}
 		taken++;
 	}
 	atomic_store(&ring_taken, taken);

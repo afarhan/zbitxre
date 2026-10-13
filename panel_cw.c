@@ -25,6 +25,12 @@
 //   line at a time: "cw goertzel: CQ CQ DE VU2ESE K", when the line is
 //   LINE_MAX long or nothing more has come for IDLE_MS.
 //
+//   and what the radio sends itself, cw_text_take_sent(): the characters
+//   of typed text, of macros and of what is keyed on a client's pads, as
+//   each begins to be sent, to the panel and to the clients in the same
+//   run of text as what is read. What is keyed on the radio's own paddle
+//   is not among it: the keyer makes dots and dashes, not letters.
+//
 // For the thread that owns the controls.
 
 #include <stdio.h>
@@ -34,6 +40,7 @@
 #include "panel.h"
 #include "panel_cw.h"
 #include "modems/modem_cw.h"
+#include "modems/cw_text.h"
 
 #define LINE_MAX 60
 #define IDLE_MS 3000
@@ -66,6 +73,16 @@ void panel_cw_poll(long now_ms) {
 	int count = cw_rx_take_reader(read, sizeof(read) - 1);
 	int i;
 
+	if (count > 0 && also_read != NULL) {
+		read[count] = 0;
+		also_read(read);
+	}
+	for (i = 0; i < count && waiting_count < WAITING_MAX; i++)
+		waiting[waiting_count++] = read[i];
+	// what the radio is itself sending, text, macros and what a client
+	// keys, goes where what is read goes, among it: the author asked to
+	// see what is sent in the window that shows what is read
+	count = cw_text_take_sent(read, sizeof(read) - 1);
 	if (count > 0 && also_read != NULL) {
 		read[count] = 0;
 		also_read(read);

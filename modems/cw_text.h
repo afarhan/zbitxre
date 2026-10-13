@@ -11,6 +11,7 @@ void cw_text_set_wpm(int wpm);
 int cw_text_put(const char *text);
 int cw_text_put_code(const char *code, int gap_ms);
 void cw_text_begin_afresh(void);
+int cw_text_take_sent(char *text, int room);
 void cw_text_abort(void);
 int cw_text_is_key_down(void);
 int cw_text_is_busy(void);

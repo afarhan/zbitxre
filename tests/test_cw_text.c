@@ -190,6 +190,20 @@ int main(void) {
 	marks_as_text(sent);
 	expect(strcmp(sent, ".- -.") == 0, "and what is put after that follows it");
 
+	// what is sent is noted, to be shown
+	cw_text_reset();
+	cw_text_take_sent(sent, SENT_MAX - 1);
+	cw_text_put("ab #c");
+	cw_text_put_code("-.-", 0);
+	cw_text_put_code(".......", 0);
+	cw_text_put_code("-", 700);
+	key_it_all();
+	i = cw_text_take_sent(sent, SENT_MAX - 1);
+	sent[i] = 0;
+	expect(strcmp(sent, "AB CK* T") == 0,
+		"what is sent is noted in capitals: text, a keyed letter, * for no letter, a space for a word's gap");
+	expect(cw_text_take_sent(sent, SENT_MAX - 1) == 0, "and is given once");
+
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);
 		return EXIT_FAILURE;
