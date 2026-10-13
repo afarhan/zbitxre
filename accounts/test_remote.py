@@ -360,11 +360,16 @@ class RemoteTest(unittest.TestCase):
         # in place of the radio program's port for speech to transmit
         self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.microphone.bind(("127.0.0.1", 0))
+        # a port for programs that set the radio through Hamlib, free now
+        with socket.socket() as spare:
+            spare.bind(("127.0.0.1", 0))
+            self.cat_port = spare.getsockname()[1]
         self.daemon = subprocess.Popen(
             [DAEMON, "--server", "127.0.0.1", "--port", str(self.port),
              "--radio-port", str(self.radio.port), "--key", self.key_file,
              "--microphone-port", str(self.microphone.getsockname()[1]),
-             "--bluetooth-script", self.bluetooth_script],
+             "--bluetooth-script", self.bluetooth_script,
+             "--cat-port", str(self.cat_port)],
             stdout=subprocess.DEVNULL)
         self.account = self.make_account("VU2ESE", "farhan@example.org")
 
@@ -677,6 +682,52 @@ class RemoteTest(unittest.TestCase):
         self.write_bluetooth_script("NO EARPHONE CONNECTED")
         self.radio.set("BLUETOOTH", "ON")
         self.wait_for(lambda: said() == "NO EARPHONE CONNECTED", "the want of an earphone was not said")
+
+    def test_cat_answers_hamlib_while_its_switch_is_on(self):
+        def said():
+            return self.radio.controls.get("CAT_STATUS", "")
+
+        def ask(program, line, lines=1):
+            program.write(line + "\n")
+            program.flush()
+            return [program.readline().strip() for _ in range(lines)]
+        self.wait_for(lambda: said() == "OFF", "nothing was said of CAT")
+        with self.assertRaises(OSError):
+            socket.create_connection(("127.0.0.1", self.cat_port), timeout=2)
+        self.radio.set("CAT", "ON")
+        # where a program is to connect is shown: an address and the port
+        self.wait_for(lambda: said().endswith(":%d" % self.cat_port), "the port was not shown")
+        self.assertRegex(said(), r"^\d+\.\d+\.\d+\.\d+:\d+$")
+        self.assertEqual(self.status(), "OFF", "REMOTE and STREAMING are off")
+        connection = socket.create_connection(("127.0.0.1", self.cat_port), timeout=5)
+        program = connection.makefile("rw")
+        self.assertEqual(ask(program, "f"), ["7074000"])
+        self.assertEqual(ask(program, "m", 2), ["USB", "3000"])
+        # what the program sets, the radio is set to
+        self.assertEqual(ask(program, "F 14074000"), ["RPRT 0"])
+        self.wait_for(lambda: self.radio.controls["FREQ"] == "14074000", "the radio was not tuned")
+        self.assertEqual(ask(program, "M CW 500"), ["RPRT 0"])
+        self.wait_for(lambda: self.radio.controls["MODE"] == "CW", "the mode was not set")
+        # and what is changed at the radio, the program is told when it asks
+        self.radio.set("FREQ", "7030000")
+        self.wait_for(lambda: ask(program, "f") == ["7030000"], "the program was not told the dial")
+        # a program that keys the radio and goes has it let go for it
+        self.assertEqual(ask(program, "T 1"), ["RPRT 0"])
+        self.wait_for(lambda: self.radio.controls.get("TX") == "ON", "the radio was not keyed")
+        self.assertEqual(ask(program, "t"), ["1"])
+        program.close()
+        connection.close()
+        self.wait_for(lambda: self.radio.controls.get("TX") == "OFF", "the radio was left keyed")
+        # with the switch off there is no port
+        connection = socket.create_connection(("127.0.0.1", self.cat_port), timeout=5)
+        connection.sendall(b"t\n")
+        self.assertEqual(connection.recv(100), b"0\n")
+        self.radio.set("CAT", "OFF")
+        self.wait_for(lambda: said() == "OFF", "it was not said to be off")
+        connection.settimeout(5)
+        self.assertEqual(connection.recv(100), b"", "the program was not let go")
+        with self.assertRaises(OSError):
+            socket.create_connection(("127.0.0.1", self.cat_port), timeout=2)
 
     def test_the_owners_two_switches_are_what_the_service_allows(self):
         radio = self.switch_on_and_add()

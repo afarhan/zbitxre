@@ -341,6 +341,21 @@ To shut somebody out who has got in, the owner changes the password that let
 them in: the radio's client password, on the website, or the account's own.
 Whoever is in by it is let go within half a minute.
 
+Three more switches are in `CONNECTIONS`, which have nothing to do with
+my.sbitx.net and work with the first two off. The daemon sees to them as well,
+and says what came of each in a control of its own:
+
+    BLUETOOTH    BLUETOOTH_STATUS     the radio's sound in a paired earphone
+    SOUND_CARD   SOUND_CARD_STATUS    two sound devices for another program on
+                                      the radio, to hear the receiver by and
+                                      to send by
+    CAT          CAT_STATUS           other programs set the frequency and the
+                                      mode and key the radio, through Hamlib's
+                                      "NET rigctl"; the status is the address
+                                      and port to give them, 192.168.1.82:4532
+
+`clients/remote/zbitx_remote.c` and `clients/remote/cat.c` say how each is done.
+
 What the daemon has to say it says in another control, `REMOTE_STATUS`:
 
     OFF

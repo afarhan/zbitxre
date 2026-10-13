@@ -525,6 +525,20 @@ static struct control sound_card_status = {
 	.group = "REMOTE", .name = "SOUND_CARD_STATUS", .kind = CONTROL_TEXT,
 };
 
+// CAT is the fifth: whether other programs may set the radio's frequency
+// and mode and key it, through Hamlib's "NET rigctl". The gateway answers
+// them; clients/remote/cat.c says how. CAT_STATUS is the address and port
+// to give the other program
+static struct control cat = {
+	.group = "CONNECTIONS", .name = "CAT", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF",
+};
+
+static struct control cat_status = {
+	.group = "REMOTE", .name = "CAT_STATUS", .kind = CONTROL_TEXT,
+};
+
 static struct control span = {
 	.group = "PANEL", .name = "SPAN", .kind = CONTROL_CHOICE,
 	.choices = "25K/10K/6K/2.5K",
@@ -1368,6 +1382,8 @@ int main(int argc, char **argv) {
 	control_register(&bluetooth_status);
 	control_register(&sound_card);
 	control_register(&sound_card_status);
+	control_register(&cat);
+	control_register(&cat_status);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();

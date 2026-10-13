@@ -8,6 +8,7 @@
 //                  [--key data/remote.key] [--microphone-port 5006]
 //                  [--bluetooth-script setup/bluetooth_audio.sh]
 //                  [--sound-card-script setup/sound_card.py]
+//                  [--cat-port 4532]
 //
 // PROTOCOL.md, at the top of the repository, says what is spoken and why;
 // accounts/remote.py is the other end.
@@ -156,6 +157,30 @@
 // SOUND_CARD_STATUS is what it says: the names of the two devices to
 // choose in the other program.
 //
+// CAT, FOR OTHER PROGRAMS TO SET THE RADIO BY
+//
+// The fifth is CAT. A program that is given the radio's sound has also to
+// set its frequency and to key it, and the programs do that through
+// Hamlib. With CAT on, this program listens on port 4532 and answers what
+// Hamlib's own rigctld would: in the other program the radio to choose is
+// "Hamlib NET rigctl", and the address is what CAT_STATUS shows, which the
+// author asked for, "192.168.1.82:4532". cat.c has the words and says what
+// is understood; here are the connections. What a program sets is told to
+// the radio program as any client tells it, and what it asks is answered
+// from what the radio program last said, which this program is told as any
+// client is, so that nothing waits.
+//
+// The port is open to the network the radio is on and not only to the
+// radio itself, the address being shown so that a program on another
+// computer in the shack can be given it. The radio program's own port is
+// open to that network already, and whoever can reach it can do all that
+// this allows and more. Up to CAT_CLIENTS_MAX programs may be connected.
+// One that keyed the radio and goes without letting it go, or is cut off
+// by CAT being turned off, has it let go for it. On the radio itself the
+// address 127.0.0.1 does as well as the one shown. If something else has
+// the port, CAT_STATUS says so and the port is tried again every ten
+// seconds.
+//
 // WHAT THE RADIO COPIES IN FT8
 //
 // The author asked that the service be sent whatever the radio copies in
@@ -217,6 +242,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include "cat.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
 #include "sha256.h"
@@ -233,6 +259,14 @@
 #define HELPER_STATUS_WORD "STATUS "
 // where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
 #define DEFAULT_MICROPHONE_PORT "5006"
+#define DEFAULT_CAT_PORT "4532"
+#define CAT_CLIENTS_MAX 4
+#define CAT_WAITING_MOST 4
+#define CAT_STATUS_CONTROL "CAT_STATUS"
+// an address that is nowhere, kept for writing about networks; nothing is
+// sent to it
+#define NOWHERE "192.0.2.1"
+#define NOWHERE_PORT 9
 #define DEFAULT_KEY_FILE "data/remote.key"
 #define LOCAL_HOST "127.0.0.1"
 #define LINE_ROOM 1024
@@ -302,6 +336,13 @@ struct waiting {
 	int used;
 };
 
+// a program that sets the radio through Hamlib
+struct cat_client {
+	int fd;
+	struct lines lines;
+	int has_keyed;
+};
+
 struct session {
 	int service_fd;
 	int radio_fd;
@@ -313,6 +354,7 @@ static const char *server = DEFAULT_SERVER;
 static const char *port = DEFAULT_PORT;
 static const char *radio_port = DEFAULT_RADIO_PORT;
 static const char *microphone_port = DEFAULT_MICROPHONE_PORT;
+static const char *cat_port = DEFAULT_CAT_PORT;
 
 static const char *key_file = DEFAULT_KEY_FILE;
 
@@ -345,6 +387,13 @@ static struct helper sound_card = {
 	.control = "SOUND_CARD", .status_control = "SOUND_CARD_STATUS",
 	.script = DEFAULT_SOUND_CARD_SCRIPT, .said_fd = NOT_OPEN,
 };
+static int is_cat_wanted;
+static int cat_listen_fd = NOT_OPEN;
+static long cat_next_ms;
+static char cat_status[STATUS_ROOM];
+static struct cat_radio cat_radio = { .vfo = 'A' };
+static struct cat_client cat_clients[CAT_CLIENTS_MAX];
+
 static char callsign[CALLSIGN_ROOM];
 static int is_callsign_new;
 static char grid[GRID_ROOM];
@@ -677,19 +726,25 @@ static void say_status(const char *text) {
 /* what a script does for a switch: a Bluetooth earphone, a sound card for
    other programs */
 
-static void helper_say(struct helper *h, const char *text) {
+// what there is to say of a switch is put in the control that shows it,
+// if it is not what was said last; said has STATUS_ROOM bytes
+static void status_say(const char *control, char *said, const char *text) {
 	char line[TEXT_ROOM];
 
-	if (!strcmp(text, h->status))
+	if (!strcmp(text, said))
 		return;
-	snprintf(h->status, sizeof(h->status), "%s", text);
-	printf("remote: %s %s\n", h->status_control, text);
+	snprintf(said, STATUS_ROOM, "%s", text);
+	printf("remote: %s %s\n", control, said);
 	fflush(stdout);
 	if (radio_fd == NOT_OPEN)
 		return;
-	snprintf(line, sizeof(line), "%s %s\n", h->status_control, text);
+	snprintf(line, sizeof(line), "%s %s\n", control, said);
 	if (send_text(radio_fd, line) < 0)
 		close_fd(&radio_fd);
+}
+
+static void helper_say(struct helper *h, const char *text) {
+	status_say(h->status_control, h->status, text);
 }
 
 // the script is run apart, with one word, and what it says will be read
@@ -782,6 +837,187 @@ static void helper_say_again(struct helper *h) {
 	helper_say(h, said);
 }
 
+/* CAT: programs that set the radio through Hamlib; cat.c has the words */
+
+// the address this computer is reached at on its network, "192.168.1.82",
+// or its own, 127.0.0.1, if it is on none. It is what the system would
+// send from to somewhere far off; nothing is sent
+static void local_address(char *text, int room) {
+	struct sockaddr_in far;
+	struct sockaddr_in here;
+	socklen_t length = sizeof(here);
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	snprintf(text, room, "%s", LOOPBACK);
+	if (fd < 0)
+		return;
+	memset(&far, 0, sizeof(far));
+	far.sin_family = AF_INET;
+	far.sin_port = htons(NOWHERE_PORT);
+	inet_pton(AF_INET, NOWHERE, &far.sin_addr);
+	if (connect(fd, (struct sockaddr *)&far, sizeof(far)) == 0
+			&& getsockname(fd, (struct sockaddr *)&here, &length) == 0)
+		inet_ntop(AF_INET, &here.sin_addr, text, room);
+	close(fd);
+}
+
+static void cat_client_close(struct cat_client *c) {
+	if (c->fd == NOT_OPEN)
+		return;
+	// a program that goes with the radio keyed has it let go for it
+	if (c->has_keyed && radio_fd != NOT_OPEN) {
+		send_text(radio_fd, "TX OFF\n");
+		cat_radio.is_sending = 0;
+	}
+	c->has_keyed = 0;
+	close_fd(&c->fd);
+	printf("remote: a program has left CAT\n");
+	fflush(stdout);
+}
+
+static void cat_close(void) {
+	int i;
+
+	for (i = 0; i < CAT_CLIENTS_MAX; i++)
+		cat_client_close(&cat_clients[i]);
+	close_fd(&cat_listen_fd);
+}
+
+static int cat_listen(void) {
+	struct sockaddr_in here;
+	int on = 1;
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (fd < 0)
+		return NOT_OPEN;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	memset(&here, 0, sizeof(here));
+	here.sin_family = AF_INET;
+	here.sin_addr.s_addr = htonl(INADDR_ANY);
+	here.sin_port = htons((uint16_t)atoi(cat_port));
+	if (bind(fd, (struct sockaddr *)&here, sizeof(here)) < 0 || listen(fd, CAT_WAITING_MOST) < 0) {
+		close(fd);
+		return NOT_OPEN;
+	}
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+	return fd;
+}
+
+// a program that has connected is given a place, if there is one
+static void cat_accept(void) {
+	struct sockaddr_in from;
+	socklen_t length = sizeof(from);
+	char address[INET_ADDRSTRLEN] = "";
+	int on = 1;
+	int fd = accept(cat_listen_fd, (struct sockaddr *)&from, &length);
+	int i;
+
+	if (fd < 0)
+		return;
+	for (i = 0; i < CAT_CLIENTS_MAX && cat_clients[i].fd != NOT_OPEN; i++)
+		;
+	if (i == CAT_CLIENTS_MAX) {
+		close(fd);
+		return;
+	}
+	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+	cat_clients[i].fd = fd;
+	cat_clients[i].lines.used = 0;
+	cat_clients[i].has_keyed = 0;
+	inet_ntop(AF_INET, &from.sin_addr, address, sizeof(address));
+	printf("remote: a program has come for CAT, from %s\n", address);
+	fflush(stdout);
+}
+
+// what a program has asked is answered, and the radio program told what it
+// set
+static void cat_client_poll(struct cat_client *c) {
+	char line[LINE_ROOM];
+	char answer[CAT_ANSWER_ROOM];
+	char for_radio[CAT_FOR_RADIO_ROOM];
+	int got;
+
+	if (c->fd == NOT_OPEN)
+		return;
+	got = take_line(&c->lines, c->fd, line, sizeof(line));
+	while (got > 0) {
+		if (cat_answer(line, &cat_radio, answer, for_radio) == CAT_QUIT) {
+			got = -1;
+			break;
+		}
+		if (for_radio[0] != 0 && radio_fd != NOT_OPEN) {
+			if (!strcmp(for_radio, "TX ON\n"))
+				c->has_keyed = 1;
+			if (!strcmp(for_radio, "TX OFF\n"))
+				c->has_keyed = 0;
+			if (send_text(radio_fd, for_radio) < 0)
+				close_fd(&radio_fd);
+		}
+		if (answer[0] != 0 && send_text(c->fd, answer) < 0) {
+			got = -1;
+			break;
+		}
+		got = take_line(&c->lines, c->fd, line, sizeof(line));
+	}
+	if (got < 0)
+		cat_client_close(c);
+}
+
+// what the radio program says of itself is kept, to answer from
+static void cat_hear(const char *line) {
+	int i;
+
+	if (!strcmp(line, "CAT ON"))
+		is_cat_wanted = 1;
+	if (!strcmp(line, "CAT OFF"))
+		is_cat_wanted = 0;
+	sscanf(line, "FREQ %ld", &cat_radio.hz);
+	sscanf(line, "MODE %15s", cat_radio.mode);
+	if (!strcmp(line, "VFO A") || !strcmp(line, "VFO B"))
+		cat_radio.vfo = line[strlen("VFO ")];
+	if (!strcmp(line, "TX ON"))
+		cat_radio.is_sending = 1;
+	if (!strcmp(line, "TX OFF")) {
+		cat_radio.is_sending = 0;
+		// the radio has gone back to receive of itself, or by another
+		// hand; no program here is left holding it
+		for (i = 0; i < CAT_CLIENTS_MAX; i++)
+			cat_clients[i].has_keyed = 0;
+	}
+}
+
+static void cat_poll(long now) {
+	char address[INET_ADDRSTRLEN];
+	char said[STATUS_ROOM];
+	int i;
+
+	if (!is_cat_wanted) {
+		cat_close();
+		status_say(CAT_STATUS_CONTROL, cat_status, "OFF");
+		cat_next_ms = 0;
+		return;
+	}
+	// the port is opened, and where it is to be found is said, afresh
+	// every so often: the radio may join a network after it is turned on
+	if (now >= cat_next_ms) {
+		cat_next_ms = now + HELPER_EVERY_MS;
+		if (cat_listen_fd == NOT_OPEN)
+			cat_listen_fd = cat_listen();
+		if (cat_listen_fd == NOT_OPEN)
+			snprintf(said, sizeof(said), "PORT %.5s IS IN USE", cat_port);
+		else {
+			local_address(address, sizeof(address));
+			snprintf(said, sizeof(said), "%s:%.5s", address, cat_port);
+		}
+		status_say(CAT_STATUS_CONTROL, cat_status, said);
+	}
+	if (cat_listen_fd == NOT_OPEN)
+		return;
+	cat_accept();
+	for (i = 0; i < CAT_CLIENTS_MAX; i++)
+		cat_client_poll(&cat_clients[i]);
+}
+
 // a message the radio has copied in FT8 goes to the service, with where
 // the dial is, if this program is on line
 static void decode_pass_on(const char *message) {
@@ -816,6 +1052,9 @@ static void radio_poll(long now) {
 		say_status(said);
 		helper_say_again(&bluetooth);
 		helper_say_again(&sound_card);
+		snprintf(said, sizeof(said), "%s", cat_status[0] ? cat_status : "OFF");
+		cat_status[0] = 0;
+		status_say(CAT_STATUS_CONTROL, cat_status, said);
 	}
 	got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	while (got > 0) {
@@ -830,6 +1069,7 @@ static void radio_poll(long now) {
 		is_wanted = is_remote_allowed || is_streaming_allowed;
 		helper_follow(&bluetooth, line);
 		helper_follow(&sound_card, line);
+		cat_hear(line);
 		sscanf(line, "FREQ %15s", tuned_hz);
 		sscanf(line, "MODE %15s", tuned_mode);
 		if (!strncmp(line, MESSAGE_WORD, strlen(MESSAGE_WORD)))
@@ -852,6 +1092,7 @@ static void radio_poll(long now) {
 		is_wanted = 0;
 		bluetooth.is_wanted = 0;
 		sound_card.is_wanted = 0;
+		is_cat_wanted = 0;
 	}
 	// with remote operation switched off, whoever is working the radio
 	// from afar is let go at once
@@ -1256,7 +1497,7 @@ static void follow_the_owner(long now) {
 }
 
 static void wait_and_pass_on(void) {
-	struct pollfd polls[4 + 2 * SESSIONS_MAX];
+	struct pollfd polls[5 + CAT_CLIENTS_MAX + 2 * SESSIONS_MAX];
 	struct session *s;
 	int count = 0;
 	int first;
@@ -1279,6 +1520,19 @@ static void wait_and_pass_on(void) {
 	}
 	if (sound_out != NOT_OPEN) {
 		polls[count].fd = sound_out;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	// what a program asks through CAT is not kept waiting for the loop
+	if (cat_listen_fd != NOT_OPEN) {
+		polls[count].fd = cat_listen_fd;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	for (i = 0; i < CAT_CLIENTS_MAX; i++) {
+		if (cat_clients[i].fd == NOT_OPEN)
+			continue;
+		polls[count].fd = cat_clients[i].fd;
 		polls[count].events = POLLIN;
 		polls[count++].revents = 0;
 	}
@@ -1339,12 +1593,15 @@ int main(int argc, char **argv) {
 			bluetooth.script = argv[i + 1];
 		else if (!strcmp(argv[i], "--sound-card-script"))
 			sound_card.script = argv[i + 1];
+		else if (!strcmp(argv[i], "--cat-port"))
+			cat_port = argv[i + 1];
 		else
 			i = argc;
 	}
 	if (i != argc) {
 		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]"
-			" [--microphone-port n] [--bluetooth-script file] [--sound-card-script file]\n");
+			" [--microphone-port n] [--bluetooth-script file] [--sound-card-script file]"
+			" [--cat-port n]\n");
 		return EXIT_FAILURE;
 	}
 	signal(SIGPIPE, SIG_IGN);
@@ -1352,6 +1609,8 @@ int main(int argc, char **argv) {
 		sessions[i].service_fd = NOT_OPEN;
 		sessions[i].radio_fd = NOT_OPEN;
 	}
+	for (i = 0; i < CAT_CLIENTS_MAX; i++)
+		cat_clients[i].fd = NOT_OPEN;
 	snprintf(status_said, sizeof(status_said), "OFF");
 	printf("remote: for %s port %s, the radio program on port %s\n", server, port, radio_port);
 	fflush(stdout);
@@ -1359,6 +1618,7 @@ int main(int argc, char **argv) {
 		radio_poll(now_ms());
 		helper_poll(&bluetooth, now_ms());
 		helper_poll(&sound_card, now_ms());
+		cat_poll(now_ms());
 		follow_the_owner(now_ms());
 		wait_and_pass_on();
 	}
