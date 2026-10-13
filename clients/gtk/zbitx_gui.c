@@ -512,8 +512,8 @@
 #define MICROS_A_SECOND 1000000
 #define TENTHS 10
 
-#define KNOWN_MAX 64
-#define CONTROL_NAME_MAX 16
+#define KNOWN_MAX 128
+#define CONTROL_NAME_MAX 24
 #define CONTROL_VALUE_MAX 32
 #define CHOICES_MAX 128
 #define NOT_FOUND (-1)
@@ -1444,7 +1444,7 @@ static void take_schema_line(char *rest) {
 	int max;
 	int step;
 
-	if (sscanf(rest, "%15s %15s %15s", group, name, kind) != 3)
+	if (sscanf(rest, "%23s %23s %23s", group, name, kind) != 3)
 		return;
 	k = find_known(name);
 	if (k == NULL)
