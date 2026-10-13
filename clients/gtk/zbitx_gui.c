@@ -258,6 +258,20 @@
 // and Shift-Tab move the selection, the up and down keys move what is
 // selected, and Escape goes back to the frequency.
 //
+// THE KEYBOARD FOR CW
+//
+// In CW the third button of the column, TERM elsewhere, is KBD. It brings
+// up the same screen and the same keys that texts are typed on, to send
+// with: each key touched is sent to the radio as it is touched, CW_TEXT,
+// and is added to the box at the top, which is only a record of what was
+// sent. SPACE sends a space. Rubbing out takes the last character out of
+// the box and does not call it back from the radio. Where SAVE is for a
+// text there is ESC, which stops what the radio is still sending and
+// empties the box, and where CANCEL is, DONE, which goes back to the
+// radio's own screen. A key touched while a macro is being sent stops the
+// macro, which is the radio's doing. The author asked for it: the radio's
+// own screen is touched, and a keyboard is not always plugged in.
+//
 // In CW the keyboard also sends: every letter, figure and sign struck is
 // sent to the radio as it is struck, CW_TEXT, as zbitxv2 sent what was
 // typed, and the space bar and Enter send a space. A key struck while a
@@ -436,6 +450,7 @@
 #define BANDS_TOP 48
 #define MIDDLE_TOP 96
 #define COLUMN_BUTTONS 4
+#define CW_KBD_ROW 2
 #define FT8_CQ_ROW 2
 #define FT8_HALT_ROW 3
 #define GRAPH_LEFT 48
@@ -632,6 +647,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define CW_TEXT_CONTROL "CW_TEXT"
 // a space on its own would be lost on the way; the radio takes this for one
 #define CW_TEXT_SPACE "_"
+// how much of what was sent the keyboard's box keeps in view
+#define CW_SENT_SHOWN 40
 #define CW_ESC_ROW 3
 #define TX_PITCH_CONTROL "TX_PITCH"
 #define LOG_ROW 0
@@ -784,6 +801,10 @@ static char through_nonce[2 * NONCE_BYTES + 1];
 static char through_key[SHA256_HEX_ROOM];
 static int has_through_key;
 static struct known password_asked;
+// in the place of a control to type a text for: the keyboard is sending CW
+static struct known cw_sending;
+static GtkWidget *cancel_key;
+static GtkWidget *save_key;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1137,6 +1158,8 @@ static void show_buttons(void) {
 		gtk_widget_set_visible(column_box[i], column_names[i][0] != 0);
 	}
 	if (!strcmp(mode_group(), MACRO_GROUP)) {
+		gtk_label_set_text(GTK_LABEL(column_label[CW_KBD_ROW]), "KBD");
+		set_class(column_box[CW_KBD_ROW], "dim", 0);
 		gtk_label_set_text(GTK_LABEL(column_label[CW_ESC_ROW]), "ESC");
 		set_class(column_box[CW_ESC_ROW], "dim", 0);
 		gtk_widget_set_visible(column_box[CW_ESC_ROW], TRUE);
@@ -2353,13 +2376,40 @@ static void open_text(struct known *k) {
 	typed_for = k;
 	snprintf(typed, sizeof(typed), "%s", k->value);
 	gtk_label_set_text(GTK_LABEL(text_title), k->name);
+	gtk_button_set_label(GTK_BUTTON(cancel_key), k == &cw_sending ? "DONE" : "CANCEL");
+	gtk_button_set_label(GTK_BUTTON(save_key), k == &cw_sending ? "ESC" : "SAVE");
 	show_typed();
 	show_page(PAGE_TEXT);
+}
+
+// the same screen, to send CW with
+static void open_cw_keyboard(void) {
+	snprintf(cw_sending.name, sizeof(cw_sending.name), "SENDING CW");
+	cw_sending.value[0] = 0;
+	open_text(&cw_sending);
+}
+
+// a character touched while sending CW goes to the radio at once
+static void send_cw_character(char c) {
+	char text[2] = { c, 0 };
+
+	if (c == ' ')
+		send_line(CW_TEXT_CONTROL, CW_TEXT_SPACE);
+	else if (c != '_')
+		send_line(CW_TEXT_CONTROL, text);
 }
 
 static void type_a_character(char c) {
 	size_t length = strlen(typed);
 
+	if (typed_for == &cw_sending) {
+		send_cw_character(c);
+		// the box keeps the newest of what was sent
+		if (length >= CW_SENT_SHOWN) {
+			memmove(typed, typed + 1, length);
+			length--;
+		}
+	}
 	if (length + 1 >= sizeof(typed))
 		return;
 	typed[length] = c;
@@ -2378,6 +2428,14 @@ static void rub_out(void) {
 // what was typed goes to the radio, if it is something and is new, and the
 // settings come back
 static void save_typed(void) {
+	// while sending CW the key is ESC: what the radio is still sending is
+	// stopped, and the record of it cleared
+	if (typed_for == &cw_sending) {
+		send_line(CW_DO_CONTROL, "ESC");
+		typed[0] = 0;
+		show_typed();
+		return;
+	}
 	if (typed_for == &password_asked) {
 		take_typed_password(typed);
 		return;
@@ -2407,8 +2465,13 @@ static void on_save_pressed(GtkButton *button, gpointer unused) {
 	save_typed();
 }
 
+// back from a screen to the one it was reached from; from the keyboard
+// that is the settings, unless it was sending CW, which is reached from the
+// radio's own screen
 static void on_back_pressed(GtkButton *button, gpointer page) {
 	(void)button;
+	if (is_page_shown(PAGE_TEXT) && typed_for == &cw_sending)
+		page = PAGE_MAIN;
 	show_page(page);
 }
 
@@ -2482,6 +2545,10 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 	}
 	if (clicked == LOG_ROW) {
 		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of);
+		return TRUE;
+	}
+	if (clicked == CW_KBD_ROW && !strcmp(mode_group(), MACRO_GROUP)) {
+		open_cw_keyboard();
 		return TRUE;
 	}
 	if (clicked == CW_ESC_ROW && !strcmp(mode_group(), MACRO_GROUP))
@@ -2578,7 +2645,12 @@ static void move_focus(int direction) {
 static gboolean on_key_while_typing(const GdkEventKey *event) {
 	guint32 character = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
 
-	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
+	if (typed_for == &cw_sending && (event->keyval == GDK_KEY_Return
+			|| event->keyval == GDK_KEY_KP_Enter))
+		type_a_character(' ');
+	else if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
+		save_typed();
+	else if (event->keyval == GDK_KEY_Escape && typed_for == &cw_sending)
 		save_typed();
 	else if (event->keyval == GDK_KEY_Escape)
 		show_page(PAGE_SETTINGS);
@@ -3674,8 +3746,8 @@ static GtkWidget *create_text_page(void) {
 				GINT_TO_POINTER(text[0])), i, row, 1, 1);
 		}
 	}
-	gtk_grid_attach(GTK_GRID(keys), key_new("CANCEL", G_CALLBACK(on_back_pressed),
-		PAGE_SETTINGS), column, KEY_ROWS, CANCEL_KEYS, 1);
+	cancel_key = key_new("CANCEL", G_CALLBACK(on_back_pressed), PAGE_SETTINGS);
+	gtk_grid_attach(GTK_GRID(keys), cancel_key, column, KEY_ROWS, CANCEL_KEYS, 1);
 	column += CANCEL_KEYS;
 	gtk_grid_attach(GTK_GRID(keys), key_new("SPACE", G_CALLBACK(on_key_pressed),
 		GINT_TO_POINTER(' ')), column, KEY_ROWS, SPACE_KEYS, 1);
@@ -3683,8 +3755,8 @@ static GtkWidget *create_text_page(void) {
 	gtk_grid_attach(GTK_GRID(keys), key_new("\u232B", G_CALLBACK(on_rub_out_pressed),
 		NULL), column, KEY_ROWS, RUB_OUT_KEYS, 1);
 	column += RUB_OUT_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), key_new("SAVE", G_CALLBACK(on_save_pressed), NULL),
-		column, KEY_ROWS, SAVE_KEYS, 1);
+	save_key = key_new("SAVE", G_CALLBACK(on_save_pressed), NULL);
+	gtk_grid_attach(GTK_GRID(keys), save_key, column, KEY_ROWS, SAVE_KEYS, 1);
 	gtk_box_pack_end(GTK_BOX(page), keys, TRUE, TRUE, 0);
 	return page;
 }
