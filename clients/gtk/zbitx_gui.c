@@ -165,7 +165,7 @@
 // across, and the waterfall stays as it was. The dial is then the power,
 // nought to a hundred watts, marked at 0, 50 and 100; under it are the
 // power and the SWR in figures, "25W 1.3", and a bar that is the SWR: empty
-// at 1, full at 3 and beyond, green to 1.5, yellow to 2 and red above. The author asked for the two there; they were written at
+// at 1, full at 4 and beyond, green to 1.5, yellow to 3 and red above. The author asked for the two there; they were written at
 // the right end of the status line, where they flickered through what the
 // line was saying.
 //
@@ -505,9 +505,9 @@
 #define SWR_BAR_TOP 0.89
 #define SWR_BAR_LEAST 0.05
 #define SWR_BAR_EMPTY 1.0
-#define SWR_BAR_FULL 3.0
+#define SWR_BAR_FULL 4.0
 #define SWR_GOOD_BELOW 1.5
-#define SWR_FAIR_BELOW 2.0
+#define SWR_FAIR_UP_TO 3.0
 #define SMETER_SWEEP (48.0 * G_PI / 180.0)
 #define SMETER_TICK 0.09
 #define SMETER_MARK_ROOM 0.06
@@ -2957,8 +2957,9 @@ static void draw_power_mark(cairo_t *cr, double x, double y, double radius, doub
 }
 
 // under the dial, over the needle's foot: the power and the SWR in figures,
-// in the middle, "25W 1.3", and under them the SWR as a bar. The bar is
-// empty at 1 and full at 3; an aerial that is well matched moves it very
+// in the middle, "25W 1.3", and under them the SWR as a bar, in the
+// author's colours: green to 1.5, yellow from there to 3, red above. The
+// bar is empty at 1 and full at 4; an aerial that is well matched moves it very
 // little, which is why the author asked for the figures, and a sliver of it
 // is always shown when there is an SWR to show
 static void draw_power_and_swr(cairo_t *cr, int width, int height) {
@@ -3006,17 +3007,17 @@ static void draw_power_and_swr(cairo_t *cr, int width, int height) {
 	cairo_fill(cr);
 	if (swr < SWR_GOOD_BELOW)
 		cairo_set_source_rgb(cr, 0.19, 0.82, 0.38);
-	else if (swr < SWR_FAIR_BELOW)
+	else if (swr <= SWR_FAIR_UP_TO)
 		cairo_set_source_rgb(cr, 1.0, 0.88, 0.0);
 	else
 		cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
 	cairo_rectangle(cr, left, top, across * filled, bar);
 	cairo_fill(cr);
-	// nicks at 1.5 and at 2
+	// nicks at 1.5 and at 3
 	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
 	cairo_rectangle(cr, left + across * (SWR_GOOD_BELOW - SWR_BAR_EMPTY)
 		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
-	cairo_rectangle(cr, left + across * (SWR_FAIR_BELOW - SWR_BAR_EMPTY)
+	cairo_rectangle(cr, left + across * (SWR_FAIR_UP_TO - SWR_BAR_EMPTY)
 		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
 	cairo_fill(cr);
 }
