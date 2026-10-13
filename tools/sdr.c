@@ -348,6 +348,10 @@ static long now_ms(void) {
 }
 
 static void report(void) {
+	int reads;
+	int failures;
+	int forward;
+	int reflected;
 	struct audio_report sound;
 	struct panel_report link;
 	char asked[] = TX_PEAK_ASKED;
@@ -381,6 +385,9 @@ static void report(void) {
 	printf("meter: power %.1f W, swr %.1f, battery %.2f V, smeter %d\n",
 		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
 		control_get_int("BATTERY") / HUNDREDTHS, control_get_int("SMETER"));
+	meter_bridge_seen(&reads, &failures, &forward, &reflected);
+	printf("swr bridge since last asked: read %d times, no answer %d times, "
+		"greatest forward count %d with reflected %d\n", reads, failures, forward, reflected);
 }
 
 static int max_bin_level(int first_bin, int after_last_bin) {

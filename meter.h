@@ -7,3 +7,4 @@
 
 int meter_open(void);
 void meter_poll(long now_ms);
+void meter_bridge_seen(int *reads, int *failures, int *forward, int *reflected);

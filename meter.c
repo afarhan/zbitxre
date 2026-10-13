@@ -91,6 +91,27 @@ static void read_smeter(void) {
 	update("SMETER", strength);
 }
 
+// what the bridge has said since it was last asked about, for "report":
+// how often it was read and how often it did not answer, and its two
+// counts at the greatest forward one. The power and the SWR are worked out
+// of those two counts and nothing else, so when either looks wrong on the
+// air this is where to look first
+static int bridge_reads;
+static int bridge_failures;
+static int bridge_forward;
+static int bridge_reflected;
+
+void meter_bridge_seen(int *reads, int *failures, int *forward, int *reflected) {
+	*reads = bridge_reads;
+	*failures = bridge_failures;
+	*forward = bridge_forward;
+	*reflected = bridge_reflected;
+	bridge_reads = 0;
+	bridge_failures = 0;
+	bridge_forward = 0;
+	bridge_reflected = 0;
+}
+
 static void read_power(void) {
 	int forward;
 	int reflected;
@@ -98,8 +119,15 @@ static void read_power(void) {
 	int power;
 	int swr;
 
-	if (swr_bridge_read(&forward, &reflected) < 0)
+	if (swr_bridge_read(&forward, &reflected) < 0) {
+		bridge_failures++;
 		return;
+	}
+	bridge_reads++;
+	if (forward >= bridge_forward) {
+		bridge_forward = forward;
+		bridge_reflected = reflected;
+	}
 	if (reflected >= forward)
 		swr = SWR_TOO_HIGH;
 	else
