@@ -161,9 +161,14 @@ the sound reaches it. The script turns each message into samples and plays
 them one after another through the browser's Web Audio, a tenth of a
 second behind their arrival so that an uneven network does not break the
 sound up, and lets go of sound that has fallen more than half a second
-behind. The slider is the loudness here, in this browser, and nothing at
-the radio: the author's rule is that whoever listens from afar sets their
-own volume. A browser has no UDP, so this last stretch is TCP, inside the
+behind. How loud it is is the listening device's own affair, its volume
+keys or its mixer, and nothing at the radio: the author's rule is that
+whoever listens from afar sets their own volume. There was a slider for
+it on the page, and he had it taken out with the box it was in, which on
+a telephone covered the globe: the radio that is chosen is named in the
+bar along the top, with a loudspeaker to turn its sound off and on and a
+cross to let go of it, and a radio is listened to as soon as it is
+touched. A browser has no UDP, so this last stretch is TCP, inside the
 site's HTTPS.
 
 MAIL
@@ -384,10 +389,9 @@ MAP_SCRIPT = """
   var canvas = document.getElementById("globe");
   var pen = canvas.getContext("2d");
   var count = document.getElementById("count");
-  var panel = document.getElementById("panel");
   var who = document.getElementById("who");
   var button = document.getElementById("listen");
-  var slider = document.getElementById("volume");
+  var leave = document.getElementById("leave");
   var state = document.getElementById("state");
   var tuned = document.getElementById("tuned");
   var land = [], radios = [], chosen = null;
@@ -620,7 +624,12 @@ MAP_SCRIPT = """
         radios[i].at.y - (e.clientY - box.top));
       if (d < near) { near = d; best = radios[i]; }
     }
-    if (best) { choose(best); }
+    // a radio that is touched is listened to at once, with no button to
+    // press for it, which the author asked for
+    if (best) {
+      choose(best);
+      if (!isWanted) { start(); }
+    }
   });
   canvas.addEventListener("wheel", function (e) {
     e.preventDefault();
@@ -660,7 +669,7 @@ MAP_SCRIPT = """
     var asked = chosen.radio;
     if (asked !== heardOf) {
       heardOf = asked; heardAfter = 0;
-      heardList.textContent = ""; heard.className = "";
+      heardList.textContent = ""; heard.className = ""; heardTab.className = "";
     }
     get("/decodes.json?radio=" + asked + "&after=" + heardAfter, function (rows) {
       var i, row, line, isAtFoot;
@@ -680,20 +689,47 @@ MAP_SCRIPT = """
       while (heardList.childNodes.length > 300) { heardList.removeChild(heardList.firstChild); }
       heardTitle.textContent = "FT8 copied by " + chosen.callsign + " on "
         + (rows[rows.length - 1].hz / 1e6).toFixed(3) + " MHz";
-      heard.className = "shown";
+      // the list is a strip down the right that can be put away to a tab
+      // at the edge and brought back; on a narrow screen, a telephone's,
+      // it begins put away, since open it leaves little of the globe
+      heard.className = isHeardOpen ? "shown" : "";
+      heardTab.className = isHeardOpen ? "" : "shown";
       if (isAtFoot) { heardList.scrollTop = heardList.scrollHeight; }
     });
   }
   setInterval(askForCopied, 5000);
+
+  var heardTab = document.getElementById("heard-tab");
+  var isHeardOpen = window.innerWidth >= 800;
+  function openHeard(on) {
+    isHeardOpen = on;
+    heard.className = on ? "shown" : "";
+    heardTab.className = on ? "" : "shown";
+    if (on) { heardList.scrollTop = heardList.scrollHeight; }
+  }
+  heardTab.addEventListener("click", function () { openHeard(true); });
+  document.getElementById("heard-close").addEventListener("click", function () {
+    openHeard(false);
+  });
 
   function choose(radio) {
     if (chosen && chosen.radio !== radio.radio) { stop(""); }
     chosen = radio;
     askForCopied();
     showWho();
-    panel.className = "shown";
+    document.body.className = "chosen";
     draw();
   }
+
+  // the radio is let go of: nothing is chosen, and the globe has the page
+  leave.addEventListener("click", function () {
+    stop("");
+    chosen = null;
+    heardOf = 0;
+    heard.className = ""; heardTab.className = "";
+    document.body.className = "";
+    draw();
+  });
 
   /* listening */
 
@@ -710,16 +746,15 @@ MAP_SCRIPT = """
     if (again) { clearTimeout(again); again = null; }
     if (socket) { socket.onclose = null; socket.close(); socket = null; }
     if (player) { player.close(); player = null; }
-    button.textContent = "Listen";
+    button.textContent = "🔇";
     state.textContent = said;
     tuned.textContent = "";
   }
 
   function start() {
     player = radioSound();
-    player.setLoudness(slider.value / 100);
     isWanted = true;
-    button.textContent = "Stop";
+    button.textContent = "🔊";
     state.textContent = "connecting";
     listen();
   }
@@ -750,13 +785,13 @@ MAP_SCRIPT = """
         // a word this script does not know is let pass: the service may
         // come to say more than this page, loaded before it did, knows of
         if (message.data === "online") {
-          state.textContent = "listening";
+          state.textContent = "";
         } else if (message.data === "offline") {
-          state.textContent = "the radio is not on line; waiting for it";
+          state.textContent = "not on line; waiting";
           tuned.textContent = "";
         } else if (message.data === "full") {
           isFull = true;
-          state.textContent = "too many are listening to this radio just now; waiting for room";
+          state.textContent = "full; waiting for room";
         }
       } else {
         player.play(new Uint8Array(message.data));
@@ -765,16 +800,15 @@ MAP_SCRIPT = """
     socket.onclose = function () {
       socket = null;
       if (!isWanted) { return; }
-      if (!isFull) { state.textContent = "the connection was lost; listening again"; }
+      if (!isFull) { state.textContent = "connection lost; trying again"; }
       again = setTimeout(listen, isFull ? 30000 : 3000);
     };
   }
 
+  // the loudspeaker in the top bar turns the sound off and on. There is no
+  // volume here: the telephone's own, or the computer's, does that
   button.addEventListener("click", function () {
-    if (isWanted) { stop("stopped"); } else if (chosen) { start(); }
-  });
-  slider.addEventListener("input", function () {
-    if (player) { player.setLoudness(slider.value / 100); }
+    if (isWanted) { stop(""); } else if (chosen) { start(); }
   });
 
   /* what there is to show */
@@ -820,28 +854,38 @@ MAP_SCRIPT = """
 MAP_STYLE = """
 html, body { height: 100%; margin: 0; font-family: sans-serif; background: #05080c;
     color: #fff; overflow: hidden; }
-#top { position: absolute; top: 0; left: 0; right: 0; height: 2.4em; line-height: 2.4em;
-    padding: 0 0.8em; background: rgba(16,24,32,0.85); z-index: 2; }
-#top a { color: #7cf; text-decoration: none; margin-right: 1.2em; }
-#view { float: right; margin: 0.45em 1.6em 0 0; font-size: 0.9em; padding: 0.15em 0.9em; }
+#top { position: absolute; top: 0; left: 0; right: 0; height: 2.6em; padding: 0 0.6em;
+    background: rgba(16,24,32,0.9); z-index: 3; display: flex; align-items: center;
+    gap: 0.8em; white-space: nowrap; overflow: hidden; }
+#top a { color: #7cf; text-decoration: none; }
+#count { color: #9ab; }
+#view { margin-left: auto; font-size: 0.9em; padding: 0.25em 0.8em; flex: none; }
+#chosen { display: none; align-items: center; gap: 0.6em; min-width: 0; flex: 1; }
+body.chosen #chosen { display: flex; }
+#who { font-weight: bold; overflow: hidden; text-overflow: ellipsis; }
+#tuned { font-family: monospace; color: #ffd23c; flex: none; }
+#state { color: #9ab; overflow: hidden; text-overflow: ellipsis; }
+#chosen button { font-size: 1.15em; line-height: 1; padding: 0.25em 0.5em; background: #1c2834;
+    color: #fff; border: 1px solid #405060; border-radius: 4px; flex: none; }
+@media (max-width: 760px) {
+    body.chosen #home, body.chosen #count { display: none; }
+    #hint { display: none; }
+}
 #globe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none;
     cursor: grab; }
-#panel { display: none; position: absolute; left: 1em; bottom: 1em; z-index: 2;
-    background: rgba(16,24,32,0.92); border: 1px solid #405060; border-radius: 6px;
-    padding: 0.8em 1em; min-width: 15em; }
-#panel.shown { display: block; }
-#who { font-size: 1.3em; font-weight: bold; margin: 0 0 0.3em 0; white-space: pre; }
-#tuned { font-family: monospace; font-size: 1.15em; color: #ffd23c; margin: 0 0 0.6em 0;
-    min-height: 1.3em; white-space: pre; }
-#panel button { font-size: 1em; padding: 0.4em 1.2em; }
-#panel label { display: block; margin-top: 0.8em; font-size: 0.9em; color: #9ab; }
-#panel input { width: 100%; }
-#state { margin-left: 0.8em; color: #9ab; }
-#heard { display: none; position: absolute; right: 1em; top: 3.4em; bottom: 4.6em;
-    width: 25em; max-width: 46vw; background: rgba(16,24,32,0.9); border: 1px solid #405060;
-    border-radius: 6px; z-index: 2; flex-direction: column; overflow: hidden; }
+#heard { display: none; position: absolute; right: 0; top: 2.6em; bottom: 0;
+    width: 25em; max-width: 82vw; background: rgba(16,24,32,0.93);
+    border-left: 1px solid #405060; z-index: 2; flex-direction: column; overflow: hidden; }
 #heard.shown { display: flex; }
-#heard-title { padding: 0.5em 0.8em; color: #7cf; font-size: 0.9em; border-bottom: 1px solid #405060; }
+#heard-head { display: flex; align-items: center; border-bottom: 1px solid #405060; }
+#heard-title { flex: 1; padding: 0.5em 0.8em; color: #7cf; font-size: 0.9em; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+#heard-close, #heard-tab { font-size: 1.1em; background: #1c2834; color: #7cf;
+    border: 1px solid #405060; padding: 0.35em 0.8em; }
+#heard-close { border-width: 0 0 0 1px; align-self: stretch; }
+#heard-tab { display: none; position: absolute; right: 0; top: 3.2em; z-index: 2;
+    border-right: 0; border-radius: 6px 0 0 6px; }
+#heard-tab.shown { display: block; }
 #heard-list { flex: 1; overflow-y: auto; padding: 0.3em 0.8em; font: 12px/1.5 monospace;
     white-space: pre; color: #dde; -webkit-overflow-scrolling: touch; }
 #heard-list .cq { color: #50ff8c; }
@@ -857,14 +901,16 @@ MAP_PAGE = """<!doctype html>
 <title>Radios on line - my.sbitx.net</title>
 <link rel="stylesheet" href="/map.css">
 </head><body>
-<div id="top"><a href="/">my.sbitx.net</a><span id="count"></span>
+<div id="top"><a id="home" href="/">my.sbitx.net</a><span id="count"></span>
+<span id="chosen"><span id="who"></span><span id="tuned"></span><span id="state"></span>
+<button id="listen" title="sound on or off">🔇</button>
+<button id="leave" title="leave this radio">✕</button></span>
 <button id="view">flat map</button></div>
 <canvas id="globe"></canvas>
-<div id="panel"><p id="who"></p><p id="tuned"></p>
-<button id="listen">Listen</button><span id="state"></span>
-<label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
-</div>
-<div id="heard"><div id="heard-title"></div><div id="heard-list"></div></div>
+<button id="heard-tab">FT8 ‹</button>
+<div id="heard"><div id="heard-head"><span id="heard-title"></span>
+<button id="heard-close" title="put the list away">›</button></div>
+<div id="heard-list"></div></div>
 <div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen
 <br>blue dots are listeners, placed to the nearest grid square by their network address
 &middot; <a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></div>
