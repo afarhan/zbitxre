@@ -32,6 +32,18 @@ the server's own pactl, and are there for as long as this runs:
 In the other program they are chosen by those names. In WSJT-X: Settings,
 Audio, Input zBitx_receive and Output zBitx_transmit.
 
+THE NAMES, FOR PROGRAMS THAT ASK ALSA
+
+The author turned the switch on, opened WSJT-X on the radio, and did not
+find them. WSJT-X there lists the sound devices that ALSA, Linux's older
+way to sound, knows by name, "plughw:CARD=Loopback,DEV=1" and the like,
+and a device made in the sound server has no name in ALSA. So the two are
+given one each, the same two names, which lead to the server's devices
+through ALSA's own plug-in for that. ALSA reads a user's names from
+~/.config/alsa/asoundrc, and that is where they are written, while this
+runs, and taken away after. A file already there that this did not write
+is left as it is, and the names are then not given: it is the owner's.
+
 HOW THE SOUND IS CARRIED
 
 The radio program sends its sound out on the radio as RTP to a multicast
@@ -88,6 +100,15 @@ QUIET_FRAMES_SENT = 10
 RECEIVE = "zBitx_receive"
 TRANSMIT = "zBitx_transmit"
 RECEIVE_SINK = "zbitx_receive_sink"
+ALSA_NAMES = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                          "alsa", "asoundrc")
+ALSA_NAMES_BEGIN = "# written by zbitxre's setup/sound_card.py, and taken away by it\n"
+ALSA_NAME = """pcm.%s {
+	type pulse
+	device "%s"
+	hint { show on description "%s" }
+}
+"""
 RUNNING = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "zbitx_sound_card.pid")
 
 
@@ -129,6 +150,34 @@ def make_devices():
 def take_devices_away():
     for module in reversed(modules()):
         pactl("unload-module", module)
+
+
+def is_alsa_names_ours():
+    try:
+        with open(ALSA_NAMES) as file:
+            return file.readline() == ALSA_NAMES_BEGIN
+    except OSError:
+        return False
+
+
+def give_alsa_names():
+    """the two devices are given names in ALSA, for a program that lists
+    ALSA's; not if the owner has a file of names there already"""
+    if os.path.exists(ALSA_NAMES) and not is_alsa_names_ours():
+        return
+    try:
+        os.makedirs(os.path.dirname(ALSA_NAMES), exist_ok=True)
+        with open(ALSA_NAMES, "w") as file:
+            file.write(ALSA_NAMES_BEGIN)
+            file.write(ALSA_NAME % (RECEIVE, RECEIVE, "zBitx receive: the radio, heard"))
+            file.write(ALSA_NAME % (TRANSMIT, TRANSMIT, "zBitx transmit: for the radio to send"))
+    except OSError:
+        pass
+
+
+def take_alsa_names_away():
+    if is_alsa_names_ours():
+        os.remove(ALSA_NAMES)
 
 
 def runner():
@@ -218,6 +267,7 @@ def main(argv):
             os.kill(pid, signal.SIGTERM)
             time.sleep(0.3)
         take_devices_away()
+        take_alsa_names_away()
         print("STATUS OFF")
         return
     if not make_devices():
@@ -225,6 +275,7 @@ def main(argv):
         print("the sound server would not make the devices")
         print("STATUS COULD NOT BE MADE")
         return
+    give_alsa_names()
     if runner() is None:
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "run"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
