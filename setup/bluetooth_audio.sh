@@ -8,18 +8,26 @@
 #     setup/bluetooth_audio.sh +10        louder by so much; -10, softer
 #
 # The radio program sends what its speaker plays out on the radio itself,
-# as RTP; rtp_audio.c says how. Any player that knows RTP can play it, and
-# this plays it with ffplay into the first Bluetooth sound output the
-# desktop has. Pair and connect the earphone from the desktop's Bluetooth
-# menu first. The author asked for this to be kept: a Bluetooth earphone on
-# the radio was a much wanted thing, and this is all it took.
+# as RTP; rtp_audio.c says how: 16-bit samples, 48000 a second, to a
+# multicast group on the radio. This takes the samples out of the packets
+# and hands them to pacat, the sound server's own player, which plays them
+# into the first Bluetooth sound output the desktop has. Pair and connect
+# the earphone from the desktop's Bluetooth menu first. The author asked for
+# this to be kept: a Bluetooth earphone on the radio was a much wanted
+# thing, and this is all it took. It is run by hand, or by the gateway when
+# BLUETOOTH among the radio's CONNECTIONS is turned on.
+#
+# It was ffplay that played it, when the sound was the telephone's, which
+# any player of RTP knows without being told. The sound as it is now has no
+# number of its own in RTP, and a player has to be told what it is; taking
+# the samples out here asks nothing of any player.
 #
 # The desktop's sound panel shows no slider for a Bluetooth output, which
 # is why the level is set here. The radio's own volume control does not
 # change it: the sound is sent out before the sound card's volume.
 #
-# It needs ffplay, of the package ffmpeg, and the desktop's sound server,
-# PipeWire or PulseAudio, both of which Raspberry Pi OS has.
+# It needs python3 and the desktop's sound server, PipeWire or PulseAudio,
+# with its pacat and pactl, all of which Raspberry Pi OS has.
 
 GROUP=239.255.73.88
 PORT=5004
@@ -28,8 +36,11 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 # stopping needs no earphone: the player is stopped whether or not the
 # earphone it was playing into is still there
+# what takes the samples out of the packets is known by this word in it
+MARK=zbitx_bluetooth_audio
+
 if [ "$1" = stop ]; then
-	pkill -f "ffplay .*rtp://$GROUP:$PORT" && echo "stopped"
+	pkill -f "$MARK" && echo "stopped"
 	exit 0
 fi
 
@@ -42,13 +53,24 @@ fi
 
 case "${1:-start}" in
 start)
-	if pgrep -f "ffplay .*rtp://$GROUP:$PORT" > /dev/null; then
+	if pgrep -f "$MARK" > /dev/null; then
 		echo "already playing into $sink"
 		exit 0
 	fi
-	PULSE_SINK="$sink" SDL_AUDIODRIVER=pulse setsid ffplay -nodisp -loglevel error \
-		-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 \
-		"rtp://$GROUP:$PORT?localaddr=127.0.0.1" < /dev/null > /dev/null 2>&1 &
+	# each packet is RTP's 12 bytes and then the samples
+	setsid sh -c "python3 -u -c '
+import socket, sys  # $MARK
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((\"\", $PORT))
+s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+             socket.inet_aton(\"$GROUP\") + socket.inet_aton(\"127.0.0.1\"))
+out = sys.stdout.buffer
+while True:
+    out.write(s.recv(4000)[12:])
+    out.flush()
+' | pacat --raw --format=s16be --rate=48000 --channels=1 --latency-msec=60 \
+		--device='$sink' --client-name=zbitx" < /dev/null > /dev/null 2>&1 &
 	echo "playing the radio into $sink"
 	;;
 [+-][0-9]*)

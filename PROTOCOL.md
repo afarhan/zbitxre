@@ -421,14 +421,21 @@ client`. Any number may listen to it.
 ## The radio's sound
 
 **On the radio.** The radio program sends what its speaker plays out on the
-radio itself, always, as RTP of payload type 0: mu-law, 8000 samples a second,
-one channel, 160 samples and twenty milliseconds to a packet, fifty packets a
-second. It goes to the multicast group 239.255.73.88, port 5004, on the
+radio itself, always, as RTP: 16-bit samples, the more significant byte first,
+48000 a second, one channel, 960 samples and twenty milliseconds to a packet,
+fifty packets a second. RTP has no number of its own for that, and the payload
+type is 96. It goes to the multicast group 239.255.73.88, port 5004, on the
 loopback interface with a time to live of 0, so it never leaves the radio.
-Any program on the radio may listen: `ffplay "rtp://239.255.73.88:5004?localaddr=127.0.0.1"`.
+Any program on the radio may listen; the samples begin after RTP's 12 bytes.
 The sound is taken before the sound card's volume, so its level does not
 follow the radio's volume control; whoever listens sets their own.
 `rtp_audio.c` is this.
+
+It is the sound whole, for programs on the radio that need it so, a digital
+mode's among them. Across the internet the sound is the telephone's, mu-law at
+8000 samples a second, a twelfth of the bits, and the daemon makes the one of
+the other, both ways: `clients/remote/telephone.c`. The radio program sent
+mu-law itself until 2026-10-13.
 
 **From the radio to the service.** Only while somebody is listening. The
 service says so on the connection the daemon keeps:
@@ -515,8 +522,12 @@ from afar speaks, and the radio sends it.
 
 **Into the radio program.** Speech to transmit is sent to the radio program as
 RTP, by UDP, to port 5006 on the radio itself, `127.0.0.1`, and nowhere else:
-the same RTP the radio's sound is, payload type 0, 160 samples of mu-law to a
-packet. Any program on the radio may send it; the daemon does. While the radio
+the same RTP the radio's sound is, payload type 96, 960 16-bit samples to a
+packet, with a label of eleven bytes before it: one for the kind of sound, 1
+for speech from the owner working the radio from afar, 2 for sound from
+another program on the radio, 3 for someone speaking over the internet, which
+is to be heard and not transmitted and is not taken yet; and ten for the
+callsign of whoever is speaking, with noughts after it. Any program on the radio may send it; the daemon does. While the radio
 is sending, speech that comes takes the microphone's place, from its first
 sample until that transmission ends, and a gap in it is silence, not the
 microphone. Speech that comes while the radio is receiving is thrown away.

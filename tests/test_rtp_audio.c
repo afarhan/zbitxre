@@ -6,9 +6,9 @@
 // It needs no radio. rtp_audio.c is given tones as the core gives it the
 // speaker's samples, and this program listens to the multicast group as any
 // program on the radio would. What arrives is checked for being RTP of
-// payload type 0, twenty milliseconds to a packet with nothing lost or out
-// of order, and, with the mu-law undone, for being the tone that was put
-// in, at its level and its pitch. A tone above half the outgoing sample
+// payload type 96, 16-bit samples at 48000 a second, twenty milliseconds to a
+// packet with nothing lost or out of order, and for being the tone that was
+// put in, at its level and its pitch. A tone above half the outgoing sample
 // rate is put in as well, to see that it does not come out folded down.
 
 #include <math.h>
@@ -33,7 +33,6 @@
 // it eight times larger: a quarter of full scale comes out
 #define TONE_IN 67108864.0
 #define QUARTER_SCALE_16 8192.0
-#define ULAW_BIAS 0x84
 
 static int checks_failed;
 static int listener;
@@ -50,13 +49,10 @@ static void expect(int ok, const char *what) {
 	checks_failed++;
 }
 
-static int linear_of(uint8_t ulaw) {
-	int value = ~ulaw & 0xff;
-	int size = (((value & 0x0f) << 3) + ULAW_BIAS) << ((value & 0x70) >> 4);
-
-	if (value & 0x80)
-		return ULAW_BIAS - size;
-	return size - ULAW_BIAS;
+// a sample of a packet: sixteen bits, the more significant byte first
+static int sample_of(const uint8_t *packet, int at) {
+	return (int16_t)(packet[RTP_HEADER_BYTES + 2 * at] << 8
+		| packet[RTP_HEADER_BYTES + 2 * at + 1]);
 }
 
 static int listen_to_the_group(void) {
@@ -117,7 +113,7 @@ static void measure(int *loudest, double *hz) {
 	*loudest = 0;
 	for (p = SETTLED_PACKETS; p < packet_count; p++) {
 		for (i = 0; i < RTP_AUDIO_FRAME_SAMPLES; i++) {
-			now = linear_of(packets[p][RTP_HEADER_BYTES + i]);
+			now = sample_of(packets[p], i);
 			if (abs(now) > *loudest)
 				*loudest = abs(now);
 			if (before < 0 && now >= 0)
@@ -147,9 +143,9 @@ int main(void) {
 
 	play_a_tone(1000.0);
 	expect(packet_count >= 45 && packet_count <= 50,
-		"a second of sound is some fifty packets of 172 bytes");
-	expect(packets[0][0] == 0x80 && packets[0][1] == 0,
-		"each is RTP, version 2, payload type 0");
+		"a second of sound is some fifty packets of 1932 bytes");
+	expect(packets[0][0] == 0x80 && packets[0][1] == RTP_AUDIO_PAYLOAD_TYPE,
+		"each is RTP, version 2, payload type 96");
 	sequence = (packets[0][2] << 8) | packets[0][3];
 	for (p = 0; p < packet_count; p++) {
 		stamp = ((uint32_t)packets[p][4] << 24) | ((uint32_t)packets[p][5] << 16)
@@ -160,21 +156,21 @@ int main(void) {
 			in_order = 0;
 		stamp_before = stamp;
 	}
-	expect(in_order, "numbered one after another, their times 160 samples apart");
+	expect(in_order, "numbered one after another, their times 960 samples apart");
 	measure(&loudest, &hz);
 	expect(fabs(hz - 1000.0) < 15.0, "a 1 kHz tone comes out a 1 kHz tone");
 	expect(loudest > QUARTER_SCALE_16 * 0.9 && loudest < QUARTER_SCALE_16 * 1.1,
 		"eight times as large as it went in, a quarter of full scale");
 
-	play_a_tone(6000.0);
+	play_a_tone(30000.0);
 	measure(&loudest, &hz);
 	expect(loudest < QUARTER_SCALE_16 / 100,
-		"a 6 kHz tone, which would fold down to 2 kHz, comes out 40 dB down or more");
+		"a 30 kHz tone, which would fold down to 18 kHz, comes out 40 dB down or more");
 
-	play_a_tone(3000.0);
+	play_a_tone(15000.0);
 	measure(&loudest, &hz);
-	expect(loudest > QUARTER_SCALE_16 * 0.7 && fabs(hz - 3000.0) < 30.0,
-		"a 3 kHz tone, the top of the speech, comes through");
+	expect(loudest > QUARTER_SCALE_16 * 0.9 && fabs(hz - 15000.0) < 150.0,
+		"a 15 kHz tone comes through whole, far above anything a mode on HF uses");
 
 	rtp_audio_close();
 	if (checks_failed) {

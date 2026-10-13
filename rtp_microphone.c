@@ -16,12 +16,23 @@
 //
 // WHAT IS TAKEN
 //
-// What rtp_audio.c sends, the same in every particular: RTP with payload
-// type 0, G.711 mu-law at 8000 samples a second, 160 samples to a packet,
-// to UDP port 5006 on the loopback address and no other, so that nothing
-// off the radio can reach it. A packet of any other size or kind, or with
-// a sequence number at or behind the last, is dropped. When none has come
+// The sound as rtp_audio.c sends it: RTP with 16-bit samples, the more
+// significant byte first, 48000 a second, 960 to a packet. Before the RTP
+// packet is a label of eleven bytes, the author's design: one that says
+// what kind of sound it is, and ten for the callsign of whoever is
+// speaking, with noughts after it. The kinds are in rtp_microphone.h:
+// speech from the owner working the radio from afar, and sound from
+// another program on the radio, a digital mode's, both of which are to be
+// transmitted; and someone speaking over the internet, which is to be
+// heard and never transmitted, and is not taken here yet. It comes to UDP
+// port 5006 on the loopback address and no other, so that nothing off the
+// radio can reach it. A packet of any other size or kind, or with a
+// sequence number at or behind the last, is dropped. When none has come
 // for a second, the next begins a new stream, whatever its number.
+//
+// It was first mu-law at 8000 a second with no label, which is how speech
+// crosses the internet. The gateway now turns that into this, so that the
+// radio program has one form of sound to take, whoever it is from.
 //
 // WHEN IT TAKES THE MICROPHONE'S PLACE
 //
@@ -48,15 +59,15 @@
 //
 // HOW LOUD
 //
-// The samples are brought up from 8000 to the sound card's 96000 a second,
-// twelve for one, through a low-pass filter of 192 taps cut at 3.6 kHz,
-// the one rtp_audio.c brings them down with, so that the copies of the
-// speech that lie above 4 kHz are not transmitted.
+// The samples are brought up from 48000 to the sound card's 96000 a
+// second, two for one, through a low-pass filter of 32 taps cut at 20 kHz,
+// so that the copy of the sound that lies above 24 kHz is not there.
 //
 // MIC is the gain of the sound card's microphone input, which these
 // samples never pass. So the control is told here too, set_gain(), and
 // works on them as a plain multiplier, MIC 50 being the level below. That
-// level, LEVEL_AT_HALF, is reckoned and has not been set on the air: it
+// level, LEVEL_AT_HALF, was reckoned and not set on the air; the author
+// monitored speech sent this way on 2026-10-13 and found it working well. It
 // puts speech that peaks at half of mu-law's full scale, which is where a
 // telephone's own levelling leaves it, at the peak of 2TONE's two tones,
 // which is the drive the transmitter is known to take cleanly.
@@ -84,14 +95,14 @@
 
 #define RATE_OUT_HZ 96000
 #define INTERPOLATE (RATE_OUT_HZ / RTP_AUDIO_RATE_HZ)
-#define TAPS 192
+#define TAPS 32
 #define TAPS_A_PHASE (TAPS / INTERPOLATE)
-#define CUTOFF_HZ 3600.0
+#define CUTOFF_HZ 20000.0
 #define HAMMING_A 0.54
 #define HAMMING_B 0.46
-#define RING_SAMPLES 8192
-#define LEAST_SAMPLES 960
-#define MOST_SAMPLES 3200
+#define RING_SAMPLES 32768
+#define LEAST_SAMPLES 5760
+#define MOST_SAMPLES 19200
 #define QUIET_MS 1000
 #define LEVEL_AT_HALF 5250.0
 #define HALF_PERCENT 50.0
@@ -100,12 +111,10 @@
 #define RTP_VERSION_MASK 0xc0
 #define RTP_VERSION_2 0x80
 #define RTP_PAYLOAD_MASK 0x7f
-#define RTP_PAYLOAD_PCMU 0
-#define ULAW_BIAS 0x84
+#define PACKET_BYTES (RTP_MICROPHONE_LABEL_BYTES + RTP_PACKET_BYTES)
 #define NOT_OPEN (-1)
 
 static int in = NOT_OPEN;
-static int16_t linear[256];
 static float taps[INTERPOLATE][TAPS_A_PHASE];
 
 static int16_t ring[RING_SAMPLES];
@@ -140,16 +149,9 @@ int rtp_microphone_open(void) {
 	double x;
 	double sum[INTERPOLATE];
 	double tap;
-	int value;
-	int size;
 	int i;
 
-	for (i = 0; i < 256; i++) {
-		value = ~i & 0xff;
-		size = (((value & 0x0f) << 3) + ULAW_BIAS) << ((value & 0x70) >> 4);
-		linear[i] = (int16_t)((value & 0x80) ? ULAW_BIAS - size : size - ULAW_BIAS);
-	}
-	// each of the twelve samples made of one has its own sixteen taps, and
+	// each of the two samples made of one has its own sixteen taps, and
 	// each sixteen add up to one, so that a steady level stays what it was
 	memset(sum, 0, sizeof(sum));
 	for (i = 0; i < TAPS; i++) {
@@ -194,7 +196,9 @@ int rtp_microphone_packets(void) {
 
 // every packet that has come is put in the ring
 void rtp_microphone_poll(void) {
-	uint8_t packet[RTP_PACKET_BYTES + 1];
+	uint8_t packet[PACKET_BYTES + 1];
+	const uint8_t *rtp = packet + RTP_MICROPHONE_LABEL_BYTES;
+	const uint8_t *samples = rtp + RTP_HEADER_BYTES;
 	unsigned int put;
 	uint16_t sequence;
 	int64_t now;
@@ -207,10 +211,13 @@ void rtp_microphone_poll(void) {
 		length = recv(in, packet, sizeof(packet), 0);
 		if (length < 0)
 			return;
-		if (length != RTP_PACKET_BYTES || (packet[0] & RTP_VERSION_MASK) != RTP_VERSION_2
-				|| (packet[1] & RTP_PAYLOAD_MASK) != RTP_PAYLOAD_PCMU)
+		if (length != PACKET_BYTES || (rtp[0] & RTP_VERSION_MASK) != RTP_VERSION_2
+				|| (rtp[1] & RTP_PAYLOAD_MASK) != RTP_AUDIO_PAYLOAD_TYPE)
 			continue;
-		sequence = (uint16_t)(packet[2] << 8 | packet[3]);
+		// only what is to be transmitted is taken here, so far
+		if (packet[0] != RTP_MICROPHONE_TO_TRANSMIT && packet[0] != RTP_MICROPHONE_FROM_A_PROGRAM)
+			continue;
+		sequence = (uint16_t)(rtp[2] << 8 | rtp[3]);
 		now = now_ms();
 		if (is_stream_known && now - last_packet_ms < QUIET_MS
 				&& (int16_t)(sequence - last_sequence) <= 0)
@@ -223,7 +230,7 @@ void rtp_microphone_poll(void) {
 		if (put - atomic_load(&ring_taken) > RING_SAMPLES - RTP_AUDIO_FRAME_SAMPLES)
 			continue;
 		for (i = 0; i < RTP_AUDIO_FRAME_SAMPLES; i++)
-			ring[(put + i) % RING_SAMPLES] = linear[packet[RTP_HEADER_BYTES + i]];
+			ring[(put + i) % RING_SAMPLES] = (int16_t)(samples[2 * i] << 8 | samples[2 * i + 1]);
 		atomic_store(&ring_put, put + RTP_AUDIO_FRAME_SAMPLES);
 		atomic_fetch_add(&packets_taken, 1);
 	}

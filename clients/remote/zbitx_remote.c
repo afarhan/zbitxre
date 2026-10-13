@@ -87,7 +87,10 @@
 // THE RADIO'S SOUND
 //
 // The radio program sends what its speaker plays out on the radio itself,
-// as RTP to a multicast group; rtp_audio.c says how. While somebody afar is
+// as RTP to a multicast group; rtp_audio.c says how. That is the sound
+// whole, 16-bit at 48000 samples a second, for other programs on the radio
+// to have; what goes across the internet is the telephone's, mu-law at
+// 8000, and telephone.c turns the one into the other here, both ways. While somebody afar is
 // listening, and only then, the service says so on the connection that is
 // kept, "AUDIO ON <the stream's id> <a nonce>". This program then joins the
 // group, and sends each RTP packet it hears to my.sbitx.net by UDP, on the
@@ -204,6 +207,7 @@
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
 #include "sha256.h"
+#include "telephone.h"
 
 #define DEFAULT_SERVER "my.sbitx.net"
 #define DEFAULT_PORT "8081"
@@ -241,7 +245,13 @@
 #define TAG_BYTES 8
 // a packet of speech this far ahead of the last, or less, is taken
 #define SPEECH_AHEAD_MOST 3000
-#define SOUND_PACKET_BYTES (STREAM_ID_BYTES + RTP_PACKET_BYTES + TAG_BYTES)
+// across the internet the sound is the telephone's: RTP of 160 bytes of
+// mu-law; on the radio it is the whole, RTP_PACKET_BYTES. telephone.c
+#define NET_RTP_BYTES (RTP_HEADER_BYTES + TELEPHONE_FRAME_SAMPLES)
+#define SOUND_PACKET_BYTES (STREAM_ID_BYTES + NET_RTP_BYTES + TAG_BYTES)
+#define RTP_VERSION_2 0x80
+#define RTP_PAYLOAD_PCMU 0
+#define RTP_SOURCE_BYTES 4
 #define LOOPBACK "127.0.0.1"
 #define STEP_WAIT_MS 4000
 #define LOOP_WAIT_MS 200
@@ -332,6 +342,7 @@ static int sound_out = NOT_OPEN;
 static uint8_t stream_id[STREAM_ID_BYTES];
 static char stream_key[SHA256_HEX_ROOM];
 static char speech_key[SHA256_HEX_ROOM];
+static uint32_t sound_samples;
 static int speech_out = NOT_OPEN;
 static struct sockaddr_in speech_port;
 static int is_speech_begun;
@@ -913,6 +924,7 @@ static void sound_on(const char *id_hex, const char *nonce) {
 	snprintf(text, sizeof(text), "zbitx-speech-1 %.64s", nonce);
 	hmac_sha256_hex(stretched, text, speech_key);
 	is_speech_begun = 0;
+	telephone_open();
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -951,25 +963,40 @@ static void sound_on(const char *id_hex, const char *nonce) {
 	inet_pton(AF_INET, LOOPBACK, &speech_port.sin_addr);
 }
 
-// every packet of sound that has come is sent on, with the stream's id
-// before it and its tag after
+// every packet of sound that has come from the radio program is made the
+// telephone's, telephone.c, and sent on with the stream's id before it and
+// its tag after. It keeps the number the radio program gave it, so that the
+// service still sees which did not come
 static void sound_pass_on(void) {
+	uint8_t whole[RTP_PACKET_BYTES + 1];
 	uint8_t packet[SOUND_PACKET_BYTES];
+	uint8_t *rtp = packet + STREAM_ID_BYTES;
 	uint8_t hash[SHA256_BYTES];
 	ssize_t got;
 
 	if (sound_in == NOT_OPEN)
 		return;
 	memcpy(packet, stream_id, STREAM_ID_BYTES);
-	got = recv(sound_in, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, 0);
+	got = recv(sound_in, whole, sizeof(whole), 0);
 	while (got > 0) {
 		if (got == RTP_PACKET_BYTES) {
+			rtp[0] = RTP_VERSION_2;
+			rtp[1] = RTP_PAYLOAD_PCMU;
+			rtp[2] = whole[2];
+			rtp[3] = whole[3];
+			sound_samples += TELEPHONE_FRAME_SAMPLES;
+			rtp[4] = (uint8_t)(sound_samples >> 24);
+			rtp[5] = (uint8_t)(sound_samples >> 16);
+			rtp[6] = (uint8_t)(sound_samples >> 8);
+			rtp[7] = (uint8_t)sound_samples;
+			memcpy(rtp + 8, whole + 8, RTP_SOURCE_BYTES);
+			telephone_from_whole(whole + RTP_HEADER_BYTES, rtp + RTP_HEADER_BYTES);
 			hmac_sha256((const uint8_t *)stream_key, strlen(stream_key), packet,
-				STREAM_ID_BYTES + RTP_PACKET_BYTES, hash);
-			memcpy(packet + STREAM_ID_BYTES + RTP_PACKET_BYTES, hash, TAG_BYTES);
+				STREAM_ID_BYTES + NET_RTP_BYTES, hash);
+			memcpy(packet + STREAM_ID_BYTES + NET_RTP_BYTES, hash, TAG_BYTES);
 			send(sound_out, packet, sizeof(packet), MSG_NOSIGNAL);
 		}
-		got = recv(sound_in, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, 0);
+		got = recv(sound_in, whole, sizeof(whole), 0);
 	}
 }
 
@@ -977,7 +1004,10 @@ static void sound_pass_on(void) {
 // program, if its tag is right and it is ahead of the last
 static void speech_pass_on(void) {
 	uint8_t packet[SOUND_PACKET_BYTES + 1];
+	uint8_t whole[RTP_MICROPHONE_LABEL_BYTES + RTP_PACKET_BYTES];
+	uint8_t *labelled;
 	uint8_t hash[SHA256_BYTES];
+	uint32_t stamp;
 	uint16_t sequence;
 	uint8_t differing;
 	ssize_t got;
@@ -992,12 +1022,12 @@ static void speech_pass_on(void) {
 		if (got != SOUND_PACKET_BYTES || memcmp(packet, stream_id, STREAM_ID_BYTES) != 0)
 			continue;
 		hmac_sha256((const uint8_t *)speech_key, strlen(speech_key), packet,
-			STREAM_ID_BYTES + RTP_PACKET_BYTES, hash);
+			STREAM_ID_BYTES + NET_RTP_BYTES, hash);
 		// compared without stopping at the first byte that differs, so that
 		// how long it takes says nothing of how nearly right a guess was
 		differing = 0;
 		for (i = 0; i < TAG_BYTES; i++)
-			differing |= (uint8_t)(hash[i] ^ packet[STREAM_ID_BYTES + RTP_PACKET_BYTES + i]);
+			differing |= (uint8_t)(hash[i] ^ packet[STREAM_ID_BYTES + NET_RTP_BYTES + i]);
 		if (differing)
 			continue;
 		sequence = (uint16_t)(packet[STREAM_ID_BYTES + 2] << 8 | packet[STREAM_ID_BYTES + 3]);
@@ -1005,7 +1035,26 @@ static void speech_pass_on(void) {
 			continue;
 		is_speech_begun = 1;
 		speech_sequence = sequence;
-		sendto(speech_out, packet + STREAM_ID_BYTES, RTP_PACKET_BYTES, MSG_NOSIGNAL,
+		// the radio program is handed the whole sound under its label: what
+		// kind it is, speech to transmit, and whose, the radio's own owner's
+		memset(whole, 0, RTP_MICROPHONE_LABEL_BYTES);
+		whole[0] = RTP_MICROPHONE_TO_TRANSMIT;
+		memcpy(whole + RTP_MICROPHONE_KIND_BYTES, callsign,
+			strnlen(callsign, RTP_MICROPHONE_CALLSIGN_BYTES));
+		labelled = whole + RTP_MICROPHONE_LABEL_BYTES;
+		labelled[0] = RTP_VERSION_2;
+		labelled[1] = RTP_AUDIO_PAYLOAD_TYPE;
+		labelled[2] = packet[STREAM_ID_BYTES + 2];
+		labelled[3] = packet[STREAM_ID_BYTES + 3];
+		stamp = (uint32_t)sequence * WHOLE_FRAME_SAMPLES;
+		labelled[4] = (uint8_t)(stamp >> 24);
+		labelled[5] = (uint8_t)(stamp >> 16);
+		labelled[6] = (uint8_t)(stamp >> 8);
+		labelled[7] = (uint8_t)stamp;
+		memcpy(labelled + 8, packet + STREAM_ID_BYTES + 8, RTP_SOURCE_BYTES);
+		telephone_to_whole(packet + STREAM_ID_BYTES + RTP_HEADER_BYTES,
+			labelled + RTP_HEADER_BYTES);
+		sendto(speech_out, whole, sizeof(whole), MSG_NOSIGNAL,
 			(struct sockaddr *)&speech_port, sizeof(speech_port));
 	}
 }

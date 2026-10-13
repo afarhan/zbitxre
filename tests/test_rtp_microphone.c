@@ -4,7 +4,8 @@
 // test_rtp_microphone.c — speech to transmit, taken in on the radio as RTP.
 //
 // It needs no radio. Packets are sent to rtp_microphone.c's port as
-// zbitx_remote sends them, a tone in mu-law, twenty milliseconds of it for
+// zbitx_remote sends them, a tone in 16-bit samples at 48000 a second under
+// its label, twenty milliseconds of it for
 // every twenty that pass in the blocks the test asks to have filled, as
 // the core asks with each block from the microphone. Each block is first
 // filled with a number that stands for the radio's own microphone, so that
@@ -32,8 +33,7 @@
 // 16384 * 5250 * 40 / 50
 #define TONE_OUT 68812800.0
 #define GATHERED_MOST (96000 * 2)
-#define ULAW_BIAS 0x84
-#define ULAW_CLIP 32635
+#define WHOLE_PACKET (RTP_MICROPHONE_LABEL_BYTES + RTP_PACKET_BYTES)
 
 static int checks_failed;
 static int sender;
@@ -53,38 +53,25 @@ static void expect(int ok, const char *what) {
 	checks_failed++;
 }
 
-static uint8_t ulaw_of(int sample) {
-	int sign = 0;
-	int segment = 0;
-	int top;
-
-	if (sample < 0) {
-		sample = -sample;
-		sign = 0x80;
-	}
-	if (sample > ULAW_CLIP)
-		sample = ULAW_CLIP;
-	sample += ULAW_BIAS;
-	top = sample >> 7;
-	while (segment < 7 && top > 1) {
-		top >>= 1;
-		segment++;
-	}
-	return (uint8_t)~(sign | (segment << 4) | ((sample >> (segment + 3)) & 0x0f));
-}
-
-// one packet of the tone, numbered as given
-static void send_packet(double hz, uint16_t number, int payload, int bytes) {
-	uint8_t packet[RTP_PACKET_BYTES + 8];
+// one packet of the tone, numbered as given: the label, of what kind it is
+// and whose, then RTP with its samples
+static void send_packet(double hz, uint16_t number, int kind, int payload, int bytes) {
+	uint8_t packet[RTP_MICROPHONE_LABEL_BYTES + RTP_PACKET_BYTES + 8];
+	uint8_t *rtp = packet + RTP_MICROPHONE_LABEL_BYTES;
+	int sample;
 	int i;
 
 	memset(packet, 0, sizeof(packet));
-	packet[0] = 0x80;
-	packet[1] = (uint8_t)payload;
-	packet[2] = (uint8_t)(number >> 8);
-	packet[3] = (uint8_t)number;
+	packet[0] = (uint8_t)kind;
+	memcpy(packet + RTP_MICROPHONE_KIND_BYTES, "VU2ESE", 6);
+	rtp[0] = 0x80;
+	rtp[1] = (uint8_t)payload;
+	rtp[2] = (uint8_t)(number >> 8);
+	rtp[3] = (uint8_t)number;
 	for (i = 0; i < RTP_AUDIO_FRAME_SAMPLES; i++) {
-		packet[RTP_HEADER_BYTES + i] = ulaw_of((int)(HALF_SCALE * sin(phase)));
+		sample = (int)(HALF_SCALE * sin(phase));
+		rtp[RTP_HEADER_BYTES + 2 * i] = (uint8_t)((uint16_t)sample >> 8);
+		rtp[RTP_HEADER_BYTES + 2 * i + 1] = (uint8_t)sample;
 		phase += 2.0 * M_PI * hz / RTP_AUDIO_RATE_HZ;
 	}
 	sendto(sender, packet, bytes, 0, (struct sockaddr *)&port, sizeof(port));
@@ -102,7 +89,8 @@ static void run(int blocks, double hz, int is_sending) {
 			packets_owed += BLOCK_FRAMES / RATE_OUT_HZ * RTP_AUDIO_RATE_HZ
 				/ RTP_AUDIO_FRAME_SAMPLES;
 			while (packets_owed >= 1) {
-				send_packet(hz, ++sequence, 0, RTP_PACKET_BYTES);
+				send_packet(hz, ++sequence, RTP_MICROPHONE_TO_TRANSMIT, RTP_AUDIO_PAYLOAD_TYPE,
+					WHOLE_PACKET);
 				packets_owed -= 1;
 			}
 		}
@@ -174,7 +162,7 @@ int main(void) {
 	size = tone_size(24000, 43200, 1000);
 	all = rms(24000, 43200) * sqrt(2.0);
 	expect(fabs(size - TONE_OUT) < TONE_OUT * 0.03,
-		"then a 1 kHz tone at half of mu-law's scale comes out at the level MIC 40 gives it");
+		"then a 1 kHz tone at half scale comes out at the level MIC 40 gives it");
 	expect(all * all - size * size < size * size / 1000.0,
 		"and what is not the tone is 30 dB under it or more");
 
@@ -203,21 +191,26 @@ int main(void) {
 	run(47, 3000, 1);
 	size = tone_size(24000, 43200, 3000);
 	expect(size > TONE_OUT * 0.7, "a 3 kHz tone, the top of the speech, comes through");
-	expect(tone_size(24000, 43200, 5000) < size / 100.0,
-		"its copy at 5 kHz, which bringing it up to 96000 leaves, is 40 dB down or more");
+	expect(tone_size(24000, 43200, 45000) < size / 100.0,
+		"its copy at 45 kHz, which bringing it up to 96000 leaves, is 40 dB down or more");
 
 	run(5, 0, 0);
 	rtp_microphone_packets();
-	send_packet(1000, ++sequence, 0, RTP_PACKET_BYTES);
-	send_packet(1000, sequence, 0, RTP_PACKET_BYTES);
-	send_packet(1000, (uint16_t)(sequence - 5), 0, RTP_PACKET_BYTES);
-	send_packet(1000, ++sequence, 8, RTP_PACKET_BYTES);
-	send_packet(1000, ++sequence, 0, RTP_PACKET_BYTES - 1);
-	send_packet(1000, ++sequence, 0, RTP_PACKET_BYTES + 8);
+	send_packet(1000, ++sequence, RTP_MICROPHONE_FROM_A_PROGRAM, RTP_AUDIO_PAYLOAD_TYPE, WHOLE_PACKET);
+	send_packet(1000, sequence, RTP_MICROPHONE_TO_TRANSMIT, RTP_AUDIO_PAYLOAD_TYPE, WHOLE_PACKET);
+	send_packet(1000, (uint16_t)(sequence - 5), RTP_MICROPHONE_TO_TRANSMIT, RTP_AUDIO_PAYLOAD_TYPE,
+		WHOLE_PACKET);
+	send_packet(1000, ++sequence, RTP_MICROPHONE_TO_TRANSMIT, 0, WHOLE_PACKET);
+	send_packet(1000, ++sequence, RTP_MICROPHONE_TO_TRANSMIT, RTP_AUDIO_PAYLOAD_TYPE,
+		WHOLE_PACKET - 1);
+	send_packet(1000, ++sequence, RTP_MICROPHONE_TO_TRANSMIT, RTP_AUDIO_PAYLOAD_TYPE,
+		WHOLE_PACKET + 8);
+	send_packet(1000, ++sequence, RTP_MICROPHONE_VOIP, RTP_AUDIO_PAYLOAD_TYPE, WHOLE_PACKET);
 	rtp_microphone_poll();
 	before = rtp_microphone_packets();
 	expect(before == 1,
-		"a packet repeated, one out of order, one not mu-law and two of the wrong size are dropped");
+		"one from a program is taken; one repeated, one out of order, one of another "
+		"payload, two of the wrong size and one that is not to be transmitted are dropped");
 
 	rtp_microphone_set_gain(80);
 	gathered_count = 0;

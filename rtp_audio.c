@@ -16,14 +16,22 @@
 //
 // WHAT IS SENT
 //
-// RTP, with the payload type 0 of its audio profile (RFC 3551): one channel
-// of G.711 mu-law at 8000 samples a second. A packet is twenty
-// milliseconds, 160 samples in 160 bytes after the 12 bytes of RTP's
-// header, fifty packets a second. It is the commonest form there is for
-// speech on a network, and a player that knows RTP plays it with nothing
-// said of what it is:
+// RTP, carrying one channel of sound as 16-bit samples, the more
+// significant byte first, 48000 of them a second: what RFC 3551 calls L16.
+// A packet is twenty milliseconds, 960 samples in 1920 bytes after the 12
+// bytes of RTP's header, fifty packets a second. RTP has no number of its
+// own for L16 at this rate, so the payload type is 96, the first of those
+// left free for whatever the two ends agree on.
 //
-//     ffplay rtp://239.255.73.88:5004
+// It was first mu-law at 8000 samples a second, RTP's payload type 0, the
+// telephone's sound, which is what goes across the internet to
+// my.sbitx.net. The author changed it on 2026-10-13: other programs on the
+// radio are to have the sound through a sound card that is not one, WSJT-X
+// and FreeDV among them, and a program pulling weak signals out of noise
+// can do nothing with eight bits and four kilohertz. So the radio program
+// sends the sound whole, at half the sound card's own rate, and the
+// gateway, clients/remote/zbitx_remote.c, makes the telephone's sound of
+// it for the internet and hands it on as it is on the radio.
 //
 // It goes to the multicast group 239.255.73.88, port 5004, on the loopback
 // interface, with a time to live of 0, so that it is never put on a wire or
@@ -40,12 +48,9 @@
 // Whatever the speaker would play is sent, the CW sidetone and a monitor of
 // the transmission among it.
 //
-// The speaker's samples come 96000 a second. They are brought down to 8000
-// by a low-pass filter, a windowed sinc of 192 taps that is 3.6 kHz wide,
-// worked out once for every twelve samples in; without the filter anything
-// above 4 kHz would come out folded down among the speech. With half as
-// many taps the filter fell away too slowly, and 3 kHz, the top of the
-// speech, came out much reduced. They are then
+// The speaker's samples come 96000 a second, and every other one is kept,
+// after a low-pass filter of 48 taps, a windowed sinc cut at 20 kHz, so
+// that nothing above 24 kHz comes out folded down. They are then
 // made eight times larger, STREAM_GAIN, and held to 16 bits. The sound card
 // is given samples far below its full scale, its own amplifier making up
 // the rest: on the author's sbitx, with the AGC at MED on a quiet 40 m
@@ -61,11 +66,11 @@
 //
 // rtp_audio_poll() is the thread's that owns the controls: the radio's loop
 // calls it each time round, every two milliseconds or so. It takes whole
-// packets' worth out of the ring, makes them mu-law and sends them. If the
+// packets' worth out of the ring and sends them. If the
 // loop is held up, the packets go late and together; RTP's timestamp says
 // when each was meant, and it is the listener's business to play them
-// evenly. If it is held up for longer than the ring holds, half a second,
-// the oldest sound is let go.
+// evenly. If it is held up for longer than the ring holds,
+// the oldest sound is let go. (The ring holds a third of a second.)
 //
 // The ring has one writer and one reader and its two positions are each
 // written by one of them only, so it needs no lock.
@@ -85,21 +90,17 @@
 
 #define RATE_IN_HZ 96000
 #define DECIMATE (RATE_IN_HZ / RTP_AUDIO_RATE_HZ)
-#define TAPS 192
-#define CUTOFF_HZ 3600.0
+#define TAPS 48
+#define CUTOFF_HZ 20000.0
 #define HAMMING_A 0.54
 #define HAMMING_B 0.46
-#define RING_SAMPLES 4096
+#define RING_SAMPLES 16384
 #define STREAM_GAIN 8.0
 #define INT32_TO_INT16 65536.0
 #define INT16_MOST 32767
 #define PERCENT 100
 #define LOOPBACK "127.0.0.1"
 #define RTP_VERSION_2 0x80
-#define RTP_PAYLOAD_PCMU 0
-#define ULAW_BIAS 0x84
-#define ULAW_CLIP 32635
-#define ULAW_SEGMENTS 8
 #define NOT_OPEN (-1)
 
 static float taps[TAPS];
@@ -118,29 +119,6 @@ static struct sockaddr_in group;
 static uint16_t sequence;
 static uint32_t timestamp;
 static uint32_t source;
-
-// a sample as G.711 writes it, mu-law: the sign, three bits for which of
-// eight segments its size falls in, and four for where in the segment
-static uint8_t ulaw_of(int16_t sample) {
-	int size = sample;
-	int sign = 0;
-	int segment = 0;
-	int top;
-
-	if (size < 0) {
-		size = -size;
-		sign = 0x80;
-	}
-	if (size > ULAW_CLIP)
-		size = ULAW_CLIP;
-	size += ULAW_BIAS;
-	top = size >> 7;
-	while (segment < ULAW_SEGMENTS - 1 && top > 1) {
-		top >>= 1;
-		segment++;
-	}
-	return (uint8_t)~(sign | (segment << 4) | ((size >> (segment + 3)) & 0x0f));
-}
 
 // the audio thread's: a block made for the speaker, 96000 samples a second
 void rtp_audio_take(const int32_t *speaker, int frames) {
@@ -245,13 +223,14 @@ void rtp_audio_poll(void) {
 	uint8_t packet[RTP_PACKET_BYTES];
 	unsigned int taken = atomic_load(&ring_taken);
 	unsigned int put = atomic_load(&ring_put);
+	int16_t sample;
 	int i;
 
 	if (put - taken > RING_SAMPLES)
 		taken = put - RTP_AUDIO_FRAME_SAMPLES;
 	while (put - taken >= RTP_AUDIO_FRAME_SAMPLES) {
 		packet[0] = RTP_VERSION_2;
-		packet[1] = RTP_PAYLOAD_PCMU;
+		packet[1] = RTP_AUDIO_PAYLOAD_TYPE;
 		packet[2] = (uint8_t)(sequence >> 8);
 		packet[3] = (uint8_t)sequence;
 		packet[4] = (uint8_t)(timestamp >> 24);
@@ -262,8 +241,11 @@ void rtp_audio_poll(void) {
 		packet[9] = (uint8_t)(source >> 16);
 		packet[10] = (uint8_t)(source >> 8);
 		packet[11] = (uint8_t)source;
-		for (i = 0; i < RTP_AUDIO_FRAME_SAMPLES; i++)
-			packet[RTP_HEADER_BYTES + i] = ulaw_of(ring[(taken + i) % RING_SAMPLES]);
+		for (i = 0; i < RTP_AUDIO_FRAME_SAMPLES; i++) {
+			sample = ring[(taken + i) % RING_SAMPLES];
+			packet[RTP_HEADER_BYTES + 2 * i] = (uint8_t)((uint16_t)sample >> 8);
+			packet[RTP_HEADER_BYTES + 2 * i + 1] = (uint8_t)sample;
+		}
 		taken += RTP_AUDIO_FRAME_SAMPLES;
 		sequence++;
 		timestamp += RTP_AUDIO_FRAME_SAMPLES;

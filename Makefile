@@ -58,7 +58,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
 	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
-	$(BUILD)/test_rtp_microphone
+	$(BUILD)/test_rtp_microphone $(BUILD)/test_telephone
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -100,6 +100,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_sha256
 	$(BUILD)/test_rtp_audio
 	$(BUILD)/test_rtp_microphone
+	$(BUILD)/test_telephone
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -261,10 +262,15 @@ $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
 # clients/remote/zbitx_remote.c says why. It needs nothing but the C library
 remote: $(REMOTE)
 
-REMOTE_PARTS = clients/remote/sha256.c
+REMOTE_PARTS = clients/remote/sha256.c clients/remote/telephone.c
 
-$(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/sha256.h
-	$(CC) $(CFLAGS) -Iclients/remote -o $@ clients/remote/zbitx_remote.c $(REMOTE_PARTS)
+$(REMOTE): clients/remote/zbitx_remote.c $(REMOTE_PARTS) clients/remote/sha256.h \
+		clients/remote/telephone.h rtp_audio.h rtp_microphone.h
+	$(CC) $(CFLAGS) -Iclients/remote -o $@ clients/remote/zbitx_remote.c $(REMOTE_PARTS) -lm
+
+$(BUILD)/test_telephone: tests/test_telephone.c clients/remote/telephone.c \
+		clients/remote/telephone.h | $(BUILD)
+	$(CC) $(CFLAGS) -Iclients/remote -o $@ tests/test_telephone.c clients/remote/telephone.c -lm
 
 $(BUILD)/test_rtp_audio: tests/test_rtp_audio.c rtp_audio.c rtp_audio.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_rtp_audio.c rtp_audio.c -lm

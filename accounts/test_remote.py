@@ -198,10 +198,25 @@ class Client:
         self.socket.close()
 
 
+# the gateway's filter runs on from one packet into the next, so the first
+# of a packet's 160 bytes have some of the packet before in them; the tests
+# look at the rest
+SETTLING = 16
+
+
+def linear_of(ulaw):
+    """the 16-bit sample a byte of mu-law stands for"""
+    value = ~ulaw & 0xff
+    size = (((value & 0x0f) << 3) + 0x84) << ((value & 0x70) >> 4)
+    return 0x84 - size if value & 0x80 else size - 0x84
+
+
 class Speaker:
     """in place of the radio program's sound: RTP packets to the group on
-    loopback, as rtp_audio.c sends them, each with sound that says which
-    packet it is"""
+    loopback, as rtp_audio.c sends them, 16-bit samples at 48000 a second,
+    each packet a steady level that says which packet it is. The gateway
+    makes the telephone's sound of it, and a steady level comes out one
+    byte of mu-law over and over"""
 
     def __init__(self):
         self.out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -211,13 +226,15 @@ class Speaker:
         self.sequence = 1000
 
     def play(self):
-        """one packet; returns its 160 bytes of sound"""
+        """one packet; returns what a listener is to hear of it, the bytes
+        of mu-law after the first few"""
         self.sequence += 1
-        sound = bytes([self.sequence % 251]) * 160
-        header = struct.pack(">BBHII", 0x80, 0, self.sequence & 0xffff,
-                             self.sequence * 160, 0x5b17)
-        self.out.sendto(header + sound, ("239.255.73.88", 5004))
-        return sound
+        said = self.sequence % 100 + 1
+        header = struct.pack(">BBHII", 0x80, 96, self.sequence & 0xffff,
+                             self.sequence * 960, 0x5b17)
+        self.out.sendto(header + struct.pack(">h", linear_of(said)) * 960,
+                        ("239.255.73.88", 5004))
+        return bytes([said]) * (160 - SETTLING)
 
 
 class Browser:
@@ -261,7 +278,7 @@ class Browser:
                 length = struct.unpack(">H", self.take(2))[0]
             body = self.take(length)
             if head[0] & 0x0f != 1:
-                return body
+                return body[SETTLING:]
             if with_the_count or not body.startswith(b"listening "):
                 return body.decode()
 
@@ -843,12 +860,19 @@ class RemoteTest(unittest.TestCase):
         for sound in said:
             page.speak(sound)
         self.microphone.settimeout(5)
-        got = [self.microphone.recv(2000) for _ in said]
+        got = [self.microphone.recv(4000) for _ in said]
         for packet, sound in zip(got, said):
-            self.assertEqual(len(packet), 172)
-            self.assertEqual(packet[:2], bytes([0x80, 0]), "not RTP of mu-law")
-            self.assertEqual(packet[12:], sound)
-        numbers = [struct.unpack(">H", packet[2:4])[0] for packet in got]
+            # under a label of what it is and whose, the whole sound: RTP of
+            # 960 16-bit samples, the level the page sent once the filter
+            # has taken it up
+            self.assertEqual(len(packet), 11 + 12 + 1920)
+            self.assertEqual(packet[0], 1, "not labelled as speech to transmit")
+            self.assertEqual(packet[1:11].rstrip(b"\0"), b"VU2ESE")
+            self.assertEqual(packet[11:13], bytes([0x80, 96]), "not RTP of the whole sound")
+            level = linear_of(sound[0])
+            for sample in struct.unpack(">480h", packet[-960:]):
+                self.assertLess(abs(sample - level), 3)
+        numbers = [struct.unpack(">H", packet[13:15])[0] for packet in got]
         self.assertEqual([(number - numbers[0]) % 65536 for number in numbers], [0, 1, 2])
 
         # what is not twenty milliseconds of mu-law is not sent on
@@ -864,7 +888,8 @@ class RemoteTest(unittest.TestCase):
         wrong = hmac.new(stream.key, body, hashlib.sha256).digest()[:8]
         self.loop.call_soon_threadsafe(
             self.remote.sound_port.sendto, body + wrong, stream.address)
-        again = stream_id + got[1]
+        again = stream_id + struct.pack(">BBHII", 0x80, 0, numbers[1], 320,
+                                        remote.SPEECH_SOURCE) + said[1]
         self.loop.call_soon_threadsafe(
             self.remote.sound_port.sendto,
             again + hmac.new(stream.speech_key, again, hashlib.sha256).digest()[:8],
