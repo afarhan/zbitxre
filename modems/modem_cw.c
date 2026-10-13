@@ -232,6 +232,16 @@
 //             uneven. The radio sends the character at WPM, evenly made,
 //             and keeps the spaces as they were keyed; cw_text.c says how.
 //             ESC stops it, as it stops a macro.
+//   CW_TEXT   an action with no choices: text typed on a client's keyboard,
+//             "CW_TEXT cq de vu2ese", a character at a time or more, sent
+//             after whatever typed text is already waiting. "_" is a
+//             space too.
+//
+// A macro gives way to the operator. A touch of the paddle while a macro is
+// being sent stops it and drops what waited, as zbitxv2 did; so do a key
+// struck on a client's keyboard, CW_TEXT, and a character keyed on a
+// client's pads, CW_KEY, which the author asked for: the macro is dropped
+// and what was typed or keyed is sent in its place.
 //
 // As in zbitxv2, the passband is centred on the pitch: from PITCH - BW_CW/2
 // to PITCH + BW_CW/2. Narrowing it closes in on the signal being heard, and
@@ -315,6 +325,8 @@ static atomic_int hang_samples;
 static atomic_int is_wanting_tx;
 static atomic_int is_ring_a_paddle;
 static atomic_int is_text_to_stop;
+// a macro has been put to be sent since the operator last sent anything himself
+static atomic_int is_macro_waiting;
 
 static int32_t sidetone_output[MAX_BINS/2];
 static float shape_delayed[RF_DELAY_SAMPLES_MAX];
@@ -1095,6 +1107,41 @@ static int apply_macro(struct control *c, const char *value, char *why, int room
 	}
 	atomic_store(&is_text_to_stop, 0);
 	cw_text_put(text);
+	atomic_store(&is_macro_waiting, 1);
+	return 0;
+}
+
+// a macro that is being sent, or waiting to be, gives way to what the
+// operator sends himself, typed or keyed on a client: it is dropped, with
+// all that waited, as a touch of the paddle drops it. With no macro there
+// is nothing to drop, and what is typed follows what was typed before
+static void drop_a_macro(void) {
+	if (!atomic_exchange(&is_macro_waiting, 0) || !cw_text_is_busy())
+		return;
+	cw_text_begin_afresh();
+}
+
+// text typed on a client's keyboard is sent, each character as it comes or
+// several together: "CW_TEXT cq de vu2ese". A lone space would be lost on
+// its way as the end of a line is, so "_" stands for one as well. Only in
+// CW, as the macros are
+static int apply_cw_text(struct control *c, const char *value, char *why, int room) {
+	const char *mode = control_get("MODE");
+	char text[CONTROL_VALUE_MAX];
+	int i;
+
+	(void)c;
+	if (mode == NULL || (strcmp(mode, "CW") && strcmp(mode, "CWR"))) {
+		snprintf(why, room, "text is sent in CW");
+		return -1;
+	}
+	snprintf(text, sizeof(text), "%s", value);
+	for (i = 0; text[i] != 0; i++)
+		if (text[i] == '_')
+			text[i] = ' ';
+	atomic_store(&is_text_to_stop, 0);
+	drop_a_macro();
+	cw_text_put(text);
 	return 0;
 }
 
@@ -1127,6 +1174,7 @@ static int apply_cw_key(struct control *c, const char *value, char *why, int roo
 	code[0] = 0;
 	sscanf(value, "%s %d", code, &gap_ms);
 	atomic_store(&is_text_to_stop, 0);
+	drop_a_macro();
 	if (!cw_text_put_code(code, gap_ms)) {
 		snprintf(why, room, "one to twelve dots and dashes, and the gap before them in ms");
 		return -1;
@@ -1209,6 +1257,11 @@ static struct control cw_do = {
 	.choices = "ESC", .apply = apply_cw_do,
 };
 
+static struct control cw_text_control = {
+	.group = "CW", .name = "CW_TEXT", .kind = CONTROL_ACTION,
+	.choices = "", .apply = apply_cw_text,
+};
+
 static struct control cw_key = {
 	.group = "CW", .name = "CW_KEY", .kind = CONTROL_ACTION,
 	.choices = "", .apply = apply_cw_key,
@@ -1241,6 +1294,7 @@ static void cw_start(void) {
 	control_register(&cw_delay);
 	control_register(&cw_do);
 	control_register(&cw_key);
+	control_register(&cw_text_control);
 	apply_cw_delay(&cw_delay, cw_delay.value, NULL, 0);
 	atomic_store(&pitch_hz, atoi(pitch.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));

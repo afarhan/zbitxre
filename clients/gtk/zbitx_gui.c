@@ -254,6 +254,12 @@
 // and Shift-Tab move the selection, the up and down keys move what is
 // selected, and Escape goes back to the frequency.
 //
+// In CW the keyboard also sends: every letter, figure and sign struck is
+// sent to the radio as it is struck, CW_TEXT, as zbitxv2 sent what was
+// typed, and the space bar and Enter send a space. A key struck while a
+// macro is being sent stops the macro, which is the radio's doing, and
+// Escape stops whatever is being sent.
+//
 // THE TUNING WHEEL
 //
 // A tap on the frequency brings up a box with a wheel in it, for tuning by
@@ -597,6 +603,9 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define MESSAGES_GROUP "FT8"
 #define FT8_DO_CONTROL "FT8_DO"
 #define CW_DO_CONTROL "CW_DO"
+#define CW_TEXT_CONTROL "CW_TEXT"
+// a space on its own would be lost on the way; the radio takes this for one
+#define CW_TEXT_SPACE "_"
 #define CW_ESC_ROW 3
 #define TX_PITCH_CONTROL "TX_PITCH"
 #define LOG_ROW 0
@@ -2556,6 +2565,25 @@ static gboolean on_key_while_typing(const GdkEventKey *event) {
 	return TRUE;
 }
 
+// in CW a key struck is sent: the radio is told the character
+static gboolean on_key_in_cw(const GdkEventKey *event) {
+	char text[2] = { 0, 0 };
+	guint32 letter = gdk_keyval_to_unicode(event->keyval);
+
+	if (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK))
+		return FALSE;
+	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter
+			|| event->keyval == GDK_KEY_space) {
+		send_line(CW_TEXT_CONTROL, CW_TEXT_SPACE);
+		return TRUE;
+	}
+	if (letter <= ' ' || letter >= 127 || letter == '_')
+		return FALSE;
+	text[0] = (char)letter;
+	send_line(CW_TEXT_CONTROL, text);
+	return TRUE;
+}
+
 static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	(void)widget;
 	(void)unused;
@@ -2586,6 +2614,8 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 		show_values();
 		return TRUE;
 	}
+	if (!strcmp(mode_group(), MACRO_GROUP))
+		return on_key_in_cw(event);
 	return FALSE;
 }
 

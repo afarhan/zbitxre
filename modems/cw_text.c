@@ -43,6 +43,17 @@
 // in figures, the dots and dashes, and a mark that it ends, put there
 // whole or not at all.
 //
+// BEGINNING AFRESH
+//
+// What is typed takes a macro's place: a key struck while a macro is being
+// sent stops the macro and is sent itself, as a touch of the paddle stops
+// it. cw_text_begin_afresh() is for that. It marks where the ring's
+// contents end at that moment, and the audio thread, at its next sample,
+// lets go of what it was sending and of all that waited up to the mark;
+// what is put after the mark is sent. It is not done by stopping the text
+// and then putting the new: the stopping is the audio thread's to do, a
+// sample later, and it would drop the new text with the old.
+//
 // WHO CALLS
 //
 // cw_text_put() is for the thread that owns the controls: it puts
@@ -146,6 +157,8 @@ static atomic_uint ring_put;
 static atomic_uint ring_taken;
 static atomic_int dot_samples = SAMPLES_A_MINUTE_PER_WORD / 20;
 static atomic_int is_busy;
+static atomic_uint afresh_from;
+static atomic_int is_afresh_wanted;
 
 static const char *symbol_next;
 static int mark_samples_left;
@@ -172,6 +185,7 @@ void cw_text_reset(void) {
 	space_samples_left = 0;
 	gap_samples = 0;
 	up_samples = UP_FOR_LONG;
+	atomic_store(&is_afresh_wanted, 0);
 	atomic_store(&is_busy, 0);
 }
 
@@ -199,6 +213,13 @@ int cw_text_put(const char *text) {
 	if (count > 0)
 		atomic_store(&is_busy, 1);
 	return count;
+}
+
+// what is being sent and what is waiting are dropped, and what is put after
+// this is sent; for the thread that owns the controls
+void cw_text_begin_afresh(void) {
+	atomic_store(&afresh_from, atomic_load(&ring_put));
+	atomic_store(&is_afresh_wanted, 1);
 }
 
 // a character as it was keyed elsewhere: its dots and dashes, "-.-", and
@@ -324,7 +345,16 @@ static int text_step(void) {
 }
 
 int cw_text_is_key_down(void) {
-	int is_down = text_step();
+	int is_down;
+
+	if (atomic_exchange(&is_afresh_wanted, 0)) {
+		atomic_store(&ring_taken, atomic_load(&afresh_from));
+		symbol_next = NULL;
+		mark_samples_left = 0;
+		space_samples_left = 0;
+		gap_samples = 0;
+	}
+	is_down = text_step();
 
 	// for how long the key has been up, for a keyed character's gap
 	if (is_down)

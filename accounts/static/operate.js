@@ -503,6 +503,7 @@
     var labels = ["LOG", "SET", "TERM", ""];
     if (group === "CW") { labels[2] = "KEY"; labels[3] = "ESC"; }
     if (group !== "CW" && keyerBox.className !== "gone") { showKeyer(false); }
+    if (group !== "CW" && typingBar.className !== "gone") { showTyping(false); }
     tellKeyer();
     if (group === "FT8") { labels[2] = "CQ"; labels[3] = "HALT"; }
     column.forEach(function (t, n) {
@@ -706,11 +707,111 @@
     window.addEventListener("mouseup", function () { held(false); });
     box.addEventListener("contextmenu", function (e) { e.preventDefault(); });
   }
+  /* the keyboard, in CW: what is typed is sent, a character as it is
+     struck, as the earlier program sent what was typed. The radio is told
+     CW_TEXT, and a key struck while a macro is being sent stops the macro
+     and is sent in its place, which is the radio's doing, as a touch of
+     its paddle stops one.
+
+     On a computer the keys are simply struck, with nothing to open. A
+     telephone has no keys until a box to type in is touched: ABC, beside
+     the pads, brings up a bar along the top of the page with such a box,
+     where the telephone's own keyboard, which takes the lower half of the
+     screen, does not cover it. What the box holds is only what has been
+     typed, to be seen: rubbing a letter out of it does not call it back
+     from the radio. Enter sends a space, and ESC stops what is being sent.
+
+     The radio's sound is left on while typing: there is no sidetone here
+     for what is typed, and the radio's own, late as it is, is how it is
+     heard going out. */
+
+  var typedBefore = "";
+
+  function typeCw(text) {
+    var sendable = text.replace(/[\r\n\t ]/g, "_").replace(/[^\x21-\x7e]/g, "");
+    if (sendable && modeGroup() === "CW") { send("CW_TEXT " + sendable); }
+  }
+
+  var typingBar = make("div", "gone", null, document.body);
+  typingBar.id = "typing";
+  var typingBox = document.createElement("input");
+  typingBox.type = "text";
+  typingBox.autocomplete = "off";
+  typingBox.autocapitalize = "characters";
+  typingBox.spellcheck = false;
+  typingBox.setAttribute("autocorrect", "off");
+  typingBox.setAttribute("enterkeyhint", "send");
+  typingBox.placeholder = "type to send";
+  typingBar.appendChild(typingBox);
+  make("button", "", "ESC", typingBar).addEventListener("click", function () {
+    send("CW_DO ESC");
+    typingBox.value = "";
+    typedBefore = "";
+    typingBox.focus();
+  });
+  make("button", "", "\u2715", typingBar).addEventListener("click", function () {
+    showTyping(false);
+  });
+
+  function showTyping(on) {
+    typingBar.className = on ? "" : "gone";
+    typingBox.value = "";
+    typedBefore = "";
+    if (on) { typingBox.focus(); } else { typingBox.blur(); }
+  }
+
+  // a telephone's keyboard gives a page no keys, only what the box has
+  // come to hold; what it holds beyond what it held is what was typed
+  typingBox.addEventListener("input", function () {
+    var now = typingBox.value;
+    if (now.length > typedBefore.length && now.indexOf(typedBefore) === 0) {
+      typeCw(now.slice(typedBefore.length));
+    }
+    // the box is kept short, the newest at its end
+    if (now.length > 60) {
+      now = now.slice(-30);
+      typingBox.value = now;
+    }
+    typedBefore = now;
+  });
+  typingBox.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      typingBox.value += " ";
+      typedBefore = typingBox.value;
+      typeCw(" ");
+    }
+    e.stopPropagation();
+  });
+
+  // a computer's keys, struck with nothing open to type in
+  document.addEventListener("keydown", function (e) {
+    var into = e.target && e.target.tagName;
+    if (modeGroup() !== "CW" || !isStarted || e.ctrlKey || e.altKey || e.metaKey
+        || into === "INPUT" || into === "TEXTAREA" || veil.className === "shown"
+        || panel.className === "shown") {
+      return;
+    }
+    if (e.key === "Escape") {
+      send("CW_DO ESC");
+    } else if (e.key === "Enter" || e.key === " ") {
+      typeCw(" ");
+    } else if (e.key.length === 1) {
+      typeCw(e.key);
+    } else {
+      return;
+    }
+    e.preventDefault();
+  });
+
   // the two pads lie side by side with nothing between, as a paddle's two
   // sides do, which the author asked for; ESC and the cross are to their left
   var keyerSide = make("div", "side", null, keyerBox);
   make("button", "", "ESC", keyerSide).addEventListener("click", function () {
     send("CW_DO ESC");
+  });
+  make("button", "", "ABC", keyerSide).addEventListener("click", function () {
+    showTyping(typingBar.className === "gone");
   });
   make("button", "", "\u2715", keyerSide).addEventListener("click", function () {
     showKeyer(false);

@@ -169,6 +169,27 @@ int main(void) {
 	expect(!cw_text_put_code("--", 0) && cw_text_put("ee") == 2,
 		"a keyed character there is not room for whole is not taken in part");
 
+	// what is typed takes a macro's place
+	cw_text_reset();
+	cw_text_put("ttttt");
+	for (i = 0; i < 5 * DOT_AT_20_WPM; i++)
+		cw_text_is_key_down();
+	cw_text_begin_afresh();
+	cw_text_put("e");
+	key_it_all();
+	marks_as_text(sent);
+	expect(strcmp(sent, ".") == 0,
+		"begun afresh in the middle of a text, what is put after is sent and nothing of what waited");
+
+	cw_text_reset();
+	cw_text_put("t");
+	cw_text_begin_afresh();
+	cw_text_put("a");
+	cw_text_put("n");
+	key_it_all();
+	marks_as_text(sent);
+	expect(strcmp(sent, ".- -.") == 0, "and what is put after that follows it");
+
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);
 		return EXIT_FAILURE;

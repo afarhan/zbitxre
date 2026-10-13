@@ -92,6 +92,21 @@ spacing is the operator's and the making is the radio's. A character that comes
 too late for that is sent as soon as it comes. `CW_DO ESC` drops what is
 waiting, as it does a macro's text.
 
+**CW typed on a client.** `CW_TEXT` is another: what is typed on a client's
+keyboard, a character as it is struck or several together, sent in CW after
+whatever typed text is already waiting:
+
+    CW_TEXT c
+    CW_TEXT de_vu2ese
+
+`_` is a space as well as a space is, since a space alone at a line's end is
+lost on the way. A character with no code in Morse is passed over.
+
+**A macro gives way to the operator.** While a macro is being sent or waiting
+to be, `CW_TEXT` or `CW_KEY` drops it, and all that waited with it, and what
+was typed or keyed is sent in its place; as a touch of the radio's own paddle
+drops it.
+
 ## What the radio sends besides controls
 
 **The spectrum.** After `spectrum on`, ten times a second, until `spectrum off`:
