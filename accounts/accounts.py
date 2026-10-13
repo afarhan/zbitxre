@@ -680,15 +680,17 @@ MAP_SCRIPT = """
         if (row.id <= heardAfter) { continue; }
         heardAfter = row.id;
         line = document.createElement("div");
-        line.textContent = row.sent.slice(0, 2) + ":" + row.sent.slice(2, 4) + ":" + row.sent.slice(4)
+        // each line has the frequency the radio was on when it copied it:
+        // the owner may move the radio while it is being watched
+        line.textContent = ("  " + (row.hz / 1e6).toFixed(3)).slice(-7) + "  "
+          + row.sent.slice(0, 2) + ":" + row.sent.slice(2, 4) + ":" + row.sent.slice(4)
           + ("    " + (row.strength === null ? "TX" : row.strength)).slice(-4)
           + ("     " + row.pitch).slice(-5) + "  " + row.text;
         line.className = row.strength === null ? "sent" : row.text.indexOf("CQ ") === 0 ? "cq" : "";
         heardList.appendChild(line);
       }
       while (heardList.childNodes.length > 300) { heardList.removeChild(heardList.firstChild); }
-      heardTitle.textContent = "FT8 copied by " + chosen.callsign + " on "
-        + (rows[rows.length - 1].hz / 1e6).toFixed(3) + " MHz";
+      heardTitle.textContent = "FT8 copied by " + chosen.callsign;
       // the list is a strip down the right that can be put away to a tab
       // at the edge and brought back; on a narrow screen, a telephone's,
       // it begins put away, since open it leaves little of the globe
@@ -874,7 +876,7 @@ body.chosen #chosen { display: flex; }
 #globe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none;
     cursor: grab; }
 #heard { display: none; position: absolute; right: 0; top: 2.6em; bottom: 0;
-    width: 25em; max-width: 82vw; background: rgba(16,24,32,0.93);
+    width: 28em; max-width: 88vw; background: rgba(16,24,32,0.93);
     border-left: 1px solid #405060; z-index: 2; flex-direction: column; overflow: hidden; }
 #heard.shown { display: flex; }
 #heard-head { display: flex; align-items: center; border-bottom: 1px solid #405060; }
