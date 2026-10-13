@@ -53,20 +53,27 @@
 //
 // TUNING
 //
-// The radio knows only FREQ. STEP, RIT, SPLIT and VFO are this page's own,
-// as they are the window's, and work as the window's do:
+// The radio knows only FREQ. STEP, VFO and OFFSET are this page's own, as
+// they are the window's, and work as the window's do. VFO and OFFSET are
+// beside the frequency on the top row, being what its box shows: the
+// author made one control, OFFSET, of what were two switches, RIT and
+// SPLIT, which are never wanted together, a split being a RIT of very
+// wide range; and VFO has the place that left.
 //
-//   VFO     A or B, each with a dial of its own, in the list of controls.
-//           Choosing the other keeps the dial of the one left and goes to
-//           the other's; one not yet used opens where the other is. The
-//           radio is told both dials, VFO_A and VFO_B, to keep, and the
-//           one it has kept for the VFO in waiting is taken up.
-//   RIT     while it is on, tuning moves the receiver's offset, up to 25
-//           kHz either way, and the dial stays; the receiver listens at the
-//           dial and the offset, and the transmitter is on the dial.
-//   SPLIT   while it is on, the transmitter is on the other VFO's dial.
-//           Turning it on goes to VFO A, so that it receives on A and
-//           sends on B. To set where it sends: VFO B, tune, VFO A.
+//   VFO     A or B, each with a dial of its own. Choosing the other keeps
+//           the dial of the one left and goes to the other's; one not yet
+//           used opens where the other is. The radio is told both dials,
+//           VFO_A and VFO_B, to keep, and the one it has kept for the VFO
+//           in waiting is taken up.
+//   OFFSET  how far the receiver is from the transmitter:
+//           NORM   both are on the dial.
+//           RIT    tuning moves the receiver's offset, up to 25 kHz either
+//                  way, and the dial stays; the receiver listens at the
+//                  dial and the offset, and the transmitter is on the
+//                  dial. Leaving RIT puts the offset back to nothing.
+//           SPLIT  the transmitter is on the other VFO's dial. Choosing it
+//                  goes to VFO A, so that it receives on A and sends on B.
+//                  To set where it sends: VFO B, tune, VFO A.
 //
 // The frequency's two lines are the window's: the large one is where the
 // radio is working and the small one what is in waiting, the other VFO as
@@ -121,7 +128,7 @@
   var values = {};        // every control's value, as the radio tells them
   var schema = {};        // name -> { group, kind, min, max, step, choices }
   var order = [];         // the controls' names in the radio's order
-  var own = { STEP: stored("step", "1K"), RIT: "OFF", SPLIT: "OFF", VFO: "A",
+  var own = { STEP: stored("step", "1K"), OFFSET: "NORM", VFO: "A",
     VOL: stored("vol", "60") };
   var dialHz = 0, ritHz = 0;
   var vfoHz = { A: 0, B: 0 };  // each VFO's dial; the one in use is dialHz
@@ -172,19 +179,23 @@
   frequency.id = "frequency";
   var waiting = make("div", "waiting", "", frequency);
   var figures = make("div", "figures", "", frequency);
-  tile("RIT", 5, 1, "RIT", function () {
-    own.RIT = own.RIT === "ON" ? "OFF" : "ON";
-    if (own.RIT === "OFF") { ritHz = 0; }
-    sendFrequency();
+  tile("VFO", 5, 1, "VFO", function () {
+    chooseVfo(vfoInWaiting());
     show();
   });
-  tile("SPLIT", 6, 1, "SPLIT", function () {
-    own.SPLIT = own.SPLIT === "ON" ? "OFF" : "ON";
-    // it receives on A and sends on B
-    if (own.SPLIT === "ON") { chooseVfo("A"); }
-    if (!vfoHz[vfoInWaiting()]) { vfoHz[vfoInWaiting()] = dialHz; }
-    retune();
-    show();
+  tile("OFFSET", 6, 1, "OFFSET", function () {
+    choose("OFFSET", ["NORM", "RIT", "SPLIT"], own.OFFSET, function (choice) {
+      own.OFFSET = choice;
+      // leaving RIT puts the receiver back on the dial
+      if (!isRit()) { ritHz = 0; }
+      // a split receives on A and sends on B
+      if (isSplit()) {
+        chooseVfo("A");
+        if (!vfoHz[vfoInWaiting()]) { vfoHz[vfoInWaiting()] = dialHz; }
+      }
+      retune();
+      show();
+    });
   });
   tile("DRIVE", 7, 1, "DRIVE", function () { adjust("DRIVE"); });
   tile("AGC", 8, 1, "AGC", function () { adjust("AGC"); });
@@ -384,14 +395,16 @@
   /* tuning */
 
   function vfoInWaiting() { return own.VFO === "A" ? "B" : "A"; }
+  function isRit() { return own.OFFSET === "RIT"; }
+  function isSplit() { return own.OFFSET === "SPLIT"; }
 
   // where the receiver listens: the dial, moved by the offset while RIT is on
-  function receiverHz() { return dialHz + (own.RIT === "ON" ? ritHz : 0); }
+  function receiverHz() { return dialHz + (isRit() ? ritHz : 0); }
 
   // where the transmitter is to be: the dial, or while SPLIT is on the
   // other VFO's dial, if that VFO has been used
   function transmitterHz() {
-    if (own.SPLIT !== "ON" || !vfoHz[vfoInWaiting()]) { return dialHz; }
+    if (!isSplit() || !vfoHz[vfoInWaiting()]) { return dialHz; }
     return vfoHz[vfoInWaiting()];
   }
 
@@ -413,7 +426,7 @@
   // than it receives on, what it says is where it sends, and is let pass.
   function takeRadioFrequency(hz) {
     if (isSending() && transmitterHz() !== receiverHz()) { return; }
-    dialHz = hz - (own.RIT === "ON" ? ritHz : 0);
+    dialHz = hz - (isRit() ? ritHz : 0);
     // a VFO never used is put here once, and does not follow after
     if (!vfoHz[vfoInWaiting()]) { vfoHz[vfoInWaiting()] = dialHz; }
   }
@@ -446,7 +459,7 @@
   function tune(steps) {
     var stepHz = STEPS[own.STEP] || 1000;
     if (!steps || !dialHz) { return; }
-    if (own.RIT === "ON") {
+    if (isRit()) {
       ritHz = Math.max(-RIT_MOST_HZ, Math.min(RIT_MOST_HZ, ritHz + steps * stepHz));
     } else {
       dialHz = Math.round(dialHz / stepHz) * stepHz + steps * stepHz;
@@ -473,10 +486,9 @@
   function show() {
     var group = modeGroup(), macros = schema.MACRO ? schema.MACRO.choices : [], i;
     tiles.STEP.value.textContent = own.STEP;
-    tiles.RIT.value.textContent = own.RIT;
-    tiles.RIT.box.className = "tile" + (own.RIT === "ON" ? " on" : "");
-    tiles.SPLIT.value.textContent = own.SPLIT;
-    tiles.SPLIT.box.className = "tile" + (own.SPLIT === "ON" ? " on" : "");
+    tiles.VFO.value.textContent = own.VFO;
+    tiles.OFFSET.value.textContent = own.OFFSET;
+    tiles.OFFSET.box.className = "tile" + (own.OFFSET === "NORM" ? "" : " on");
     tiles.DRIVE.value.textContent = values.DRIVE || "";
     tiles.AGC.value.textContent = values.AGC || "";
     tiles.IF.value.textContent = values.IF || "";
@@ -841,15 +853,15 @@
     rows = [];
     // The order is the author's, for CW: what is touched often is at the
     // top, BW, the speed and the pitch, and what is set once and left is
-    // under it. The rest follow as the radio lists them, and VFO, this
-    // page's own, is last. TX is not in the list: the voice modes and
+    // under it. The rest follow as the radio lists them. TX is not in
+    // the list: the voice modes and
     // 2TONE have their TX button, and CW and FT8 key themselves.
     var listed = ["BW", "WPM", "PITCH", "SIDETONE", "CW_DELAY", "CW_INPUT"].concat(
-      order.filter(function (name) { return name !== "VFO" && name !== "TX"; }), ["VFO"]);
+      order.filter(function (name) { return name !== "TX"; }));
     listed.forEach(function (name) {
       var control = schema[name];
-      // BW is one of two controls, and VFO is this page's own
-      if (name !== "BW" && name !== "VFO" && (!control || control.kind === "action"
+      // BW is one of two controls
+      if (name !== "BW" && (!control || control.kind === "action"
           || control.kind === "text" || PLACED.indexOf(name) >= 0)) {
         return;
       }
@@ -857,14 +869,7 @@
       var row = make("div", "row", null, list);
       make("div", "title", name, row);
       var r = { name: name, box: row, value: make("div", "value", "", row) };
-      row.addEventListener("click", function () {
-        if (name === "VFO") {
-          chooseVfo(vfoInWaiting());
-          show();
-        } else {
-          adjust(rowControl(name));
-        }
-      });
+      row.addEventListener("click", function () { adjust(rowControl(name)); });
       rows.push(r);
     });
   }
@@ -877,7 +882,6 @@
 
   function isRowShown(name) {
     var group = modeGroup(), control = schema[rowControl(name)];
-    if (name === "VFO") { return true; }
     if (!control) { return false; }
     if (name === "BW") { return group !== "FT8"; }
     return control.group === "RADIO" || control.group === group;
@@ -886,7 +890,7 @@
   function showList() {
     rows.forEach(function (r) {
       r.box.style.display = isRowShown(r.name) ? "flex" : "none";
-      r.value.textContent = r.name === "VFO" ? own.VFO : values[rowControl(r.name)] || "";
+      r.value.textContent = values[rowControl(r.name)] || "";
     });
   }
 

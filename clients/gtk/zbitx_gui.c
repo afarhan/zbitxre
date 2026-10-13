@@ -283,23 +283,33 @@
 //
 // TUNING
 //
-// The radio knows only FREQ, the frequency it is tuned to. STEP, RIT,
-// SPLIT and VFO are the window's own, as they were zbitxv2's window's, and
-// every client keeps its own: the front panel's knob is on the panel, and
-// tunes it as the wheel tunes this.
+// The radio knows only FREQ, the frequency it is tuned to. STEP, VFO and
+// OFFSET are the window's own, as STEP, VFO, RIT and SPLIT were zbitxv2's
+// window's, and every client keeps its own: the front panel's knob is on
+// the panel, and tunes it as the wheel tunes this.
+//
+// VFO and OFFSET are beside the frequency on the top row, since they are
+// what the frequency's box shows. RIT and SPLIT were two switches there,
+// and VFO a row far down the list. The author made one control of the
+// two: they are never wanted together, a split being a RIT with a very
+// wide range, and that left a place on the top row for VFO.
 //
 //   STEP     how far a turn of the wheel tunes: 10H, 100H, 500H, 1K or
 //            10K. The dial moves by STEP, onto a multiple of it.
 //   VFO      A or B, each with a dial of its own. Choosing the other keeps
 //            the dial of the one left, and goes to the other's; one not
 //            yet used opens where the other is.
-//   RIT      OFF or ON. While it is on, the wheel moves the receiver's
-//            offset, RIT_DELTA, by STEP, up to 25 kHz either way, and the
-//            dial stays; the receiver listens at the dial + RIT_DELTA, and
-//            the transmitter is to be on the dial.
-//   SPLIT    OFF or ON. While it is on, the transmitter is to be on the
-//            other VFO's dial. Turning it on goes to VFO A, so that it
-//            receives on A and transmits on B.
+//   OFFSET   how far the receiver is from the transmitter: NORM, RIT or
+//            SPLIT.
+//            NORM   both are on the dial.
+//            RIT    the wheel moves the receiver's offset, RIT_DELTA, by
+//                   STEP, up to 25 kHz either way, and the dial stays; the
+//                   receiver listens at the dial + RIT_DELTA, and the
+//                   transmitter is to be on the dial. Leaving RIT puts
+//                   the offset back to nothing.
+//            SPLIT  the transmitter is to be on the other VFO's dial.
+//                   Choosing it goes to VFO A, so that it receives on A
+//                   and transmits on B.
 //
 // The window sends the radio, as FREQ, where the receiver listens. The
 // large figures are that frequency, and where the transmitter is to be is
@@ -593,8 +603,8 @@ struct row {
 
 static const struct top_place top_places[] = {
 	{"STEP", 0, 0},
-	{"RIT", 192, 0},
-	{"SPLIT", 240, 0},
+	{"VFO", 192, 0},
+	{"OFFSET", 240, 0},
 	{"DRIVE", 288, 0},
 	{"AGC", 336, 0},
 	{"IF", 384, 0},
@@ -911,9 +921,14 @@ static int is_on(const char *name) {
 	return !strcmp(value_of(name), "ON");
 }
 
+// whether OFFSET is at this one of NORM, RIT and SPLIT
+static int is_offset(const char *kind) {
+	return !strcmp(value_of("OFFSET"), kind);
+}
+
 // where the receiver listens: the dial, moved by RIT_DELTA while RIT is on
 static int receiver_hz(void) {
-	if (is_on("RIT"))
+	if (is_offset("RIT"))
 		return dial_hz + atoi(value_of("RIT_DELTA"));
 	return dial_hz;
 }
@@ -923,7 +938,7 @@ static int receiver_hz(void) {
 static int transmitter_hz(void) {
 	int other = VFO_B;
 
-	if (!is_on("SPLIT"))
+	if (!is_offset("SPLIT"))
 		return dial_hz;
 	if (vfo_in_use == VFO_B)
 		other = VFO_A;
@@ -1174,8 +1189,8 @@ static void show_values(void) {
 			value_of(row_control(&rows[i])));
 		gtk_widget_set_visible(rows[i].box, is_row_shown(&rows[i]));
 		set_class(rows[i].box, "focused", i == focus);
-		set_class(rows[i].box, "on", (!strcmp(rows[i].control, "RIT")
-			|| !strcmp(rows[i].control, "SPLIT")) && is_on(rows[i].control));
+		set_class(rows[i].box, "on", !strcmp(rows[i].control, "OFFSET")
+			&& !is_offset("NORM"));
 	}
 	show_frequency();
 	show_buttons();
@@ -1235,7 +1250,7 @@ static void tune(int steps) {
 
 	if (steps == 0 || k == NULL)
 		return;
-	if (is_on("RIT"))
+	if (is_offset("RIT"))
 		snprintf(k->value, CONTROL_VALUE_MAX, "%d",
 			clamp(atoi(k->value) + steps * step, -RIT_MAX_HZ, RIT_MAX_HZ));
 	else
@@ -1266,9 +1281,12 @@ static void choose_vfo(int vfo) {
 // one of the window's own controls has changed
 static void apply_own(struct known *k) {
 	struct known *vfo = find_known("VFO");
+	struct known *delta = find_known("RIT_DELTA");
 
-	if (!strcmp(k->name, "SPLIT") && is_on("SPLIT") && vfo != NULL)
+	if (!strcmp(k->name, "OFFSET") && is_offset("SPLIT") && vfo != NULL)
 		snprintf(vfo->value, CONTROL_VALUE_MAX, "A");
+	if (!is_offset("RIT") && delta != NULL)
+		snprintf(delta->value, CONTROL_VALUE_MAX, "0");
 	if (vfo != NULL && !strcmp(vfo->value, "B"))
 		choose_vfo(VFO_B);
 	else
@@ -1293,9 +1311,8 @@ static void add_own_control(const char *name, const char *choices, const char *v
 
 static void add_own_controls(void) {
 	add_own_control("STEP", "10H/100H/500H/1K/10K", "1K");
-	add_own_control("RIT", "OFF/ON", "OFF");
+	add_own_control("OFFSET", "NORM/RIT/SPLIT", "NORM");
 	add_own_control("RIT_DELTA", NULL, "0");
-	add_own_control("SPLIT", "OFF/ON", "OFF");
 	add_own_control("VFO", "A/B", "A");
 }
 
@@ -1675,7 +1692,7 @@ static void take_message_line(const char *line) {
 
 static void take_radio_frequency(int hz) {
 	dial_hz = hz;
-	if (is_on("RIT"))
+	if (is_offset("RIT"))
 		dial_hz -= atoi(value_of("RIT_DELTA"));
 	// a VFO never used is put here once, and does not follow after
 	if (vfo_dial_hz[vfo_in_waiting()] == 0)
