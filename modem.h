@@ -3,7 +3,7 @@
 //
 // modem.h — what a modem is.
 //
-// A modem is what makes one mode of the radio: USB, CW, AM, FT8, FreeDV. Each
+// A modem is what makes one mode of the radio: USB, CW, AM, FT8, RADE2. Each
 // is a file of its own in modems/, and each defines one or more struct modem,
 // named modem_ and the mode, as modem_usb or modem_cw:
 //
@@ -56,6 +56,12 @@
 //            until its hang time after the last element. It may be left
 //            out: a mode that is keyed only by the PTT or by TX.
 //
+//   tx_end   is called by the thread that owns the controls when the PTT
+//            that keyed the radio is let go, before the radio goes back to
+//            receive. A modem that has to end its over with something of
+//            its own, as RADE2 does, starts on it here and says so through
+//            wants_tx until it has gone. It may be left out.
+//
 // Several modes may share a file and its functions, as USB and LSB do.
 
 #pragma once
@@ -72,6 +78,7 @@ struct modem {
 	void (*rx)(complex float *bins);
 	void (*tx)(const int32_t *mic, double *samples);
 	int (*wants_tx)(void);
+	void (*tx_end)(void);
 };
 
 extern const struct modem *modem_list[];

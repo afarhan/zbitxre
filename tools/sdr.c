@@ -1208,14 +1208,28 @@ static int is_modem_wanting_tx(void) {
 static int is_ptt_mode(void) {
 	const char *mode = control_get("MODE");
 
-	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "2TONE");
+	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "2TONE")
+		|| !strcmp(mode, "RADE2");
 }
 
 // the PTT, or a modem with something to send, puts the radio in transmit
 // and takes it out again, and no transmission is let run past TX_LIMIT_MS
 static void follow_ptt(long now) {
+	static int was_held;
+	const struct modem *m;
 	int is_held = is_ptt_held(now) && is_ptt_mode();
-	int is_keyed = is_held || is_modem_wanting_tx();
+	int is_keyed;
+
+	// a modem that ends its over with something of its own is told when
+	// the PTT that keyed the radio is let go, and may then keep the radio
+	// sending for as long as it needs
+	if (was_held && !is_held && is_ptt_transmitting) {
+		m = modem_find(control_get("MODE"));
+		if (m != NULL && m->tx_end != NULL)
+			m->tx_end();
+	}
+	was_held = is_held;
+	is_keyed = is_held || is_modem_wanting_tx();
 
 	if (!is_keyed)
 		is_ptt_to_be_let_go = 0;

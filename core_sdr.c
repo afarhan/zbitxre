@@ -269,6 +269,8 @@ static atomic_int reset_wanted = 0;
 
 #define MICROS_PER_MILLI 1000
 #define MILLIONTHS 1000000.0
+//speech, and RADE2 with it, is on the lower sideband below this
+#define LOWER_SIDEBAND_BELOW_HZ 10000000
 #define SAMPLE_FULL_SCALE 2147483647.0
 #define MOD_SAMPLES 48
 #define MOD_DIVISOR 40000000.0
@@ -1352,6 +1354,10 @@ void sdr_request(char *request, char *response){
 			rx_wanted->mode = MODE_DIGITAL;
 		else if (!strcmp(value, "USB"))
 			rx_wanted->mode = MODE_USB;
+		//RADE2 is sent as speech is, on the sideband of the band; the
+		//modem, modems/modem_rade2.c, does the rest
+		else if (!strcmp(value, "RADE2"))
+			rx_wanted->mode = freq_hdr < LOWER_SIDEBAND_BELOW_HZ ? MODE_LSB : MODE_USB;
 		else {
 			strcpy(response, "error");
 			return;

@@ -62,7 +62,7 @@ because it was told one: it shows it, and that is all.
 that it can build itself without knowing beforehand what this radio has:
 
     CONTROL RADIO FREQ number 500000 30000000 1
-    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE
+    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE/RADE2
     CONTROL CW WPM number 5 50 1
     CONTROL CW MACRO action CQ/RST/End
     CONTROL STATION MYCALLSIGN text

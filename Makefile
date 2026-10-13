@@ -32,7 +32,7 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h rtp_audio.h rtp_microphone.h modems/cw_keyer.h \
 	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
-	modems/ft8_callsign_hash.h
+	modems/ft8_callsign_hash.h dsp/rade2_codec.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c hw/swr_bridge.c \
 	$(LINK)
@@ -78,7 +78,7 @@ RADE_LIB    = $(patsubst %,$(BUILD)/rade_c_%.o,$(RADE_C_FILES)) \
 	$(patsubst %,$(BUILD)/opus_top_%.o,$(OPUS_TOP_FILES)) \
 	$(BUILD)/rade2_codec.o
 DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c rtp_microphone.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
-	$(MODEMS) $(MODEM_LIST) $(FT8_LIB)
+	$(MODEMS) $(MODEM_LIST) $(FT8_LIB) $(RADE_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
@@ -89,7 +89,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
 	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
 	$(BUILD)/test_rtp_microphone $(BUILD)/test_telephone $(BUILD)/test_cat \
-	$(BUILD)/test_rade_codec
+	$(BUILD)/test_rade_codec $(BUILD)/test_rade2
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -134,6 +134,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_telephone
 	$(BUILD)/test_cat
 	$(BUILD)/test_rade_codec
+	$(BUILD)/test_rade2
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -200,6 +201,14 @@ $(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c logbook.c 
 		server.h settings.h control.h logbook.h $(DSP) $(STAND_INS) $(DSP_HEADERS) \
 		$(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c logbook.c $(DSP) \
+		$(STAND_INS) -lpthread -lm -lsqlite3
+
+# RADE2 through the whole radio, sent and received; it takes half a minute,
+# giving the radio its blocks at a sound card's pace
+$(BUILD)/test_rade2: tests/test_rade2.c radio.c server.c settings.c logbook.c radio.h \
+		server.h settings.h control.h logbook.h $(DSP) $(STAND_INS) $(DSP_HEADERS) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_rade2.c radio.c server.c settings.c logbook.c $(DSP) \
 		$(STAND_INS) -lpthread -lm -lsqlite3
 
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)

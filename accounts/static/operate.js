@@ -541,7 +541,7 @@
 
   function footerLabel(place, group, macros) {
     if (group === "VOICE") { return ["", "TX", "RX", "", "", ""][place]; }
-    if (group === "2TONE") { return ["TX", "RX", "", "", "", ""][place]; }
+    if (group === "2TONE" || group === "RADE2") { return ["TX", "RX", "", "", "", ""][place]; }
     if (group === "CW") { return macros[place] || ""; }
     return "";
   }
@@ -572,7 +572,8 @@
   }
 
   function startSending() {
-    if (modeGroup() !== "VOICE") { set("TX", "ON"); return; }
+    // in RADE2 as in the voice modes, what is sent is what is said
+    if (modeGroup() !== "VOICE" && modeGroup() !== "RADE2") { set("TX", "ON"); return; }
     if (!player) { return; }
     if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
     player.openMicrophone(sendSpeech).then(function () {

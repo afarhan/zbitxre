@@ -18,7 +18,7 @@
 //   BAND    the amateur band the frequency is in: 80M, 60M, 40M, 30M, 20M,
 //           17M, 15M, 12M or 10M, or OUT when it is in none. Setting BAND
 //           goes to that band, to the frequency and mode last used on it.
-//   MODE    USB, LSB, CW, CWR, AM, FT8 or 2TONE.
+//   MODE    USB, LSB, CW, CWR, AM, FT8, 2TONE or RADE2.
 //   AUDIO   the volume, 0 to 100: 0 is silence, and 1 to 100 are spread
 //           over the 40 dB of the sound card's range that are of use;
 //           hw/audio.c says how.
@@ -116,6 +116,7 @@
 #define STARTING_HZ "7088000"
 #define STARTING_BAND "40M"
 #define STARTING_MODE "LSB"
+#define SIDEBAND_CHANGES_AT_HZ 10000000
 #define STARTING_VOLUME "60"
 #define STARTING_IF "60"
 #define STARTING_DRIVE "40"
@@ -273,6 +274,7 @@ static int apply_mode(struct control *c, const char *value, char *why, int room)
 
 static int apply_freq(struct control *c, const char *value, char *why, int room) {
 	int band = band_for_freq(atoi(value));
+	int was_lower = atoi(control_get("FREQ")) < SIDEBAND_CHANGES_AT_HZ;
 
 	(void)c;
 	(void)why;
@@ -283,6 +285,12 @@ static int apply_freq(struct control *c, const char *value, char *why, int room)
 		tell_the_place(band);
 	}
 	core_request("r1:freq", value);
+	// RADE2 is on the sideband of the band, which the core chooses when it
+	// is asked for the mode: it is asked again when the frequency has
+	// crossed from the one to the other
+	if (!strcmp(control_get("MODE"), "RADE2")
+			&& was_lower != (atoi(value) < SIDEBAND_CHANGES_AT_HZ))
+		core_request("r1:mode", "RADE2");
 	return 0;
 }
 
@@ -458,7 +466,7 @@ static struct control stack = {
 
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
-	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE",
+	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE/RADE2",
 	.value = STARTING_MODE, .apply = apply_mode,
 };
 
