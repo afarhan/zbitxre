@@ -176,9 +176,10 @@ class Client:
         self.file.flush()
 
     def read(self):
-        """the next line that is not the meter's"""
+        """the next line that is not the meter's, nor the gateway's word on
+        its earphone, which comes when it comes"""
         line = self.file.readline().strip()
-        while line.startswith("SMETER "):
+        while line.startswith(("SMETER ", "BLUETOOTH_STATUS ")):
             line = self.file.readline().strip()
         return line
 
