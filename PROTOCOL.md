@@ -318,10 +318,30 @@ radio program is not touched.
 
 ## It is the owner's to switch on and off
 
-The author's ruling. The radio has a control, `REMOTE`, `OFF` or `ON`, among
-the station's settings, and it is off until the owner turns it on. While it is
-off the daemon holds no connection to anything outside the radio. What the
-daemon has to say it says in another control, `REMOTE_STATUS`:
+The author's ruling. The radio has two controls in a group of their own,
+`CONNECTIONS`, each `OFF` or `ON`, and off until the owner turns it on:
+`REMOTE`, whether the radio may be worked from afar, and `STREAMING`, whether
+anyone may listen to it and see what it copies in FT8. They are set at the
+radio and nowhere else: a client that reaches the radio through my.sbitx.net
+does not offer them. With both off the daemon holds no connection to anything
+outside the radio. With either on it is on line, and tells the service which
+on the connection it keeps, when it comes and whenever one changes:
+
+    ALLOWS remote streaming
+    ALLOWS streaming
+    ALLOWS remote
+
+A radio that does not allow remote is worked by nobody: its owner's page is
+told `! closed`, a client `ERROR connect`, and whoever was working it is let
+go. One that does not allow streaming is listened to by its owner alone,
+signed in, who has to hear it to work it; anyone else is told `closed`. It is
+shown on the globe, grey, and what it copies in FT8 is not sent.
+
+To shut somebody out who has got in, the owner changes the password that let
+them in: the radio's client password, on the website, or the account's own.
+Whoever is in by it is let go within half a minute.
+
+What the daemon has to say it says in another control, `REMOTE_STATUS`:
 
     OFF
     SET MYCALLSIGN FIRST          the radio has no callsign to say whose it is
@@ -331,7 +351,7 @@ daemon has to say it says in another control, `REMOTE_STATUS`:
     ONLINE vu2ese-home
     NO ANSWER FROM SERVER
 
-`sdr` keeps the two controls and does nothing with them.
+`sdr` keeps the three controls and does nothing with them.
 
 ## Nothing is sent that nobody asked for
 

@@ -163,6 +163,25 @@ There is a stream only while somebody listens; the owner's page always
 does, and speech with no stream to go by is dropped. Nothing here says
 when the radio is to send: that is TX, a line like any other.
 
+WHAT THE OWNER ALLOWS
+
+The radio's owner has two switches, at the radio, among its CONNECTIONS:
+REMOTE, whether the radio may be worked from afar through here, and
+STREAMING, whether anyone may listen to it. With either on, the radio's
+daemon is on line, and says which on the connection it keeps, when it
+comes and whenever one is changed:
+
+    ALLOWS remote streaming
+    ALLOWS streaming
+    ALLOWS remote
+
+A radio that does not allow remote is worked by nobody: its owner's page
+is told "! closed", and a client "ERROR connect". One that does not allow
+streaming is listened to by its owner alone, signed in, who must hear it
+to work it; anyone else is told "closed". It stays on the globe, grey,
+and what it copies in FT8 is not kept. A daemon from before there were
+two switches says nothing of this and is taken to allow both.
+
 WHAT THE RADIOS COPY IN FT8
 
 A radio's daemon, while it is on line, sends each message its radio copies
@@ -291,6 +310,8 @@ LISTENERS_AN_ADDRESS = 6
 REQUEST_LONGEST = 8192
 PAGE_QUIET_S = 20
 USAGE_EVERY_S = 300
+ALLOWED_OF_OLD = frozenset(("remote", "streaming"))
+REVOKED_LOOK_S = 20
 DECODES_KEPT_EVERY_S = 2
 DECODES_REMEMBERED = 400
 DECODE_LINE = re.compile(
@@ -365,6 +386,8 @@ class Remote:
         self.decodes = decodes.Decodes(settings.decodes)
         self.decodes_waiting = []  # what radios have copied and is not yet in the file
         self.decodes_said = {}     # a radio's id -> the last messages it said, to know a repeat
+        self.allowed = {}          # a radio's id -> what its owner allows: "remote", "streaming"
+        self.owners_listening = set()  # those listening who are the radio's owner, signed in
 
     def say(self, text):
         print("remote: %s" % text, flush=True)
@@ -486,6 +509,9 @@ class Remote:
         writer.write(b"OK\n")
         self.say("%s is on line" % name)
         self.cookie_keys[radio] = accounts.stretch(device["cookie"], device["callsign"])
+        # until its daemon says what its owner allows, it is taken to allow
+        # everything, as a daemon from before there was a choice does
+        self.set_allowed(radio, ALLOWED_OF_OLD)
         self.tell_listeners(radio, "online")
         if self.listeners.get(radio):
             self.start_stream(radio)
@@ -502,7 +528,10 @@ class Remote:
                     self.tuned[radio] = line[len("TUNED "):]
                     self.tell_listeners(radio, "tuned " + self.tuned[radio])
                 elif line.split(" ")[0] == "DECODE":
-                    self.take_decode(radio, line)
+                    if "streaming" in self.allowed.get(radio, ()):
+                        self.take_decode(radio, line)
+                elif line.split(" ")[0] == "ALLOWS":
+                    self.set_allowed(radio, frozenset(line.split(" ")[1:]) & ALLOWED_OF_OLD)
                 else:
                     break
         finally:
@@ -703,17 +732,27 @@ class Remote:
                          b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept
                          + b"\r\n\r\n")
             if path.startswith("/work?"):
-                await self.work(found, reader, writer)
+                await self.work(found, reader, writer,
+                                lambda: self.owner_of(headers, path) is not None)
             else:
-                await self.listen(found, headers.get("x-real-ip", ""), reader, writer)
+                await self.listen(found, headers.get("x-real-ip", ""), reader, writer,
+                                  self.owner_of(headers, path) is not None)
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError,
                 ConnectionError, IndexError):
             pass
         finally:
             writer.close()
 
-    async def listen(self, found, address, reader, writer):
-        """a browser listening to a radio, until it closes"""
+    async def listen(self, found, address, reader, writer, is_owner=False):
+        """a browser listening to a radio, until it closes. A radio whose
+        owner has streaming switched off is listened to by its owner alone,
+        who has to hear it to work it from afar"""
+        if "streaming" not in self.allowed.get(found["id"], ALLOWED_OF_OLD) and not is_owner:
+            writer.write(self.text_message("closed"))
+            await writer.drain()
+            return
+        if is_owner:
+            self.owners_listening.add(writer)
         if not self.has_room(found["id"], address):
             self.usage["turned away"] += 1
             self.say("a listener from %s is turned away from radio %d: no room" % (
@@ -740,6 +779,7 @@ class Remote:
                 pass
         finally:
             self.listener_from.pop(writer, None)
+            self.owners_listening.discard(writer)
             self.listeners[radio].discard(writer)
             self.say("a listener from %s has left radio %d after %d s: %d listening" % (
                 address, radio, time.time() - came, len(self.listeners[radio])))
@@ -791,7 +831,7 @@ class Remote:
             self.usage = dict.fromkeys(used, 0)
             self.usage["most"] = self.listening()
 
-    async def work(self, radio, reader, writer):
+    async def work(self, radio, reader, writer, is_still_owner=lambda: True):
         """the owner's browser working a radio: its lines to the radio and
         the radio's to it, until the page goes; then the radio is told to
         stop transmitting, in case it was"""
@@ -799,6 +839,8 @@ class Remote:
         refusal = ""
         if radio["id"] not in self.lines:
             refusal = "offline"
+        elif "remote" not in self.allowed.get(radio["id"], ALLOWED_OF_OLD):
+            refusal = "closed"
         elif self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
             refusal = "busy"
         streams = None
@@ -840,7 +882,8 @@ class Remote:
                     radio_writer.write(body.encode() + b"\n")
                     await radio_writer.drain()
 
-        ways = [asyncio.ensure_future(from_the_radio()), asyncio.ensure_future(from_the_page())]
+        ways = [asyncio.ensure_future(from_the_radio()), asyncio.ensure_future(from_the_page()),
+                asyncio.ensure_future(self.until_revoked(is_still_owner))]
         try:
             await asyncio.wait(ways, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -854,6 +897,24 @@ class Remote:
             radio_writer.close()
             self.sessions[radio["id"]] -= 1
             self.say("the owner's browser has left %s" % name)
+
+    def set_allowed(self, radio, allowed):
+        """what a radio's owner allows of it from afar, as its daemon says:
+        "remote", that the owner may work it through here, and "streaming",
+        that anyone may listen to it. Whether it is streaming is kept with
+        the radio, for the globe to show it grey when it is not; and when
+        streaming stops, those listening who are not its owner are told so
+        and let go"""
+        self.allowed[radio] = allowed
+        with self.store.open() as db:
+            db.execute("update radios set streaming = ? where id = ?",
+                       (1 if "streaming" in allowed else 0, radio))
+        if "streaming" in allowed:
+            return
+        for listener in list(self.listeners.get(radio, ())):
+            if listener not in self.owners_listening:
+                listener.write(self.text_message("closed"))
+                listener.close()
 
     def take_decode(self, radio, line):
         """a message a radio has copied in FT8, "DECODE 14074000
@@ -975,6 +1036,9 @@ class Remote:
         if radio["id"] not in self.lines:
             writer.write(b"ERROR connect that radio is not on line\n")
             return
+        if "remote" not in self.allowed.get(radio["id"], ALLOWED_OF_OLD):
+            writer.write(b"ERROR connect remote operation is switched off at that radio\n")
+            return
         if self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
             writer.write(b"ERROR connect that radio is being worked by another client\n")
             return
@@ -986,8 +1050,14 @@ class Remote:
         writer.write(("CONNECTED %s\n" % name).encode())
         self.sessions[radio["id"]] = self.sessions.get(radio["id"], 0) + 1
         self.say("a client is on %s" % name)
+        def has_the_password():
+            with self.store.open() as db:
+                now = db.execute("select client_password from radios where id = ?",
+                                 (radio["id"],)).fetchone()
+            return now is not None and now[0] == radio["client_password"]
         ways = [asyncio.ensure_future(self.pass_on(reader, radio_writer)),
-                asyncio.ensure_future(self.pass_on(radio_reader, writer))]
+                asyncio.ensure_future(self.pass_on(radio_reader, writer)),
+                asyncio.ensure_future(self.until_revoked(has_the_password))]
         try:
             await asyncio.wait(ways, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -996,6 +1066,18 @@ class Remote:
             radio_writer.close()
             self.sessions[radio["id"]] -= 1
             self.say("a client has left %s" % name)
+
+    async def until_revoked(self, is_still_good):
+        """comes back when what let someone in no longer would: the radio's
+        client password has been changed, or the owner's password has, which
+        signs every browser out. The author's way of shutting someone out
+        of a radio is to change the password; this makes that take hold of
+        one who is already in, within REVOKED_LOOK_S, and not only of the
+        next to come"""
+        while True:
+            await asyncio.sleep(REVOKED_LOOK_S)
+            if not is_still_good():
+                return
 
     async def pass_on(self, reader, writer):
         try:

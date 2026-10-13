@@ -361,6 +361,8 @@
       send("schema\nspectrum on\nmessages on\ntime");
     } else if (words[0] === "busy") {
       say(NAME + " is being worked by another client; trying again");
+    } else if (words[0] === "closed") {
+      say(NAME + ": remote operation is switched off at the radio", "warning");
     } else if (words[0] === "offline") {
       say(NAME + " is not on line; trying again");
     }
@@ -1373,9 +1375,10 @@
     var inside = openPanel("Settings of " + NAME, leaving);
     order.forEach(function (name) {
       var control = schema[name];
-      // REMOTE is not offered here: turned off from afar, the radio could
-      // not be reached to turn it on again
-      if (!control || name === "REMOTE" || (control.group !== "STATION" && control.group !== "REMOTE")
+      // the radio's CONNECTIONS, REMOTE and STREAMING among them, are not
+      // offered here: they are set at the radio and nowhere else, the
+      // author's rule. What the radio says of its link is shown
+      if (!control || (control.group !== "STATION" && control.group !== "REMOTE")
           || control.kind === "action" || control.kind === "number") {
         return;
       }

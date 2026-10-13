@@ -533,11 +533,16 @@ MAP_SCRIPT = """
       radios[i].at = at;
       if (!at.seen) { continue; }
       var isChosen = chosen && chosen.radio === radios[i].radio;
+      // a radio whose owner has streaming switched off is there, grey, and
+      // is not to be listened to
+      var isOpen = radios[i].streaming !== false;
       pen.beginPath(); pen.arc(at.x, at.y, isChosen ? 11 : 8, 0, 2 * Math.PI);
-      pen.fillStyle = isChosen ? "rgba(255,210,60,0.3)" : "rgba(80,255,140,0.25)"; pen.fill();
+      pen.fillStyle = !isOpen ? "rgba(150,160,170,0.2)" : isChosen ? "rgba(255,210,60,0.3)"
+        : "rgba(80,255,140,0.25)";
+      pen.fill();
       pen.beginPath(); pen.arc(at.x, at.y, isChosen ? 5 : 4, 0, 2 * Math.PI);
-      pen.fillStyle = isChosen ? "#ffd23c" : "#50ff8c"; pen.fill();
-      pen.fillStyle = "#ffffff";
+      pen.fillStyle = !isOpen ? "#8a949e" : isChosen ? "#ffd23c" : "#50ff8c"; pen.fill();
+      pen.fillStyle = isOpen ? "#ffffff" : "#8a949e";
       // how many are listening to it is beside its callsign, when any are
       pen.fillText(radios[i].callsign + (radios[i].listening ? "  " + heads(radios[i].listening) : ""),
         at.x + 12, at.y);
@@ -628,7 +633,11 @@ MAP_SCRIPT = """
     // press for it, which the author asked for
     if (best) {
       choose(best);
-      if (!isWanted) { start(); }
+      if (best.streaming === false) {
+        state.textContent = "not streaming";
+      } else if (!isWanted) {
+        start();
+      }
     }
   });
   canvas.addEventListener("wheel", function (e) {
@@ -791,6 +800,9 @@ MAP_SCRIPT = """
         } else if (message.data === "offline") {
           state.textContent = "not on line; waiting";
           tuned.textContent = "";
+        } else if (message.data === "closed") {
+          // its owner has switched streaming off: there is nothing to wait for
+          stop("not streaming");
         } else if (message.data === "full") {
           isFull = true;
           state.textContent = "full; waiting for room";
@@ -810,7 +822,7 @@ MAP_SCRIPT = """
   // the loudspeaker in the top bar turns the sound off and on. There is no
   // volume here: the telephone's own, or the computer's, does that
   button.addEventListener("click", function () {
-    if (isWanted) { stop(""); } else if (chosen) { start(); }
+    if (isWanted) { stop(""); } else if (chosen && chosen.streaming !== false) { start(); }
   });
 
   /* what there is to show */
@@ -1191,6 +1203,9 @@ class Store:
             if "listeners" not in columns:
                 db.execute("alter table radios add column listeners integer not null default 0")
             # and roughly where they are, "MK97:2,FN31:1"
+            # whether its owner lets anyone listen; when not, the globe has it grey
+            if "streaming" not in columns:
+                db.execute("alter table radios add column streaming integer not null default 1")
             if "listener_places" not in columns:
                 db.execute("alter table radios add column listener_places text not null "
                            "default ''")
@@ -1505,20 +1520,22 @@ class Service:
     def on_the_map(self):
         """the radios on line that have a grid, for anyone to see and hear:
         each one's number, its owner's callsign, its four-character square,
-        how many are listening to it and the squares they are in, as far as
-        their addresses say, and no more"""
+        whether its owner lets it be listened to, how many are listening to
+        it and the squares they are in, as far as their addresses say, and
+        no more"""
         found = []
         with self.store.open() as db:
             for row in db.execute(
                     "select radios.id, accounts.callsign, radios.grid, radios.listeners, "
-                    "radios.listener_places from radios "
+                    "radios.listener_places, radios.streaming from radios "
                     "join accounts on accounts.id = radios.account where radios.online = 1 "
                     "and accounts.status = 'active' order by accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 if square is not None:
                     found.append({"radio": row["id"], "callsign": row["callsign"],
                                   "grid": square["grid"], "lat": square["lat"],
-                                  "lon": square["lon"], "listening": row["listeners"],
+                                  "lon": square["lon"], "streaming": bool(row["streaming"]),
+                                  "listening": row["listeners"],
                                   "listeners": listeners_of(row["listener_places"])})
         return found
 

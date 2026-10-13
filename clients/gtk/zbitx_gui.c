@@ -212,13 +212,21 @@
 // at the top left of each screen goes back. Without a callsign the radio
 // cannot call CQ in FT8 or answer anyone.
 //
-// REMOTE is one of those rows: OFF or ON, whether the radio may be reached
-// from afar through my.sbitx.net; PROTOCOL.md says how that is done. Under
-// the rows is one that cannot be tapped, what the radio has to say of it,
-// its REMOTE_STATUS: the first time REMOTE is turned on it is the radio's
-// cookie, twelve letters to be typed at my.sbitx.net when the radio is
-// added to its owner's account there, and after that ONLINE and the name
-// the radio was given. The settings
+// The last row of the settings is CONNECTIONS, which opens a screen like
+// it: what the radio has to do with the world outside itself. The author
+// put them there: to the owner it is one radio, and its link to
+// my.sbitx.net is one of its settings, whichever program sees to it. The
+// rows are the radio's controls in its group CONNECTIONS, each OFF or ON
+// at a tap: REMOTE, whether the radio may be worked from afar through
+// my.sbitx.net, and STREAMING, whether anyone may listen to it there;
+// PROTOCOL.md says how both are done. Under them is a row that cannot be
+// tapped, what the radio has to say of the link, its REMOTE_STATUS: the
+// first time either is turned on it is the radio's cookie, twelve letters
+// to be typed at my.sbitx.net when the radio is added to its owner's
+// account there, and after that ONLINE and the name the radio was given.
+// The screen is not offered when the window is itself reaching its radio
+// through my.sbitx.net: these are set at the radio and nowhere else, the
+// author's rule, a plain on and off. Both screens
 // are shown afresh when any of them changes while they are on the screen.
 //
 // TYPING
@@ -655,6 +663,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
 #define REMOTE_GROUP "REMOTE"
+#define CONNECTIONS_GROUP "CONNECTIONS"
+#define PAGE_CONNECTIONS "connections"
 #define COOKIE_WORD "COOKIE "
 #define ACCOUNT_SITE "my.sbitx.net"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
@@ -720,6 +730,7 @@ static GtkWidget *messages_scroller;
 static GtkWidget *marked_message;
 static GtkWidget *pages;
 static GtkWidget *settings_list;
+static GtkWidget *connections_list;
 static GtkWidget *text_title;
 static GtkWidget *typed_label;
 // the newest of what the radio has read of CW, the latest at the end
@@ -1794,8 +1805,9 @@ static void handle_line(const char *name, char *value) {
 		take_radio_frequency(atoi(value));
 	take_kept_dial(name, atoi(value));
 	show_values();
-	if (is_page_shown(PAGE_SETTINGS)
-			&& (!strcmp(k->group, STATION_GROUP) || !strcmp(k->group, REMOTE_GROUP)))
+	if ((is_page_shown(PAGE_SETTINGS) || is_page_shown(PAGE_CONNECTIONS))
+			&& (!strcmp(k->group, STATION_GROUP) || !strcmp(k->group, REMOTE_GROUP)
+			|| !strcmp(k->group, CONNECTIONS_GROUP)))
 		fill_settings();
 }
 
@@ -2493,29 +2505,67 @@ static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble 
 	fill_settings();
 }
 
-// the settings' rows, made afresh each time they are shown: the radio's
-// texts and choices in the group STATION
-static void fill_settings(void) {
-	GList *children = gtk_container_get_children(GTK_CONTAINER(settings_list));
+// a list's rows are taken away, for it to be made afresh
+static void empty_list(GtkWidget *list) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
 	GList *child;
-	GtkWidget *row;
-	GtkWidget *value;
-	char said[TEXT_MAX];
-	int i;
 
 	for (child = children; child != NULL; child = child->next)
 		gtk_widget_destroy(GTK_WIDGET(child->data));
 	g_list_free(children);
+}
+
+// a row to each of the radio's texts and choices in a group, to be tapped
+static void fill_with_group(GtkWidget *list, const char *group) {
+	GtkWidget *row;
+	GtkWidget *value;
+	int i;
+
 	for (i = 0; i < known_count; i++) {
-		if (strcmp(known[i].group, STATION_GROUP)
-				|| (!known[i].is_text && !known[i].is_choice))
+		if (strcmp(known[i].group, group) || (!known[i].is_text && !known[i].is_choice))
 			continue;
 		row = list_row_new(known[i].name, &value);
 		gtk_label_set_text(GTK_LABEL(value), known[i].value);
 		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
 		tell_taps(row, G_CALLBACK(on_setting_tap), &known[i]);
+		gtk_box_pack_start(GTK_BOX(list), row, FALSE, FALSE, 0);
+	}
+}
+
+static void on_connections_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer unused) {
+	(void)gesture;
+	(void)presses;
+	(void)x;
+	(void)y;
+	(void)unused;
+	show_page(PAGE_CONNECTIONS);
+}
+
+// the two screens' rows, made afresh each time they are shown. The
+// settings: the radio's texts and choices in the group STATION, and a row
+// that opens the connections. The connections: the switches in the group
+// CONNECTIONS, and what the radio says of its link to my.sbitx.net
+static void fill_settings(void) {
+	GtkWidget *row;
+	GtkWidget *value;
+	char said[TEXT_MAX];
+	int i;
+
+	empty_list(settings_list);
+	fill_with_group(settings_list, STATION_GROUP);
+	// set at the radio and nowhere else
+	if (!is_remote) {
+		row = list_row_new("CONNECTIONS", &value);
+		gtk_label_set_text(GTK_LABEL(value), "\u203a");
+		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
+		tell_taps(row, G_CALLBACK(on_connections_tap), NULL);
 		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
 	}
+	gtk_widget_show_all(settings_list);
+
+	empty_list(connections_list);
+	fill_with_group(connections_list, CONNECTIONS_GROUP);
 	// what the radio says of being reached from afar: shown, not tapped
 	for (i = 0; i < known_count; i++) {
 		if (strcmp(known[i].group, REMOTE_GROUP) || !known[i].is_text)
@@ -2527,9 +2577,9 @@ static void fill_settings(void) {
 				known[i].value + strlen(COOKIE_WORD), ACCOUNT_SITE);
 		gtk_label_set_text(GTK_LABEL(value), said);
 		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
-		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
+		gtk_box_pack_start(GTK_BOX(connections_list), row, FALSE, FALSE, 0);
 	}
-	gtk_widget_show_all(settings_list);
+	gtk_widget_show_all(connections_list);
 }
 
 // the column's buttons: SET, and in FT8 its two; the others do nothing yet
@@ -3701,18 +3751,20 @@ static GtkWidget *create_top_bar(const char *back_to, GtkWidget **title) {
 	return bar;
 }
 
-static GtkWidget *create_settings_page(void) {
+// a screen that is a list of rows under a bar with its name and the arrow
+// that goes back: the settings, and the connections under them
+static GtkWidget *create_list_page(const char *name, const char *back_to, GtkWidget **list) {
 	GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	GtkWidget *scroller = gtk_scrolled_window_new(NULL, NULL);
 	GtkWidget *title;
 
-	gtk_box_pack_start(GTK_BOX(page), create_top_bar(PAGE_MAIN, &title), FALSE, FALSE, 0);
-	gtk_label_set_text(GTK_LABEL(title), "SETTINGS");
-	settings_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_box_pack_start(GTK_BOX(page), create_top_bar(back_to, &title), FALSE, FALSE, 0);
+	gtk_label_set_text(GTK_LABEL(title), name);
+	*list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER,
 		GTK_POLICY_AUTOMATIC);
 	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(scroller), FALSE);
-	gtk_container_add(GTK_CONTAINER(scroller), settings_list);
+	gtk_container_add(GTK_CONTAINER(scroller), *list);
 	gtk_box_pack_start(GTK_BOX(page), scroller, TRUE, TRUE, 0);
 	return page;
 }
@@ -3797,7 +3849,10 @@ static GtkWidget *create_window(void) {
 
 	pages = gtk_stack_new();
 	gtk_stack_add_named(GTK_STACK(pages), screen, PAGE_MAIN);
-	gtk_stack_add_named(GTK_STACK(pages), create_settings_page(), PAGE_SETTINGS);
+	gtk_stack_add_named(GTK_STACK(pages),
+		create_list_page("SETTINGS", PAGE_MAIN, &settings_list), PAGE_SETTINGS);
+	gtk_stack_add_named(GTK_STACK(pages),
+		create_list_page("CONNECTIONS", PAGE_SETTINGS, &connections_list), PAGE_CONNECTIONS);
 	gtk_stack_add_named(GTK_STACK(pages), create_text_page(), PAGE_TEXT);
 	gtk_container_add(GTK_CONTAINER(window), pages);
 

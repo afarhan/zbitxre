@@ -63,7 +63,7 @@ class RadioProgram:
     def __init__(self):
         self.controls = {"FREQ": "7074000", "MODE": "USB", "MYCALLSIGN": "VU2ESE",
                          "MYGRID": "MK97",
-                         "REMOTE": "OFF", "REMOTE_STATUS": ""}
+                         "REMOTE": "OFF", "STREAMING": "OFF", "REMOTE_STATUS": ""}
         self.clients = []
         self.messages = []
         self.wanting_messages = []
@@ -373,6 +373,7 @@ class RemoteTest(unittest.TestCase):
     def switch_on(self):
         """REMOTE is turned on, and the radio shows its cookie, the website
         not knowing it; the cookie is returned as it was shown"""
+        self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status().startswith("COOKIE "), "no cookie was shown")
         return self.status()[len("COOKIE "):]
@@ -415,6 +416,7 @@ class RemoteTest(unittest.TestCase):
 
     def test_with_no_callsign_it_asks_for_one_and_makes_no_connection(self):
         self.radio.set("MYCALLSIGN", "")
+        self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status() == "SET MYCALLSIGN FIRST", "it did not ask")
         self.radio.set("MYCALLSIGN", "VU2ESE")
@@ -451,6 +453,7 @@ class RemoteTest(unittest.TestCase):
         radio = self.switch_on_and_add()
         client = Client(self.port, "vu2ese-home", radio["client_password"])
         self.assertEqual(client.read(), "CONNECTED vu2ese-home")
+        self.radio.set("STREAMING", "OFF")
         self.radio.set("REMOTE", "OFF")
         self.wait_for(lambda: self.status() == "OFF", "the daemon did not say OFF")
         self.wait_for(lambda: self.service.radio_called("vu2ese-home")["online"] == 0,
@@ -465,8 +468,10 @@ class RemoteTest(unittest.TestCase):
 
     def test_turned_on_again_it_is_the_same_radio(self):
         self.switch_on_and_add()
+        self.radio.set("STREAMING", "OFF")
         self.radio.set("REMOTE", "OFF")
         self.wait_for(lambda: self.status() == "OFF", "the daemon did not say OFF")
+        self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status() == "ONLINE vu2ese-home",
                       "it did not come back on line")
@@ -620,6 +625,87 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(told(first), "listening 1")
         first.close()
         self.wait_for(lambda: kept() == 0, "the count was not put back to nothing")
+
+    def test_the_owners_two_switches_are_what_the_service_allows(self):
+        radio = self.switch_on_and_add()
+        speaker = Speaker()
+
+        def streaming_kept():
+            with self.service.store.open() as db:
+                return db.execute("select streaming from radios where id = ?",
+                                  (radio["id"],)).fetchone()[0]
+        self.wait_for(lambda: self.remote.allowed.get(radio["id"]) == {"remote", "streaming"},
+                      "the service was not told what is allowed")
+        self.assertEqual(streaming_kept(), 1)
+        stranger = self.listener(radio["id"])
+        self.assertEqual(stranger.read(), "online")
+        self.hear(speaker, stranger)
+
+        # streaming is switched off: the stranger is let go, another is not
+        # let in, and the radio stays on line, grey on the globe
+        self.radio.set("STREAMING", "OFF")
+        self.wait_for(lambda: streaming_kept() == 0, "streaming was not known to be off")
+        stranger.socket.settimeout(5)
+        said = stranger.read()
+        while said != "closed":
+            said = stranger.read()
+        self.assertEqual(self.listener(radio["id"]).read(), "closed")
+        self.assertEqual(self.status(), "ONLINE vu2ese-home")
+        self.radio.copy("043015|-12|1797|CQ VU2ESE MK97")
+        # its owner, signed in, still hears it, and still works it
+        with self.service.store.open() as db:
+            cookie = self.service.new_session(db, self.account["id"])
+        port = self.remote.web.sockets[0].getsockname()[1]
+        owner = Browser(port, self.service.settings.base_url, radio["id"], cookie=cookie)
+        self.assertEqual(owner.read(), "online")
+        self.hear(speaker, owner)
+        page = self.owners_page(self.account, radio["id"])
+        self.assertTrue(page.read().startswith("! connected"))
+        time.sleep(2.5)
+        self.assertEqual(decodes.Decodes(self.service.settings.decodes).recent(radio["id"]), [],
+                         "what it copied was kept with streaming off")
+
+        # remote is switched off and streaming on: anyone hears it, nobody
+        # works it, and whoever was working it is let go
+        self.radio.set("STREAMING", "ON")
+        self.radio.set("REMOTE", "OFF")
+        self.wait_for(lambda: self.remote.allowed.get(radio["id"]) == {"streaming"},
+                      "remote was not known to be off")
+        page.socket.settimeout(10)
+        with self.assertRaises((ConnectionError, socket.timeout, struct.error)):
+            while True:
+                page.read()
+        self.assertEqual(self.owners_page(self.account, radio["id"]).read(), "! closed")
+        client = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertIn("switched off", client.read())
+        self.assertEqual(self.listener(radio["id"], address="203.0.113.9").read(), "online")
+        self.assertEqual(streaming_kept(), 1)
+
+        # both off: nothing is connected to anything
+        self.radio.set("STREAMING", "OFF")
+        self.wait_for(lambda: self.status() == "OFF", "it stayed on line with both off")
+
+    def test_a_password_changed_lets_go_of_whoever_is_in(self):
+        remote.REVOKED_LOOK_S = 1
+        radio = self.switch_on_and_add()
+        page = self.owners_page(self.account, radio["id"])
+        self.assertTrue(page.read().startswith("! connected"))
+        # the owner's password is set anew, which signs every browser out
+        with self.service.store.open() as db:
+            db.execute("delete from sessions where account = ?", (self.account["id"],))
+        page.socket.settimeout(10)
+        with self.assertRaises((ConnectionError, socket.timeout, struct.error)):
+            while True:
+                page.read()
+        # a client that is in is let go when the radio's client password is changed
+        client = Client(self.port, "vu2ese-home", radio["client_password"])
+        self.assertEqual(client.read(), "CONNECTED vu2ese-home")
+        self.service.radio_new_password(self.account, radio["id"])
+        client.socket.settimeout(10)
+        with self.assertRaises((ConnectionError, socket.timeout, OSError)):
+            while True:
+                if client.file.readline() == "":
+                    raise ConnectionError("closed")
 
     def test_what_a_radio_copies_in_ft8_is_kept_once_each(self):
         # copied before the radio was on line: it is not sent
@@ -830,8 +916,10 @@ class RemoteTest(unittest.TestCase):
     def test_a_radio_removed_on_the_website_shows_its_cookie_again(self):
         radio = self.switch_on_and_add()
         self.service.radio_remove(self.account, radio["id"])
+        self.radio.set("STREAMING", "OFF")
         self.radio.set("REMOTE", "OFF")
         self.wait_for(lambda: self.status() == "OFF", "the daemon did not say OFF")
+        self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status() == "COOKIE " + accounts.show_secret(radio["cookie"]),
                       "the cookie was not shown again")

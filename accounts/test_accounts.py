@@ -447,7 +447,8 @@ class AccountsTest(unittest.TestCase):
         home = self.service.radio_called("vu2ese-home")
         self.assertEqual(json.loads(text), [{"radio": home["id"], "callsign": "VU2ESE",
                                              "grid": "MK97", "lat": 17.5, "lon": 79.0,
-                                             "listening": 0, "listeners": []}])
+                                             "streaming": True, "listening": 0,
+                                             "listeners": []}])
         for hidden in ("home", "fj", "abcd", home["client_password"]):
             self.assertNotIn(hidden, text)
 

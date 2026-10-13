@@ -106,6 +106,22 @@
 // changes, and no oftener than once a second, a dial being turned changing
 // the frequency many times in one.
 //
+// WHAT THE OWNER ALLOWS
+//
+// There are two switches, among the radio's CONNECTIONS, and they are the
+// owner's, set at the radio: REMOTE, whether the radio may be worked from
+// afar through my.sbitx.net, and STREAMING, whether anyone may listen to
+// it there. With either on, this program is on line, and tells the
+// service which, "ALLOWS remote streaming", when it comes on line and
+// whenever one is changed. With both off it holds no connection to
+// anything outside the radio. The service turns away what is not allowed;
+// so does this program, which opens no way to the radio program for
+// anyone while REMOTE is off, lets go at once of whoever is working it
+// when REMOTE is turned off, and sends nothing of what the radio copies
+// in FT8 while STREAMING is off. The radio's sound it sends when the
+// service asks, with either on: the owner working the radio from afar has
+// to hear it, and the service knows who is asking.
+//
 // WHAT THE RADIO COPIES IN FT8
 //
 // The author asked that the service be sent whatever the radio copies in
@@ -174,6 +190,7 @@
 #define DEFAULT_PORT "8081"
 #define DEFAULT_RADIO_PORT "8081"
 #define MESSAGE_WORD "MESSAGE "
+#define ALLOWED_ROOM 64
 // where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
 #define DEFAULT_MICROPHONE_PORT "5006"
 #define DEFAULT_KEY_FILE "data/remote.key"
@@ -255,6 +272,9 @@ static const char *key_file = DEFAULT_KEY_FILE;
 
 static enum state state = OFF;
 static int is_wanted;
+static int is_remote_allowed;
+static int is_streaming_allowed;
+static char allowed_told[ALLOWED_ROOM];
 static char callsign[CALLSIGN_ROOM];
 static int is_callsign_new;
 static char grid[GRID_ROOM];
@@ -347,6 +367,8 @@ static int dial(const char *host, const char *service) {
 	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 	return fd;
 }
+
+static void sessions_close(void);
 
 static int send_text(int fd, const char *text) {
 	size_t length = strlen(text);
@@ -586,7 +608,7 @@ static void say_status(const char *text) {
 static void decode_pass_on(const char *message) {
 	char line[LINE_ROOM];
 
-	if (state != ONLINE || line_fd == NOT_OPEN || tuned_hz[0] == 0)
+	if (state != ONLINE || line_fd == NOT_OPEN || tuned_hz[0] == 0 || !is_streaming_allowed)
 		return;
 	snprintf(line, sizeof(line), "DECODE %s %.200s\n", tuned_hz, message);
 	send_text(line_fd, line);
@@ -617,9 +639,14 @@ static void radio_poll(long now) {
 	got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	while (got > 0) {
 		if (!strcmp(line, "REMOTE ON"))
-			is_wanted = 1;
+			is_remote_allowed = 1;
 		if (!strcmp(line, "REMOTE OFF"))
-			is_wanted = 0;
+			is_remote_allowed = 0;
+		if (!strcmp(line, "STREAMING ON"))
+			is_streaming_allowed = 1;
+		if (!strcmp(line, "STREAMING OFF"))
+			is_streaming_allowed = 0;
+		is_wanted = is_remote_allowed || is_streaming_allowed;
 		sscanf(line, "FREQ %15s", tuned_hz);
 		sscanf(line, "MODE %15s", tuned_mode);
 		if (!strncmp(line, MESSAGE_WORD, strlen(MESSAGE_WORD)))
@@ -637,8 +664,14 @@ static void radio_poll(long now) {
 	// with no radio program there is nothing to offer anyone
 	if (got < 0) {
 		close_fd(&radio_fd);
+		is_remote_allowed = 0;
+		is_streaming_allowed = 0;
 		is_wanted = 0;
 	}
+	// with remote operation switched off, whoever is working the radio
+	// from afar is let go at once
+	if (!is_remote_allowed)
+		sessions_close();
 	// a radio that changes hands, or whose callsign is put right, begins
 	// again under the new one
 	if (strcmp(callsign_heard, callsign)) {
@@ -909,7 +942,7 @@ static void line_poll(long now) {
 
 	while (got > 0) {
 		last_heard_ms = now;
-		if (sscanf(line, "SESSION %64s", token) == 1)
+		if (sscanf(line, "SESSION %64s", token) == 1 && is_remote_allowed)
 			session_open(token);
 		if (sscanf(line, "AUDIO ON %16s %64s", token, nonce) == 2)
 			sound_on(token, nonce);
@@ -925,6 +958,16 @@ static void line_poll(long now) {
 			got = -1;
 		snprintf(grid_told, sizeof(grid_told), "%s", grid);
 		is_grid_told = 1;
+	}
+	// what the owner allows, once the connection is made and again whenever
+	// either switch is changed
+	snprintf(token, sizeof(token), "ALLOWS%s%s", is_remote_allowed ? " remote" : "",
+		is_streaming_allowed ? " streaming" : "");
+	if (got == 0 && strcmp(token, allowed_told)) {
+		snprintf(line, sizeof(line), "%.60s\n", token);
+		if (send_text(line_fd, line) < 0)
+			got = -1;
+		snprintf(allowed_told, sizeof(allowed_told), "%.60s", token);
 	}
 	// where the radio is tuned, while somebody is listening to it
 	snprintf(token, sizeof(token), "%s %s", tuned_hz, tuned_mode);
