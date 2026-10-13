@@ -117,7 +117,8 @@ website's globe, and is sent each packet's sound as a binary message, and
 the words "online" and "offline" as the radio comes and goes, and
 "listening 5", how many are listening to that radio, whenever that changes;
 the number is kept with the radio too, for the globe to show beside its
-callsign to those who are not listening. When packets
+callsign to those who are not listening, and with it the grid squares the
+listeners' addresses are in, for the globe's dots; ip_places.py has that. When packets
 did not come, which the RTP sequence numbers show, the listeners are told
 how many before the next that did, "lost 2": UDP loses some, and a player
 that knows where can fill the gap, where one that does not joins two
@@ -247,6 +248,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accounts
+import ip_places
 
 HELLO_WAIT_S = 10
 SESSION_WAIT_S = 10
@@ -337,7 +339,8 @@ class Remote:
         self.heard_at_start = 0
         self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
-            db.execute("update radios set online = 0, listeners = 0")
+            db.execute("update radios set online = 0, listeners = 0, listener_places = ''")
+        self.places = ip_places.Places(settings.ip_places)
 
     def say(self, text):
         print("remote: %s" % text, flush=True)
@@ -725,8 +728,18 @@ class Remote:
         """how many are listening to a radio is kept with it, for the globe
         to say beside its callsign, and those listening are told"""
         listening = len(self.listeners.get(radio, ()))
+        # and the grid squares they are in, as far as their addresses say,
+        # for the globe's dots: "MK97:2,FN31:1"; ip_places.py says how rough
+        # that is and why it is no finer
+        squares = {}
+        for listener in self.listeners.get(radio, ()):
+            square = self.places.where(self.listener_from.get(listener, ""))
+            if square is not None:
+                squares[square] = squares.get(square, 0) + 1
+        places = ",".join("%s:%d" % each for each in sorted(squares.items()))
         with self.store.open() as db:
-            db.execute("update radios set listeners = ? where id = ?", (listening, radio))
+            db.execute("update radios set listeners = ?, listener_places = ? where id = ?",
+                       (listening, places, radio))
         self.tell_listeners(radio, "listening %d" % listening)
 
     async def tell_usage(self):

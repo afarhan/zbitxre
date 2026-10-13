@@ -37,6 +37,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import accounts
+import ip_places
 import remote
 
 DAEMON = os.path.join(HERE, "..", "zbitx_remote")
@@ -282,6 +283,11 @@ class RemoteTest(unittest.TestCase):
         self.folder = tempfile.mkdtemp()
         settings = accounts.Settings()
         settings.database = os.path.join(self.folder, "accounts.db")
+        # where the listeners' made-up addresses are said to be
+        settings.ip_places = os.path.join(self.folder, "places.bin")
+        with open(settings.ip_places, "wb") as out:
+            ip_places.build(["203.0.113.0,203.0.113.255,AS,IN,Telangana,Hyderabad,17.385,78.4867"],
+                            out)
         settings.registration = "open"
         settings.pow_bits = 0
         self.mail = Mail()
@@ -584,6 +590,10 @@ class RemoteTest(unittest.TestCase):
         second = self.listener(radio["id"], address="203.0.113.8")
         self.assertEqual(told(first), "listening 2")
         self.assertEqual(kept(), 2)
+        # and roughly where they are: both addresses are in the one square
+        with self.service.store.open() as db:
+            self.assertEqual(db.execute("select listener_places from radios where id = ?",
+                                        (radio["id"],)).fetchone()[0], "MK97:2")
         second.close()
         self.assertEqual(told(first), "listening 1")
         first.close()

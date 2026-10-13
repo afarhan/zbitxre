@@ -444,7 +444,7 @@ class AccountsTest(unittest.TestCase):
         home = self.service.radio_called("vu2ese-home")
         self.assertEqual(json.loads(text), [{"radio": home["id"], "callsign": "VU2ESE",
                                              "grid": "MK97", "lat": 17.5, "lon": 79.0,
-                                             "listening": 0}])
+                                             "listening": 0, "listeners": []}])
         for hidden in ("home", "fj", "abcd", home["client_password"]):
             self.assertNotIn(hidden, text)
 
@@ -454,7 +454,11 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn('<canvas id="globe">', text)
         self.assertIn('<button id="view">flat map</button>', text)
-        self.assertNotIn("http", text.replace("http-equiv", ""))
+        # the one address of another site on it is a link to follow, the
+        # credit DB-IP's licence asks for; nothing is fetched from there
+        self.assertIn('<a href="https://db-ip.com"', text)
+        self.assertNotIn("http", text.replace("http-equiv", "").replace(
+            '<a href="https://db-ip.com"', ""))
         for path, has in (("/map.js", "radioSound"), ("/map.css", "#globe"),
                           ("/static/land.json", "[[[")):
             status, text = visitor.get(path)

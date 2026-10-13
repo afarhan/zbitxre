@@ -493,8 +493,29 @@ MAP_SCRIPT = """
     shift = 0;
   }
 
+  // those listening, a small dot for each grid square any are in, larger
+  // for more of them. No name is put to a dot: the square is all that is
+  // known, and all that should be shown
+  function drawListeners() {
+    var i, j, heard, at;
+    for (i = 0; i < radios.length; i++) {
+      heard = radios[i].listeners || [];
+      for (j = 0; j < heard.length; j++) {
+        shift = isFlat ? Math.round((lon0 - heard[j].lon) / 360) * 360 : 0;
+        at = place(heard[j].lon, heard[j].lat);
+        shift = 0;
+        if (!at.seen) { continue; }
+        pen.beginPath(); pen.arc(at.x, at.y, 2.5 + Math.min(4, heard[j].count), 0, 2 * Math.PI);
+        pen.fillStyle = "rgba(120,200,255,0.3)"; pen.fill();
+        pen.beginPath(); pen.arc(at.x, at.y, 2.5, 0, 2 * Math.PI);
+        pen.fillStyle = "#7cf"; pen.fill();
+      }
+    }
+  }
+
   function drawRadios() {
     var i, at;
+    drawListeners();
     pen.font = "13px sans-serif"; pen.textBaseline = "middle";
     for (i = 0; i < radios.length; i++) {
       // on the flat map a radio is drawn in the copy of the world nearest
@@ -769,7 +790,9 @@ html, body { height: 100%; margin: 0; font-family: sans-serif; background: #0508
 #panel label { display: block; margin-top: 0.8em; font-size: 0.9em; color: #9ab; }
 #panel input { width: 100%; }
 #state { margin-left: 0.8em; color: #9ab; }
-#hint { position: absolute; right: 1em; bottom: 1em; color: #678; font-size: 0.85em; z-index: 2; }
+#hint { position: absolute; right: 1em; bottom: 1em; color: #678; font-size: 0.85em; z-index: 2;
+    text-align: right; line-height: 1.5; }
+#hint a { color: #789; }
 """
 
 MAP_PAGE = """<!doctype html>
@@ -785,7 +808,9 @@ MAP_PAGE = """<!doctype html>
 <button id="listen">Listen</button><span id="state"></span>
 <label>Volume, here <input type="range" id="volume" min="0" max="100" value="60"></label>
 </div>
-<div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen</div>
+<div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen
+<br>blue dots are listeners, placed to the nearest grid square by their network address
+&middot; <a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></div>
 <script src="/static/sound.js"></script>
 <script src="/map.js"></script>
 </body></html>
@@ -901,6 +926,8 @@ class Settings:
         self.port = int(port)
         self.base_url = server.get("base_url", "http://127.0.0.1:8100").rstrip("/")
         self.database = server.get("database", "accounts.db")
+        # ip_places.py's file, for putting listeners on the globe; none, no dots
+        self.ip_places = server.get("ip_places", "")
         self.registration = server.get("registration", "invite")
         self.pow_bits = int(server.get("pow_bits", str(POW_BITS)))
         # where a page's WebSockets go: this site, unless they are said to
@@ -1006,6 +1033,19 @@ def square_of(grid):
             "south": south, "north": south + 1, "west": west, "east": west + 2}
 
 
+def listeners_of(places):
+    """the squares a radio's listeners are in, as kept, "MK97:2,FN31:1", for
+    the globe: each square's name and middle and how many are in it"""
+    found = []
+    for part in places.split(","):
+        grid, _, count = part.partition(":")
+        square = square_of(grid)
+        if square is not None and count.isdigit():
+            found.append({"grid": square["grid"], "lat": square["lat"], "lon": square["lon"],
+                          "count": int(count)})
+    return found
+
+
 def radio_id(callsign, suffix):
     return "%s-%s" % (callsign.lower(), suffix)
 
@@ -1043,6 +1083,10 @@ class Store:
             # and how many are listening, for the globe to say
             if "listeners" not in columns:
                 db.execute("alter table radios add column listeners integer not null default 0")
+            # and roughly where they are, "MK97:2,FN31:1"
+            if "listener_places" not in columns:
+                db.execute("alter table radios add column listener_places text not null "
+                           "default ''")
 
     @contextlib.contextmanager
     def open(self):
@@ -1353,20 +1397,22 @@ class Service:
 
     def on_the_map(self):
         """the radios on line that have a grid, for anyone to see and hear:
-        each one's number, its owner's callsign, its four-character square
-        and how many are listening to it, and no more"""
+        each one's number, its owner's callsign, its four-character square,
+        how many are listening to it and the squares they are in, as far as
+        their addresses say, and no more"""
         found = []
         with self.store.open() as db:
             for row in db.execute(
-                    "select radios.id, accounts.callsign, radios.grid, radios.listeners "
-                    "from radios "
+                    "select radios.id, accounts.callsign, radios.grid, radios.listeners, "
+                    "radios.listener_places from radios "
                     "join accounts on accounts.id = radios.account where radios.online = 1 "
                     "and accounts.status = 'active' order by accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 if square is not None:
                     found.append({"radio": row["id"], "callsign": row["callsign"],
                                   "grid": square["grid"], "lat": square["lat"],
-                                  "lon": square["lon"], "listening": row["listeners"]})
+                                  "lon": square["lon"], "listening": row["listeners"],
+                                  "listeners": listeners_of(row["listener_places"])})
         return found
 
     def snapshot(self, account, radio):
