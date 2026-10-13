@@ -1244,8 +1244,8 @@
   // While the radio receives, the dial is the signal's strength, S1 to S9
   // and 20 dB over. While it sends, the same dial is the power, nought to
   // a hundred watts; under it are the power and the SWR in figures, and a
-  // bar that is the SWR: empty at 1, full at 4 and beyond, green to 1.5,
-  // yellow to 3 and red above. The author asked
+  // bar that is the SWR, from nought to 4.5: green to 1.5, yellow to 3
+  // and red above. The author asked
   // for the two here: they were written at the end of the status line,
   // where they flickered through what the line was saying.
   function drawMeter() {
@@ -1298,26 +1298,27 @@
     ray(angle(place), radius * 0.3, radius * 1.09);
     if (!isSending()) { return; }
     // under the dial, over the needle's foot: the power and the SWR in
-    // figures, in the middle, "25W 1.3", and under them the SWR's bar. The
-    // bar is empty at 1 and full at 4; an aerial that is well matched moves
-    // it very little, which is why the author asked for the figures, and a
-    // sliver of it is always shown when there is an SWR to show
+    // figures, in the middle, "25W 1.3", and under them the SWR's bar
     var foot = high * 0.67, bar = high * 0.07, barLeft = wide * 0.1, barWide = wide * 0.8;
-    var barTop = high * 0.89, filled = swr < 1 ? 0 : Math.max(0.05, Math.min(1, (swr - 1) / 3));
+    var barTop = high * 0.89, filled = Math.max(0, Math.min(1, swr / 4.5));
+    var zones = [["#30d060", "#17402a"], ["#ffe000", "#4a4410"], ["#ff4033", "#4a1a16"]];
     pen.fillStyle = "#101820"; pen.fillRect(1, foot, wide - 2, high - foot - 1);
     pen.fillStyle = "#ffffff"; pen.textAlign = "center"; pen.textBaseline = "middle";
     pen.font = "bold " + (high * 0.2) + "px sans-serif";
     pen.fillText((watts < 10 ? watts.toFixed(1) : Math.round(watts)) + "W"
       + (swr >= 1 ? " " + swr.toFixed(1) : ""), wide / 2, high * 0.78);
     pen.textBaseline = "alphabetic";
-    pen.fillStyle = "#26323d"; pen.fillRect(barLeft, barTop, barWide, bar);
-    // the author's colours: green to 1.5, yellow from there to 3, red above
-    pen.fillStyle = swr < 1.5 ? "#30d060" : swr <= 3 ? "#ffe000" : "#ff4033";
-    pen.fillRect(barLeft, barTop, barWide * filled, bar);
-    // nicks at 1.5 and 3
-    pen.fillStyle = "#101820";
-    pen.fillRect(barLeft + barWide / 6 - 0.5, barTop, 1, bar);
-    pen.fillRect(barLeft + barWide * 2 / 3 - 0.5, barTop, 1, bar);
+    // the bar is in three parts, each a third of it: nought to 1.5, green,
+    // 1.5 to 3, yellow, and from 3, red, the author's; each is dim until
+    // the SWR has reached into it, and bright as far as it has. A matched
+    // aerial, at 1, fills two thirds of the green
+    zones.forEach(function (zone, n) {
+      var from = n / 3, lit = Math.max(0, Math.min(1 / 3, filled - from));
+      pen.fillStyle = zone[1];
+      pen.fillRect(barLeft + barWide * from, barTop, barWide / 3 - 1, bar);
+      pen.fillStyle = zone[0];
+      pen.fillRect(barLeft + barWide * from, barTop, Math.max(0, barWide * lit - (lit >= 1 / 3 ? 1 : 0)), bar);
+    });
   }
 
   /* FT8's messages */

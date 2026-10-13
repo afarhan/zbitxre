@@ -164,8 +164,8 @@
 // it: the radio sends it in the spectrum's place, a fifth of a second
 // across, and the waterfall stays as it was. The dial is then the power,
 // nought to a hundred watts, marked at 0, 50 and 100; under it are the
-// power and the SWR in figures, "25W 1.3", and a bar that is the SWR: empty
-// at 1, full at 4 and beyond, green to 1.5, yellow to 3 and red above. The author asked for the two there; they were written at
+// power and the SWR in figures, "25W 1.3", and a bar that is the SWR, from
+// nought to 4.5: green to 1.5, yellow to 3 and red above. The author asked for the two there; they were written at
 // the right end of the status line, where they flickered through what the
 // line was saying.
 //
@@ -513,11 +513,9 @@
 #define SWR_BAR_HEIGHT 0.07
 #define SWR_BAR_MARGIN 0.1
 #define SWR_BAR_TOP 0.89
-#define SWR_BAR_LEAST 0.05
-#define SWR_BAR_EMPTY 1.0
-#define SWR_BAR_FULL 4.0
-#define SWR_GOOD_BELOW 1.5
-#define SWR_FAIR_UP_TO 3.0
+#define SWR_BAR_FULL 4.5
+#define SWR_ZONES 3
+#define SWR_DIM 0.28
 #define SMETER_SWEEP (48.0 * G_PI / 180.0)
 #define SMETER_TICK 0.09
 #define SMETER_MARK_ROOM 0.06
@@ -2974,11 +2972,11 @@ static void draw_power_mark(cairo_t *cr, double x, double y, double radius, doub
 }
 
 // under the dial, over the needle's foot: the power and the SWR in figures,
-// in the middle, "25W 1.3", and under them the SWR as a bar, in the
-// author's colours: green to 1.5, yellow from there to 3, red above. The
-// bar is empty at 1 and full at 4; an aerial that is well matched moves it very
-// little, which is why the author asked for the figures, and a sliver of it
-// is always shown when there is an SWR to show
+// in the middle, "25W 1.3", and under them the SWR as a bar
+static const double swr_zone_colours[SWR_ZONES][3] = {
+	{0.19, 0.82, 0.38}, {1.0, 0.88, 0.0}, {1.0, 0.25, 0.2},
+};
+
 static void draw_power_and_swr(cairo_t *cr, int width, int height) {
 	int power = atoi(value_of("POWER"));
 	int swr_tenths = atoi(value_of("SWR"));
@@ -2987,10 +2985,13 @@ static void draw_power_and_swr(cairo_t *cr, int width, int height) {
 	double left = width * SWR_BAR_MARGIN;
 	double across = width * (1.0 - 2 * SWR_BAR_MARGIN);
 	double top = height * SWR_BAR_TOP;
-	double filled = 0;
+	double filled;
+	double from;
+	double lit;
 	cairo_text_extents_t size;
 	char text[TEXT_MAX];
 	int used;
+	int zone;
 
 	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
 	cairo_rectangle(cr, 1, height * METER_FOOT_TOP, width - 2,
@@ -3012,31 +3013,30 @@ static void draw_power_and_swr(cairo_t *cr, int width, int height) {
 		height * METER_FIGURES_AT - size.height / 2 - size.y_bearing);
 	cairo_show_text(cr, text);
 
-	if (swr >= SWR_BAR_EMPTY) {
-		filled = (swr - SWR_BAR_EMPTY) / (SWR_BAR_FULL - SWR_BAR_EMPTY);
-		if (filled < SWR_BAR_LEAST)
-			filled = SWR_BAR_LEAST;
-		if (filled > 1)
-			filled = 1;
+	// the bar is in three parts, each a third of it: nought to 1.5, green,
+	// 1.5 to 3, yellow, and from 3, red, the author's; each is dim until
+	// the SWR has reached into it, and bright as far as it has. A matched
+	// aerial, at 1, fills two thirds of the green
+	filled = swr / SWR_BAR_FULL;
+	if (filled > 1)
+		filled = 1;
+	for (zone = 0; zone < SWR_ZONES; zone++) {
+		from = (double)zone / SWR_ZONES;
+		lit = filled - from;
+		if (lit < 0)
+			lit = 0;
+		if (lit > 1.0 / SWR_ZONES)
+			lit = 1.0 / SWR_ZONES;
+		cairo_set_source_rgb(cr, swr_zone_colours[zone][0] * SWR_DIM,
+			swr_zone_colours[zone][1] * SWR_DIM, swr_zone_colours[zone][2] * SWR_DIM);
+		cairo_rectangle(cr, left + across * from, top, across / SWR_ZONES - 1, bar);
+		cairo_fill(cr);
+		cairo_set_source_rgb(cr, swr_zone_colours[zone][0], swr_zone_colours[zone][1],
+			swr_zone_colours[zone][2]);
+		cairo_rectangle(cr, left + across * from, top,
+			lit >= 1.0 / SWR_ZONES ? across * lit - 1 : across * lit, bar);
+		cairo_fill(cr);
 	}
-	cairo_set_source_rgb(cr, 0.15, 0.20, 0.24);
-	cairo_rectangle(cr, left, top, across, bar);
-	cairo_fill(cr);
-	if (swr < SWR_GOOD_BELOW)
-		cairo_set_source_rgb(cr, 0.19, 0.82, 0.38);
-	else if (swr <= SWR_FAIR_UP_TO)
-		cairo_set_source_rgb(cr, 1.0, 0.88, 0.0);
-	else
-		cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
-	cairo_rectangle(cr, left, top, across * filled, bar);
-	cairo_fill(cr);
-	// nicks at 1.5 and at 3
-	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
-	cairo_rectangle(cr, left + across * (SWR_GOOD_BELOW - SWR_BAR_EMPTY)
-		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
-	cairo_rectangle(cr, left + across * (SWR_FAIR_UP_TO - SWR_BAR_EMPTY)
-		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
-	cairo_fill(cr);
 }
 
 // the meter's place on the top row: a dial with a needle. While the radio
