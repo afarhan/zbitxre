@@ -177,9 +177,10 @@ class Client:
 
     def read(self):
         """the next line that is not the meter's, nor the gateway's word on
-        its earphone, which comes when it comes"""
+        one of its connections, which comes when it comes"""
         line = self.file.readline().strip()
-        while line.startswith(("SMETER ", "BLUETOOTH_STATUS ")):
+        while line.startswith(("SMETER ", "BLUETOOTH_STATUS ", "SOUND_CARD_STATUS ",
+                               "CAT_STATUS ")):
             line = self.file.readline().strip()
         return line
 
