@@ -159,6 +159,32 @@ There is a stream only while somebody listens; the owner's page always
 does, and speech with no stream to go by is dropped. Nothing here says
 when the radio is to send: that is TX, a line like any other.
 
+HOW MUCH IT IS USED
+
+The author asked for this when he made the globe's address public and his
+own sound stopped, to know whether the service had given way under those
+who came. It had not: three or four were listening, and his telephone's
+browser had been put behind another program. But nothing here said so.
+
+Now each listener's coming and going is said, with the address it came
+from, how long it stayed and how many are listening; so is one turned away
+for want of room. And every five minutes in which anything happened, one
+line:
+
+    remote: usage, last 5 min: radios on line 1, listening now 4, most at
+    once 6, came 9, turned away 0, packets from radios 15000, to listeners
+    52000, kept from slow listeners 12, speech packets 0, working a radio
+    now 1
+
+It goes where everything this program says goes, the system's journal:
+
+    journalctl -u sbitx-remote | grep usage
+
+On the droplet, a 2 GB machine with one processor, ninety listeners to one
+radio took an eighth of the processor, and every one of them was sent
+every packet (2026-10-13). The limit of a hundred to a radio is this
+program's own, LISTENERS_A_RADIO, not the machine's.
+
 WORKING A RADIO FROM A BROWSER
 
 The website has a client of its own, a page that works the radio as the
@@ -242,6 +268,7 @@ LISTENERS_A_RADIO = 100
 LISTENERS_AN_ADDRESS = 6
 REQUEST_LONGEST = 8192
 PAGE_QUIET_S = 20
+USAGE_EVERY_S = 300
 MESSAGE_LONGEST = 65536
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WRONG_PROOFS = 100
@@ -301,6 +328,9 @@ class Remote:
         self.stream_of = {}  # a radio's id -> its stream's id, while there is one
         self.heard = 0       # packets of sound taken, for the tests
         self.spoken = 0      # and of speech sent
+        # how much the service was used since tell_usage() last said
+        self.usage = dict.fromkeys(("came", "turned away", "most", "heard", "sent",
+                                    "kept back", "spoken"), 0)
         self.heard_at_start = 0
         self.cookie_keys = {}  # a radio's id -> its stretched cookie, while it is on line
         with self.store.open() as db:
@@ -507,11 +537,15 @@ class Remote:
         stream.last = sequence
         stream.address = address
         self.heard += 1
+        self.usage["heard"] += 1
         sound = packet[STREAM_ID_BYTES + RTP_HEADER_BYTES:-TAG_BYTES]
         frame = bytes([0x82, 126]) + struct.pack(">H", len(sound)) + sound
         for listener in self.listeners.get(radio, ()):
             if listener.transport.get_write_buffer_size() < LISTENER_WAITING_MOST:
                 listener.write(frame)
+                self.usage["sent"] += 1
+            else:
+                self.usage["kept back"] += 1
 
     def send_speech(self, radio, sound):
         """twenty milliseconds of the owner's speech, as the page sent it,
@@ -529,6 +563,7 @@ class Remote:
         tag = hmac.new(stream.speech_key, packet, hashlib.sha256).digest()[:TAG_BYTES]
         self.sound_port.sendto(packet + tag, stream.address)
         self.spoken += 1
+        self.usage["spoken"] += 1
 
     def tell_listeners(self, radio, word):
         for listener in self.listeners.get(radio, ()):
@@ -648,12 +683,20 @@ class Remote:
     async def listen(self, found, address, reader, writer):
         """a browser listening to a radio, until it closes"""
         if not self.has_room(found["id"], address):
+            self.usage["turned away"] += 1
+            self.say("a listener from %s is turned away from radio %d: no room" % (
+                address, found["id"]))
             writer.write(self.text_message("full"))
             await writer.drain()
             return
         radio = found["id"]
+        came = time.time()
         self.listener_from[writer] = address
         self.listeners.setdefault(radio, set()).add(writer)
+        self.usage["came"] += 1
+        self.usage["most"] = max(self.usage["most"], self.listening())
+        self.say("a listener has come to radio %d from %s: %d listening" % (
+            radio, address, len(self.listeners[radio])))
         try:
             writer.write(self.text_message("online" if radio in self.lines else "offline"))
             if radio in self.tuned:
@@ -665,8 +708,34 @@ class Remote:
         finally:
             self.listener_from.pop(writer, None)
             self.listeners[radio].discard(writer)
+            self.say("a listener from %s has left radio %d after %d s: %d listening" % (
+                address, radio, time.time() - came, len(self.listeners[radio])))
             if not self.listeners[radio]:
                 self.stop_stream(radio)
+
+    def listening(self):
+        return sum(len(listeners) for listeners in self.listeners.values())
+
+    async def tell_usage(self):
+        """every USAGE_EVERY_S, if anything happened, a line of how much the
+        service was used: who is listening, how many came and were turned
+        away, how many packets of sound came from radios and went to
+        listeners, and how many were kept from listeners too slow to take
+        them"""
+        while True:
+            await asyncio.sleep(USAGE_EVERY_S)
+            used = self.usage
+            if not (used["came"] or used["turned away"] or used["heard"] or self.listening()):
+                continue
+            self.say("usage, last %d min: radios on line %d, listening now %d, most at once %d, "
+                     "came %d, turned away %d, packets from radios %d, to listeners %d, "
+                     "kept from slow listeners %d, speech packets %d, working a radio now %d" % (
+                         USAGE_EVERY_S // 60, len(self.lines), self.listening(), used["most"],
+                         used["came"], used["turned away"], used["heard"], used["sent"],
+                         used["kept back"], used["spoken"],
+                         sum(self.sessions.values())))
+            self.usage = dict.fromkeys(used, 0)
+            self.usage["most"] = self.listening()
 
     async def work(self, radio, reader, writer):
         """the owner's browser working a radio: its lines to the radio and
@@ -866,6 +935,7 @@ class Remote:
             Sound, local_addr=(host, port))
         self.web = await asyncio.start_server(self.meet_browser, web_host, web_port,
                                               limit=REQUEST_LONGEST)
+        self.usage_teller = asyncio.ensure_future(self.tell_usage())
         self.say("listening on %s:%d, and for browsers on %s:%d" % (
             host, port, web_host, self.web.sockets[0].getsockname()[1]))
         return server

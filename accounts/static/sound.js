@@ -47,6 +47,28 @@ function radioSound() {
   var gain = context.createGain();
   gain.connect(context.destination);
 
+  /* the screen is kept on for as long as the player lives. A telephone
+     left to itself puts its screen out after a minute or so, and a browser
+     whose screen is out stops the page and lets its connection go. The
+     author's own listening, on the globe, was ending every minute, and so
+     was everyone's who listened from a telephone and did not touch it;
+     the service's log showed the connections ending after fifty or sixty
+     seconds each. A browser gives up the hold whenever the page is hidden,
+     so it is asked for again each time the page is seen. Where a browser
+     has no such thing, nothing is done. */
+
+  var awake = null, isClosed = false;
+
+  function stayAwake() {
+    if (isClosed || !navigator.wakeLock || document.visibilityState !== "visible") { return; }
+    navigator.wakeLock.request("screen").then(function (held) {
+      if (isClosed) { held.release(); return; }
+      awake = held;
+    }, function () { /* a telephone low on charge refuses; it plays all the same */ });
+  }
+  document.addEventListener("visibilitychange", stayAwake);
+  stayAwake();
+
   var worklet = null, isPlain = false, loaded = null, microphone = null;
   if (context.audioWorklet && window.AudioWorkletNode) {
     loaded = context.audioWorklet.addModule("/static/sound_worklet.js");
@@ -193,6 +215,9 @@ function radioSound() {
     openKeyer: openKeyer,
     delay: function () { return delayOf(context); },
     close: function () {
+      isClosed = true;
+      document.removeEventListener("visibilitychange", stayAwake);
+      if (awake) { awake.release(); awake = null; }
       context.close();
       if (keyerContext) { keyerContext.close(); }
     }

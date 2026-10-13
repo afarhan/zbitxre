@@ -621,7 +621,15 @@ MAP_SCRIPT = """
 
   var player = null, socket = null;
 
+  // Listening goes on until Stop: if the connection is lost, as it is when
+  // the service is started again or a telephone changes its network, the
+  // page waits a little and listens again by itself. It used to stop and
+  // wait to be asked.
+  var isWanted = false, isFull = false, again = null;
+
   function stop(said) {
+    isWanted = false;
+    if (again) { clearTimeout(again); again = null; }
     if (socket) { socket.onclose = null; socket.close(); socket = null; }
     if (player) { player.close(); player = null; }
     button.textContent = "Listen";
@@ -632,6 +640,15 @@ MAP_SCRIPT = """
   function start() {
     player = radioSound();
     player.setLoudness(slider.value / 100);
+    isWanted = true;
+    button.textContent = "Stop";
+    state.textContent = "connecting";
+    listen();
+  }
+
+  function listen() {
+    again = null;
+    isFull = false;
     socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
       + location.host + "/listen?radio=" + chosen.radio);
     socket.binaryType = "arraybuffer";
@@ -653,19 +670,23 @@ MAP_SCRIPT = """
           state.textContent = "the radio is not on line; waiting for it";
           tuned.textContent = "";
         } else if (message.data === "full") {
-          state.textContent = "too many are listening to this radio just now";
+          isFull = true;
+          state.textContent = "too many are listening to this radio just now; waiting for room";
         }
       } else {
         player.play(new Uint8Array(message.data));
       }
     };
-    socket.onclose = function () { stop("the connection was lost"); };
-    button.textContent = "Stop";
-    state.textContent = "connecting";
+    socket.onclose = function () {
+      socket = null;
+      if (!isWanted) { return; }
+      if (!isFull) { state.textContent = "the connection was lost; listening again"; }
+      again = setTimeout(listen, isFull ? 30000 : 3000);
+    };
   }
 
   button.addEventListener("click", function () {
-    if (socket) { stop("stopped"); } else if (chosen) { start(); }
+    if (isWanted) { stop("stopped"); } else if (chosen) { start(); }
   });
   slider.addEventListener("input", function () {
     if (player) { player.setLoudness(slider.value / 100); }
