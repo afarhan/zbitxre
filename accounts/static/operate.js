@@ -1233,8 +1233,9 @@
 
   // While the radio receives, the dial is the signal's strength, S1 to S9
   // and 20 dB over. While it sends, the same dial is the power, nought to
-  // a hundred watts, and under it a bar is the SWR: empty at 1, full at 3
-  // and beyond, green to 1.5, yellow to 2 and red above. The author asked
+  // a hundred watts; under it are the power and the SWR in figures, and a
+  // bar that is the SWR: empty at 1, full at 3 and beyond, green to 1.5,
+  // yellow to 2 and red above. The author asked
   // for the two here: they were written at the end of the status line,
   // where they flickered through what the line was saying.
   function drawMeter() {
@@ -1249,7 +1250,6 @@
     var strength = Number(values.SMETER || 0), units = Math.floor(strength / 100) + (strength % 100) / 6;
     var place = units <= 9 ? units / 9 * 0.7 : 0.7 + Math.min(20, (units - 9) * 6) / 20 * 0.3;
     var watts = Number(values.POWER || 0) / 10, swr = Number(values.SWR || 0) / 10;
-    var bar = high * 0.13, barLeft = wide * 0.08, barWide = wide * 0.84, filled;
     function angle(p) { return -Math.PI / 2 - sweep + 2 * sweep * p; }
     function ray(a, from, to) {
       pen.beginPath();
@@ -1287,16 +1287,26 @@
     pen.strokeStyle = "#ffe600";
     ray(angle(place), radius * 0.3, radius * 1.09);
     if (!isSending()) { return; }
-    // the SWR's bar, across the foot of the dial and over the needle's foot
-    pen.fillStyle = "#101820"; pen.fillRect(1, high - bar * 1.9, wide - 2, bar * 1.9 - 1);
-    pen.fillStyle = "#26323d"; pen.fillRect(barLeft, high - bar * 1.45, barWide, bar);
-    filled = swr <= 1 ? 0 : Math.min(1, (swr - 1) / 2);
+    // under the dial, over the needle's foot: the power and the SWR in
+    // figures, in the middle, "25W 1.3", and under them the SWR's bar. The
+    // bar is empty at 1 and full at 3; an aerial that is well matched moves
+    // it very little, which is why the author asked for the figures, and a
+    // sliver of it is always shown when there is an SWR to show
+    var foot = high * 0.67, bar = high * 0.07, barLeft = wide * 0.1, barWide = wide * 0.8;
+    var barTop = high * 0.89, filled = swr < 1 ? 0 : Math.max(0.05, Math.min(1, (swr - 1) / 2));
+    pen.fillStyle = "#101820"; pen.fillRect(1, foot, wide - 2, high - foot - 1);
+    pen.fillStyle = "#ffffff"; pen.textAlign = "center"; pen.textBaseline = "middle";
+    pen.font = "bold " + (high * 0.2) + "px sans-serif";
+    pen.fillText((watts < 10 ? watts.toFixed(1) : Math.round(watts)) + "W"
+      + (swr >= 1 ? " " + swr.toFixed(1) : ""), wide / 2, high * 0.78);
+    pen.textBaseline = "alphabetic";
+    pen.fillStyle = "#26323d"; pen.fillRect(barLeft, barTop, barWide, bar);
     pen.fillStyle = swr < 1.5 ? "#30d060" : swr < 2 ? "#ffe000" : "#ff4033";
-    pen.fillRect(barLeft, high - bar * 1.45, barWide * filled, bar);
-    // marks at 1.5 and 2
+    pen.fillRect(barLeft, barTop, barWide * filled, bar);
+    // nicks at 1.5 and 2
     pen.fillStyle = "#101820";
-    pen.fillRect(barLeft + barWide * 0.25 - 0.5, high - bar * 1.45, 1, bar);
-    pen.fillRect(barLeft + barWide * 0.5 - 0.5, high - bar * 1.45, 1, bar);
+    pen.fillRect(barLeft + barWide * 0.25 - 0.5, barTop, 1, bar);
+    pen.fillRect(barLeft + barWide * 0.5 - 0.5, barTop, 1, bar);
   }
 
   /* FT8's messages */

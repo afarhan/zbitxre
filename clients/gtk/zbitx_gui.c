@@ -163,9 +163,9 @@
 // of what is being sent, as an oscilloscope shows it and as zbitxv2 drew
 // it: the radio sends it in the spectrum's place, a fifth of a second
 // across, and the waterfall stays as it was. The dial is then the power,
-// nought to a hundred watts, marked at 0, 50 and 100, and a bar under it
-// is the SWR: empty at 1, full at 3 and beyond, green to 1.5, yellow to 2
-// and red above. The author asked for the two there; they were written at
+// nought to a hundred watts, marked at 0, 50 and 100; under it are the
+// power and the SWR in figures, "25W 1.3", and a bar that is the SWR: empty
+// at 1, full at 3 and beyond, green to 1.5, yellow to 2 and red above. The author asked for the two there; they were written at
 // the right end of the status line, where they flickered through what the
 // line was saying.
 //
@@ -496,10 +496,14 @@
 #define SMETER_ARC_TOP 0.36
 #define POWER_DIAL_WATTS 100.0
 #define POWER_MARK_EDGE 2
-#define SWR_BAR_HEIGHT 0.13
-#define SWR_BAR_MARGIN 0.08
-#define SWR_BAR_FROM_FOOT 1.45
-#define SWR_BAR_ROOM 1.9
+#define POWER_WHOLE_FROM 100
+#define METER_FOOT_TOP 0.67
+#define METER_FIGURES_AT 0.78
+#define METER_FIGURES_SIZE 0.2
+#define SWR_BAR_HEIGHT 0.07
+#define SWR_BAR_MARGIN 0.1
+#define SWR_BAR_TOP 0.89
+#define SWR_BAR_LEAST 0.05
 #define SWR_BAR_EMPTY 1.0
 #define SWR_BAR_FULL 3.0
 #define SWR_GOOD_BELOW 1.5
@@ -2952,22 +2956,51 @@ static void draw_power_mark(cairo_t *cr, double x, double y, double radius, doub
 	cairo_show_text(cr, text);
 }
 
-// the SWR as a bar across the foot of the dial, over the needle's foot
-static void draw_swr_bar(cairo_t *cr, int width, int height) {
-	double swr = atoi(value_of("SWR")) / (double)TENTHS;
+// under the dial, over the needle's foot: the power and the SWR in figures,
+// in the middle, "25W 1.3", and under them the SWR as a bar. The bar is
+// empty at 1 and full at 3; an aerial that is well matched moves it very
+// little, which is why the author asked for the figures, and a sliver of it
+// is always shown when there is an SWR to show
+static void draw_power_and_swr(cairo_t *cr, int width, int height) {
+	int power = atoi(value_of("POWER"));
+	int swr_tenths = atoi(value_of("SWR"));
+	double swr = swr_tenths / (double)TENTHS;
 	double bar = height * SWR_BAR_HEIGHT;
 	double left = width * SWR_BAR_MARGIN;
 	double across = width * (1.0 - 2 * SWR_BAR_MARGIN);
-	double top = height - bar * SWR_BAR_FROM_FOOT;
+	double top = height * SWR_BAR_TOP;
 	double filled = 0;
+	cairo_text_extents_t size;
+	char text[TEXT_MAX];
+	int used;
 
-	if (swr > SWR_BAR_EMPTY)
-		filled = (swr - SWR_BAR_EMPTY) / (SWR_BAR_FULL - SWR_BAR_EMPTY);
-	if (filled > 1)
-		filled = 1;
 	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
-	cairo_rectangle(cr, 1, height - bar * SWR_BAR_ROOM, width - 2, bar * SWR_BAR_ROOM - 1);
+	cairo_rectangle(cr, 1, height * METER_FOOT_TOP, width - 2,
+		height * (1.0 - METER_FOOT_TOP) - 1);
 	cairo_fill(cr);
+
+	if (power < POWER_WHOLE_FROM)
+		used = snprintf(text, sizeof(text), "%d.%dW", power / TENTHS, power % TENTHS);
+	else
+		used = snprintf(text, sizeof(text), "%dW", (power + TENTHS / 2) / TENTHS);
+	if (swr_tenths >= TENTHS)
+		snprintf(text + used, sizeof(text) - used, " %d.%d", swr_tenths / TENTHS,
+			swr_tenths % TENTHS);
+	cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+	cairo_set_font_size(cr, height * METER_FIGURES_SIZE);
+	cairo_text_extents(cr, text, &size);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_move_to(cr, (width - size.width) / 2 - size.x_bearing,
+		height * METER_FIGURES_AT - size.height / 2 - size.y_bearing);
+	cairo_show_text(cr, text);
+
+	if (swr >= SWR_BAR_EMPTY) {
+		filled = (swr - SWR_BAR_EMPTY) / (SWR_BAR_FULL - SWR_BAR_EMPTY);
+		if (filled < SWR_BAR_LEAST)
+			filled = SWR_BAR_LEAST;
+		if (filled > 1)
+			filled = 1;
+	}
 	cairo_set_source_rgb(cr, 0.15, 0.20, 0.24);
 	cairo_rectangle(cr, left, top, across, bar);
 	cairo_fill(cr);
@@ -2979,7 +3012,7 @@ static void draw_swr_bar(cairo_t *cr, int width, int height) {
 		cairo_set_source_rgb(cr, 1.0, 0.25, 0.2);
 	cairo_rectangle(cr, left, top, across * filled, bar);
 	cairo_fill(cr);
-	// marks at 1.5 and at 2
+	// nicks at 1.5 and at 2
 	cairo_set_source_rgb(cr, 0.063, 0.094, 0.125);
 	cairo_rectangle(cr, left + across * (SWR_GOOD_BELOW - SWR_BAR_EMPTY)
 		/ (SWR_BAR_FULL - SWR_BAR_EMPTY) - 0.5, top, 1, bar);
@@ -3045,7 +3078,7 @@ static gboolean on_draw_meter(GtkWidget *widget, cairo_t *cr, gpointer unused) {
 	draw_smeter_ray(cr, x, y, angle, radius * SMETER_NEEDLE_FROM,
 		radius * (1.0 + SMETER_TICK));
 	if (is_sending)
-		draw_swr_bar(cr, width, height);
+		draw_power_and_swr(cr, width, height);
 	return TRUE;
 }
 
