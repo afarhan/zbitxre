@@ -470,6 +470,8 @@ static struct control vfo_b = {
 //              my.sbitx.net
 //   STREAMING  whether anyone may listen to it there, and see what it
 //              copies in FT8
+//   BLUETOOTH  whether its sound is played into a paired Bluetooth
+//              earphone; it is with the other two below
 //
 // Both are off until the owner turns them on, and are kept from one start
 // to the next. They are here as STEP is: the radio program keeps them and
@@ -492,6 +494,20 @@ static struct control streaming = {
 
 static struct control remote_status = {
 	.group = "REMOTE", .name = "REMOTE_STATUS", .kind = CONTROL_TEXT,
+};
+
+// BLUETOOTH is the third of the CONNECTIONS: whether the radio's sound is
+// played into a Bluetooth earphone or speaker that has been paired with
+// the radio's computer. The gateway sees to it as it does the others, and
+// BLUETOOTH_STATUS is what it has to say of it, which is not kept
+static struct control bluetooth = {
+	.group = "CONNECTIONS", .name = "BLUETOOTH", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF",
+};
+
+static struct control bluetooth_status = {
+	.group = "REMOTE", .name = "BLUETOOTH_STATUS", .kind = CONTROL_TEXT,
 };
 
 static struct control span = {
@@ -1333,6 +1349,8 @@ int main(int argc, char **argv) {
 	control_register(&remote);
 	control_register(&streaming);
 	control_register(&remote_status);
+	control_register(&bluetooth);
+	control_register(&bluetooth_status);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();

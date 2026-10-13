@@ -333,13 +333,19 @@ class RemoteTest(unittest.TestCase):
 
         self.radio = RadioProgram()
         self.key_file = os.path.join(self.folder, "remote.key")
+        # in place of setup/bluetooth_audio.sh: it notes the word it was run
+        # with, and says what the real one says when it plays
+        self.bluetooth_script = os.path.join(self.folder, "bluetooth.sh")
+        self.bluetooth_run = os.path.join(self.folder, "bluetooth.run")
+        self.write_bluetooth_script("playing the radio into bluez_output.11_22")
         # in place of the radio program's port for speech to transmit
         self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.microphone.bind(("127.0.0.1", 0))
         self.daemon = subprocess.Popen(
             [DAEMON, "--server", "127.0.0.1", "--port", str(self.port),
              "--radio-port", str(self.radio.port), "--key", self.key_file,
-             "--microphone-port", str(self.microphone.getsockname()[1])],
+             "--microphone-port", str(self.microphone.getsockname()[1]),
+             "--bluetooth-script", self.bluetooth_script],
             stdout=subprocess.DEVNULL)
         self.account = self.make_account("VU2ESE", "farhan@example.org")
 
@@ -369,6 +375,16 @@ class RemoteTest(unittest.TestCase):
                 return
             time.sleep(0.05)
         self.fail("%s; the radio's status was %r" % (said, self.status()))
+
+    def write_bluetooth_script(self, says):
+        with open(self.bluetooth_script, "w") as file:
+            file.write("#!/bin/sh\necho \"$1\" >> %s\necho '%s'\n" % (self.bluetooth_run, says))
+        os.chmod(self.bluetooth_script, 0o755)
+
+    def bluetooth_words(self):
+        if not os.path.exists(self.bluetooth_run):
+            return []
+        return open(self.bluetooth_run).read().split()
 
     def switch_on(self):
         """REMOTE is turned on, and the radio shows its cookie, the website
@@ -625,6 +641,22 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(told(first), "listening 1")
         first.close()
         self.wait_for(lambda: kept() == 0, "the count was not put back to nothing")
+
+    def test_bluetooth_is_switched_among_the_connections_with_nothing_else_on(self):
+        def said():
+            return self.radio.controls.get("BLUETOOTH_STATUS", "")
+        self.wait_for(lambda: said() == "OFF", "nothing was said of bluetooth")
+        self.radio.set("BLUETOOTH", "ON")
+        self.wait_for(lambda: said() == "PLAYING", "it was not said to be playing")
+        self.assertEqual(self.bluetooth_words()[0], "start")
+        self.assertEqual(self.status(), "OFF", "REMOTE and STREAMING are off")
+        self.radio.set("BLUETOOTH", "OFF")
+        self.wait_for(lambda: said() == "OFF", "it was not said to be off")
+        self.assertEqual(self.bluetooth_words()[-1], "stop")
+        # with no earphone there, the script says so, and so does the radio
+        self.write_bluetooth_script("no Bluetooth sound output is connected: connect it")
+        self.radio.set("BLUETOOTH", "ON")
+        self.wait_for(lambda: said() == "NO EARPHONE CONNECTED", "the want of an earphone was not said")
 
     def test_the_owners_two_switches_are_what_the_service_allows(self):
         radio = self.switch_on_and_add()

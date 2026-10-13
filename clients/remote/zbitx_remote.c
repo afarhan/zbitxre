@@ -6,6 +6,7 @@
 //
 //     zbitx_remote [--server my.sbitx.net] [--port 8081] [--radio-port 8081]
 //                  [--key data/remote.key] [--microphone-port 5006]
+//                  [--bluetooth-script setup/bluetooth_audio.sh]
 //
 // PROTOCOL.md, at the top of the repository, says what is spoken and why;
 // accounts/remote.py is the other end.
@@ -122,6 +123,23 @@
 // service asks, with either on: the owner working the radio from afar has
 // to hear it, and the service knows who is asking.
 //
+// A BLUETOOTH EARPHONE
+//
+// The third of the radio's CONNECTIONS is BLUETOOTH: the radio's sound in
+// an earphone or a speaker paired with the radio's computer, which the
+// author asked to have among them. setup/bluetooth_audio.sh does the
+// playing, and says how; this program runs it. With BLUETOOTH on it runs
+// the script's "start" at once and again every ten seconds, since the
+// script does nothing if it is playing already and an earphone may be
+// switched on after the radio is; with BLUETOOTH turned off it runs
+// "stop". What the script says is what is shown, BLUETOOTH_STATUS:
+// PLAYING, NO EARPHONE CONNECTED, or OFF. The script is not waited for:
+// it is run apart and what it says is read when it has said it, so that
+// the radio's sound on its way to my.sbitx.net is not held up for it.
+// Pairing the earphone is done from the desktop's Bluetooth menu. This
+// has nothing to do with my.sbitx.net and works with REMOTE and STREAMING
+// off.
+//
 // WHAT THE RADIO COPIES IN FT8
 //
 // The author asked that the service be sent whatever the radio copies in
@@ -181,6 +199,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
@@ -191,6 +210,8 @@
 #define DEFAULT_RADIO_PORT "8081"
 #define MESSAGE_WORD "MESSAGE "
 #define ALLOWED_ROOM 64
+#define DEFAULT_BLUETOOTH_SCRIPT "setup/bluetooth_audio.sh"
+#define BLUETOOTH_EVERY_MS 10000
 // where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
 #define DEFAULT_MICROPHONE_PORT "5006"
 #define DEFAULT_KEY_FILE "data/remote.key"
@@ -275,6 +296,15 @@ static int is_wanted;
 static int is_remote_allowed;
 static int is_streaming_allowed;
 static char allowed_told[ALLOWED_ROOM];
+static const char *bluetooth_script = DEFAULT_BLUETOOTH_SCRIPT;
+static int is_bluetooth_wanted;
+static int is_bluetooth_on;
+static pid_t bluetooth_pid;
+static int bluetooth_said_fd = NOT_OPEN;
+static char bluetooth_said[TEXT_ROOM];
+static int bluetooth_said_used;
+static long bluetooth_next_ms;
+static char bluetooth_status[STATUS_ROOM];
 static char callsign[CALLSIGN_ROOM];
 static int is_callsign_new;
 static char grid[GRID_ROOM];
@@ -603,6 +633,93 @@ static void say_status(const char *text) {
 		close_fd(&radio_fd);
 }
 
+/* the radio's sound in a Bluetooth earphone */
+
+static void say_bluetooth(const char *text) {
+	char line[TEXT_ROOM];
+
+	if (!strcmp(text, bluetooth_status))
+		return;
+	snprintf(bluetooth_status, sizeof(bluetooth_status), "%s", text);
+	printf("remote: bluetooth %s\n", text);
+	fflush(stdout);
+	if (radio_fd == NOT_OPEN)
+		return;
+	snprintf(line, sizeof(line), "BLUETOOTH_STATUS %s\n", text);
+	if (send_text(radio_fd, line) < 0)
+		close_fd(&radio_fd);
+}
+
+// the script is run apart, with one word, and what it says will be read
+static void bluetooth_run(const char *word) {
+	int said[2];
+
+	if (bluetooth_said_fd != NOT_OPEN || pipe(said) < 0)
+		return;
+	bluetooth_pid = fork();
+	if (bluetooth_pid < 0) {
+		close(said[0]);
+		close(said[1]);
+		return;
+	}
+	if (bluetooth_pid == 0) {
+		dup2(said[1], STDOUT_FILENO);
+		dup2(said[1], STDERR_FILENO);
+		close(said[0]);
+		close(said[1]);
+		execl(bluetooth_script, bluetooth_script, word, (char *)NULL);
+		printf("could not be run\n");
+		_exit(EXIT_FAILURE);
+	}
+	close(said[1]);
+	fcntl(said[0], F_SETFL, O_NONBLOCK);
+	bluetooth_said_fd = said[0];
+	bluetooth_said_used = 0;
+}
+
+// what the script has said so far is read; when it has finished, what it
+// said is what there is to show
+static void bluetooth_hear(void) {
+	ssize_t got;
+
+	if (bluetooth_said_fd == NOT_OPEN)
+		return;
+	got = read(bluetooth_said_fd, bluetooth_said + bluetooth_said_used,
+		sizeof(bluetooth_said) - 1 - bluetooth_said_used);
+	if (got > 0) {
+		bluetooth_said_used += (int)got;
+		return;
+	}
+	if (got < 0 && (errno == EAGAIN || errno == EINTR))
+		return;
+	bluetooth_said[bluetooth_said_used] = 0;
+	close_fd(&bluetooth_said_fd);
+	waitpid(bluetooth_pid, NULL, 0);
+	if (!is_bluetooth_wanted)
+		say_bluetooth("OFF");
+	else if (strstr(bluetooth_said, "laying") != NULL)
+		say_bluetooth("PLAYING");
+	else if (strstr(bluetooth_said, "no Bluetooth") != NULL)
+		say_bluetooth("NO EARPHONE CONNECTED");
+	else
+		say_bluetooth("COULD NOT BE STARTED");
+}
+
+static void bluetooth_poll(long now) {
+	bluetooth_hear();
+	if (bluetooth_said_fd != NOT_OPEN)
+		return;
+	if (is_bluetooth_wanted && (!is_bluetooth_on || now >= bluetooth_next_ms)) {
+		is_bluetooth_on = 1;
+		bluetooth_next_ms = now + BLUETOOTH_EVERY_MS;
+		bluetooth_run("start");
+	}
+	if (!is_bluetooth_wanted && is_bluetooth_on) {
+		is_bluetooth_on = 0;
+		bluetooth_run("stop");
+	}
+}
+
 // a message the radio has copied in FT8 goes to the service, with where
 // the dial is, if this program is on line
 static void decode_pass_on(const char *message) {
@@ -635,6 +752,9 @@ static void radio_poll(long now) {
 		snprintf(said, sizeof(said), "%s", status_said);
 		status_said[0] = 0;
 		say_status(said);
+		snprintf(said, sizeof(said), "%s", bluetooth_status[0] ? bluetooth_status : "OFF");
+		bluetooth_status[0] = 0;
+		say_bluetooth(said);
 	}
 	got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	while (got > 0) {
@@ -647,6 +767,10 @@ static void radio_poll(long now) {
 		if (!strcmp(line, "STREAMING OFF"))
 			is_streaming_allowed = 0;
 		is_wanted = is_remote_allowed || is_streaming_allowed;
+		if (!strcmp(line, "BLUETOOTH ON"))
+			is_bluetooth_wanted = 1;
+		if (!strcmp(line, "BLUETOOTH OFF"))
+			is_bluetooth_wanted = 0;
 		sscanf(line, "FREQ %15s", tuned_hz);
 		sscanf(line, "MODE %15s", tuned_mode);
 		if (!strncmp(line, MESSAGE_WORD, strlen(MESSAGE_WORD)))
@@ -667,6 +791,7 @@ static void radio_poll(long now) {
 		is_remote_allowed = 0;
 		is_streaming_allowed = 0;
 		is_wanted = 0;
+		is_bluetooth_wanted = 0;
 	}
 	// with remote operation switched off, whoever is working the radio
 	// from afar is let go at once
@@ -1112,12 +1237,14 @@ int main(int argc, char **argv) {
 			key_file = argv[i + 1];
 		else if (!strcmp(argv[i], "--microphone-port"))
 			microphone_port = argv[i + 1];
+		else if (!strcmp(argv[i], "--bluetooth-script"))
+			bluetooth_script = argv[i + 1];
 		else
 			i = argc;
 	}
 	if (i != argc) {
 		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]"
-			" [--microphone-port n]\n");
+			" [--microphone-port n] [--bluetooth-script file]\n");
 		return EXIT_FAILURE;
 	}
 	signal(SIGPIPE, SIG_IGN);
@@ -1130,6 +1257,7 @@ int main(int argc, char **argv) {
 	fflush(stdout);
 	while (1) {
 		radio_poll(now_ms());
+		bluetooth_poll(now_ms());
 		follow_the_owner(now_ms());
 		wait_and_pass_on();
 	}
