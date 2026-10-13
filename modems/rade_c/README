@@ -1,0 +1,37 @@
+rade_c — RADE, FreeDV's radio autoencoder, in C: versions 1 and 2.
+
+    https://github.com/freedv/rade_c        BSD 2-clause licence, see LICENSE
+
+RADE is by David Rowe, VK5DGR; the C port is the FreeDV team's, from the
+Python of https://github.com/drowe67/radae. Speech, as the features a
+vocoder works in, is put by a neural encoder onto an OFDM signal that fits
+an SSB passband, and a neural decoder takes it off again.
+
+These are the files of the library, rade_c's src/ as its CMakeLists builds
+the "rade" library of them, at its commit c8a3dc1 of 7 October 2026. They
+are not changed here. Its tools, tests and CMake files are not carried.
+Version 1's files are here because rade_api.c refers to both; the radio
+offers version 2 only, as the mode RADE2, and modems/modem_rade2.c says why.
+
+It is built on Opus's neural network code, which is in modems/opus_dnn.
+
+FOUR OF THE FILES ARE NOT IN THE REPOSITORY
+
+The weights of the networks, 112 MB of numbers as C:
+
+    rade_enc_data.c     rade_dec_data.c         version 1
+    rade_enc_v2_data.c  rade_dec_v2_data.c      version 2
+
+FreeDV says version 2's waveform and weights may still change, and that a
+later version will not work with this one. So they are not kept in git, to
+be carried in its history for ever; setup/fetch_rade_weights.sh fetches
+them from the commit named above and checks each against its SHA-256. The
+build says so if they are not there.
+
+For the same reason this is not to go on the air for operators until
+FreeDV releases version 2: rade_c's README asks that it not.
+
+To move to a newer rade_c: copy the same files from it, change the commit
+here and the commit and the sums in setup/fetch_rade_weights.sh, fetch,
+and run make check, which has FreeDV's own measure of whether the codec
+is whole, tests/test_rade_codec.c.

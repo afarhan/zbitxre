@@ -1,0 +1,40 @@
+opus_dnn — the part of Opus that RADE runs on: the features of speech, the
+FARGAN vocoder, and the neural network core.
+
+    https://github.com/xiph/opus            BSD 3-clause licence, see COPYING
+
+Opus is Xiph.Org's; its neural network code and FARGAN are Jean-Marc
+Valin's. These are files of Opus at its commit 940d4e5, the one rade_c
+builds against, with rade_c's two patches applied (the room for a
+convolution's inputs raised to 2048 for RADE version 2's decoder; export
+marks), in Opus's own folders: celt/, dnn/, include/. They are not changed
+here.
+
+Which files, and three files that are not Opus's, are Rafael Diniz's work
+for Rhizomatica's hermes-radio-daemon (GPL 3), who did this for the sBitx
+in September 2026; they are as in its commit 8212db5:
+
+    config.h            in place of what Opus's ./configure writes: a
+                        floating-point build that chooses its SIMD when it
+                        is compiled, SSE on a PC and NEON on ARM
+    celt_fatal.c        Opus's handler for a failed check, taken from
+                        celt/arch.h without the whole CELT codec
+    radae_vocoder.c/.h  speech to features and features to speech, as
+                        rade_c's lpcnet_demo does them, in the program
+                        itself
+
+They were checked on 13 October 2026 against an Opus that rade_c's own
+build had fetched and patched: all 51 files of celt/, dnn/ and include/
+are the same, byte for byte.
+
+ONE FILE IS NOT IN THE REPOSITORY
+
+dnn/fargan_data.c, FARGAN's weights, 22 MB. setup/fetch_rade_weights.sh
+fetches it with RADE's own, from Rhizomatica's repository at the commit
+above; modems/rade_c/README says why they are not kept here.
+
+ON A 32-BIT ARM
+
+The compiler must be told to use NEON, and the Makefile tells it. Without
+it FARGAN alone took two and a half processors on a Pi Zero 2 W, measured
+6 October 2026; with it a third of one.

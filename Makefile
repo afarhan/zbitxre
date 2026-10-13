@@ -47,6 +47,36 @@ KISS_FFT    = $(BUILD)/kiss_fft.o
 # FT8's coding is ft8_lib's, in modems/ft8_lib as zbitxv2 had it, and is
 # built in the same way; modems/ft8_lib/README says what it is
 FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard modems/ft8_lib/*.c))
+# RADE, FreeDV's digital voice, is rade_c's, in modems/rade_c, on the part
+# of Opus in modems/opus_dnn; their READMEs say what they are. They are
+# built as they are, each file on its own with its warnings off, and with
+# include paths of their own: Opus has a kiss_fft.h that is not the
+# radio's. dsp/rade2_codec.c is the radio's one way in to them and is built
+# with them; the rest of the radio sees only dsp/rade2_codec.h. The weights
+# of the networks are not in the repository, and RADE_WEIGHTS says so.
+RADE_C_FILES = rade_api rade_enc rade_enc_data rade_dec rade_dec_data rade_dsp rade_ofdm \
+	rade_bpf rade_acq rade_tx rade_rx rade_enc_v2 rade_enc_v2_data rade_dec_v2 \
+	rade_dec_v2_data rade_sync rade_sync_data rade_v2_ofdm rade_tx_v2 rade_rx_v2
+OPUS_CELT_FILES = celt_lpc kiss_fft pitch
+OPUS_DNN_FILES = burg fargan fargan_data freq lpcnet_enc lpcnet_tables nnet nnet_default \
+	parse_lpcnet_weights pitchdnn pitchdnn_data
+OPUS_TOP_FILES = celt_fatal radae_vocoder
+RADE_WEIGHTS = modems/rade_c/rade_enc_data.c modems/rade_c/rade_dec_data.c \
+	modems/rade_c/rade_enc_v2_data.c modems/rade_c/rade_dec_v2_data.c \
+	modems/opus_dnn/dnn/fargan_data.c
+RADE_INCLUDES = -DHAVE_CONFIG_H -Imodems/opus_dnn -Imodems/opus_dnn/include \
+	-Imodems/opus_dnn/celt -Imodems/opus_dnn/dnn -Imodems/rade_c
+# on a 32-bit ARM the compiler has to be told to use NEON, without which the
+# vocoder alone needs more than two of a Pi Zero 2 W's processors
+ifeq ($(shell uname -m),armv7l)
+RADE_ARM = -mcpu=cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard
+endif
+RADE_CC     = $(CC) -std=gnu11 -O2 -w $(RADE_ARM) $(RADE_INCLUDES)
+RADE_LIB    = $(patsubst %,$(BUILD)/rade_c_%.o,$(RADE_C_FILES)) \
+	$(patsubst %,$(BUILD)/opus_celt_%.o,$(OPUS_CELT_FILES)) \
+	$(patsubst %,$(BUILD)/opus_dnn_%.o,$(OPUS_DNN_FILES)) \
+	$(patsubst %,$(BUILD)/opus_top_%.o,$(OPUS_TOP_FILES)) \
+	$(BUILD)/rade2_codec.o
 DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c rtp_microphone.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
 	$(MODEMS) $(MODEM_LIST) $(FT8_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
@@ -58,7 +88,8 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_logbook $(BUILD)/test_ft8 $(BUILD)/test_messages \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
 	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
-	$(BUILD)/test_rtp_microphone $(BUILD)/test_telephone $(BUILD)/test_cat
+	$(BUILD)/test_rtp_microphone $(BUILD)/test_telephone $(BUILD)/test_cat \
+	$(BUILD)/test_rade_codec
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -102,6 +133,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_rtp_microphone
 	$(BUILD)/test_telephone
 	$(BUILD)/test_cat
+	$(BUILD)/test_rade_codec
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -205,6 +237,29 @@ $(BUILD)/test_logger: tests/test_logger.c logger.c logger.h control.c control.h 
 		logbook.c logbook.h hw/radio_clock.c hw/radio_clock.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_logger.c logger.c control.c logbook.c \
 		hw/radio_clock.c -lsqlite3
+
+$(RADE_WEIGHTS):
+	@echo "$@ is not here: the weights of RADE's networks are not kept in"
+	@echo "the repository. Run setup/fetch_rade_weights.sh, once, to fetch them."
+	@false
+
+$(BUILD)/rade_c_%.o: modems/rade_c/%.c $(wildcard modems/rade_c/*.h) | $(BUILD)
+	$(RADE_CC) -c -o $@ $<
+
+$(BUILD)/opus_celt_%.o: modems/opus_dnn/celt/%.c | $(BUILD)
+	$(RADE_CC) -c -o $@ $<
+
+$(BUILD)/opus_dnn_%.o: modems/opus_dnn/dnn/%.c | $(BUILD)
+	$(RADE_CC) -c -o $@ $<
+
+$(BUILD)/opus_top_%.o: modems/opus_dnn/%.c modems/opus_dnn/config.h | $(BUILD)
+	$(RADE_CC) -c -o $@ $<
+
+$(BUILD)/rade2_codec.o: dsp/rade2_codec.c dsp/rade2_codec.h | $(BUILD)
+	$(RADE_CC) -g -Wall -Wextra -Idsp -c -o $@ dsp/rade2_codec.c
+
+$(BUILD)/test_rade_codec: tests/test_rade_codec.c dsp/rade2_codec.h $(RADE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_rade_codec.c $(RADE_LIB) -lm
 
 $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUILD)
 	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
