@@ -510,7 +510,9 @@ MAP_SCRIPT = """
       pen.beginPath(); pen.arc(at.x, at.y, isChosen ? 5 : 4, 0, 2 * Math.PI);
       pen.fillStyle = isChosen ? "#ffd23c" : "#50ff8c"; pen.fill();
       pen.fillStyle = "#ffffff";
-      pen.fillText(radios[i].callsign, at.x + 12, at.y);
+      // how many are listening to it is beside its callsign, when any are
+      pen.fillText(radios[i].callsign + (radios[i].listening ? "  " + heads(radios[i].listening) : ""),
+        at.x + 12, at.y);
     }
   }
 
@@ -609,10 +611,18 @@ MAP_SCRIPT = """
     draw();
   });
 
+  // "3 listening"
+  function heads(listening) { return listening + " listening"; }
+
+  function showWho() {
+    who.textContent = chosen.callsign + "  " + chosen.grid
+      + (chosen.listening ? "  \u00b7  " + heads(chosen.listening) : "");
+  }
+
   function choose(radio) {
     if (chosen && chosen.radio !== radio.radio) { stop(""); }
     chosen = radio;
-    who.textContent = radio.callsign + "  " + radio.grid;
+    showWho();
     panel.className = "shown";
     draw();
   }
@@ -656,6 +666,13 @@ MAP_SCRIPT = """
       if (typeof message.data === "string") {
         var words = message.data.split(" ");
         if (words[0] === "lost") { player.lost(Number(words[1])); return; }
+        // the service says how many are listening whenever that changes
+        if (words[0] === "listening" && chosen) {
+          chosen.listening = Number(words[1]);
+          showWho();
+          draw();
+          return;
+        }
         if (words[0] === "tuned") {
           var hz = ("000000" + words[1]).slice(-Math.max(7, words[1].length));
           tuned.textContent = hz.slice(0, -6).replace(/^0+(?=\\d)/, "") + "."
@@ -709,6 +726,10 @@ MAP_SCRIPT = """
       radios = found;
       count.textContent = radios.length === 1 ? "1 radio on line" :
         radios.length + " radios on line";
+      // the radio that is chosen is the one in what has just come
+      for (i = 0; chosen && i < radios.length; i++) {
+        if (radios[i].radio === chosen.radio) { chosen = radios[i]; showWho(); }
+      }
       if (!isPlaced && radios.length > 0) {
         lon0 = radios[0].lon; lat0 = radios[0].lat; isPlaced = true;
         for (i = 0; i < radios.length; i++) {
@@ -1019,6 +1040,9 @@ class Store:
             columns = [row["name"] for row in db.execute("pragma table_info(radios)")]
             if "grid" not in columns:
                 db.execute("alter table radios add column grid text not null default ''")
+            # and how many are listening, for the globe to say
+            if "listeners" not in columns:
+                db.execute("alter table radios add column listeners integer not null default 0")
 
     @contextlib.contextmanager
     def open(self):
@@ -1329,19 +1353,20 @@ class Service:
 
     def on_the_map(self):
         """the radios on line that have a grid, for anyone to see and hear:
-        each one's number, its owner's callsign and its four-character
-        square, and no more"""
+        each one's number, its owner's callsign, its four-character square
+        and how many are listening to it, and no more"""
         found = []
         with self.store.open() as db:
             for row in db.execute(
-                    "select radios.id, accounts.callsign, radios.grid from radios "
+                    "select radios.id, accounts.callsign, radios.grid, radios.listeners "
+                    "from radios "
                     "join accounts on accounts.id = radios.account where radios.online = 1 "
                     "and accounts.status = 'active' order by accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 if square is not None:
                     found.append({"radio": row["id"], "callsign": row["callsign"],
                                   "grid": square["grid"], "lat": square["lat"],
-                                  "lon": square["lon"]})
+                                  "lon": square["lon"], "listening": row["listeners"]})
         return found
 
     def snapshot(self, account, radio):

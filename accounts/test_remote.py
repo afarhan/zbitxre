@@ -227,16 +227,20 @@ class Browser:
         taken, self.waiting = self.waiting[:count], self.waiting[count:]
         return taken
 
-    def read(self):
-        """the next message: a text as str, sound as bytes"""
-        head = self.take(2)
-        length = head[1]
-        if length == 126:
-            length = struct.unpack(">H", self.take(2))[0]
-        body = self.take(length)
-        if head[0] & 0x0f == 1:
-            return body.decode()
-        return body
+    def read(self, with_the_count=False):
+        """the next message: a text as str, sound as bytes. How many are
+        listening, which is said whenever it changes, is passed over
+        unless it is asked for"""
+        while True:
+            head = self.take(2)
+            length = head[1]
+            if length == 126:
+                length = struct.unpack(">H", self.take(2))[0]
+            body = self.take(length)
+            if head[0] & 0x0f != 1:
+                return body
+            if with_the_count or not body.startswith(b"listening "):
+                return body.decode()
 
     def speak(self, sound):
         """a binary message of under 65536 bytes, masked as a browser's
@@ -559,6 +563,31 @@ class RemoteTest(unittest.TestCase):
             speaker.play()
         time.sleep(0.5)
         self.assertEqual(self.remote.heard, before, "sound went on with nobody listening")
+
+    def test_how_many_are_listening_is_told_and_kept_for_the_globe(self):
+        radio = self.switch_on_and_add()
+
+        def kept():
+            with self.service.store.open() as db:
+                return db.execute("select listeners from radios where id = ?",
+                                  (radio["id"],)).fetchone()[0]
+
+        def told(browser):
+            # the next count it is told, whatever else is said meanwhile
+            while True:
+                said = browser.read(with_the_count=True)
+                if isinstance(said, str) and said.startswith("listening "):
+                    return said
+        first = self.listener(radio["id"])
+        self.assertEqual(told(first), "listening 1")
+        self.assertEqual(kept(), 1)
+        second = self.listener(radio["id"], address="203.0.113.8")
+        self.assertEqual(told(first), "listening 2")
+        self.assertEqual(kept(), 2)
+        second.close()
+        self.assertEqual(told(first), "listening 1")
+        first.close()
+        self.wait_for(lambda: kept() == 0, "the count was not put back to nothing")
 
     def test_a_listener_is_told_how_many_packets_did_not_come(self):
         radio = self.switch_on_and_add()
