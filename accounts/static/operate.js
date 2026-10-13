@@ -77,7 +77,7 @@
 // to transmit with RIT or SPLIT on, where the transmitter is to be, and
 // back again after. When this page keys the radio, the frequency is sent
 // before TX ON and after TX OFF, so nothing is sent off frequency. That
-// is TX in the voice modes and 2TONE, and TX in the list.
+// is TX in the voice modes and 2TONE.
 //
 // When the radio keys itself, for a CW macro or in FT8, SPLIT and RIT do
 // nothing yet: it sends where the receiver listens. The page hears that
@@ -839,7 +839,14 @@
   function buildList() {
     list.textContent = "";
     rows = [];
-    ["TX", "VFO", "BW"].concat(order).forEach(function (name) {
+    // The order is the author's, for CW: what is touched often is at the
+    // top, BW, the speed and the pitch, and what is set once and left is
+    // under it. The rest follow as the radio lists them, and VFO, this
+    // page's own, is last. TX is not in the list: the voice modes and
+    // 2TONE have their TX button, and CW and FT8 key themselves.
+    var listed = ["BW", "WPM", "PITCH", "SIDETONE", "CW_DELAY", "CW_INPUT"].concat(
+      order.filter(function (name) { return name !== "VFO" && name !== "TX"; }), ["VFO"]);
+    listed.forEach(function (name) {
       var control = schema[name];
       // BW is one of two controls, and VFO is this page's own
       if (name !== "BW" && name !== "VFO" && (!control || control.kind === "action"
@@ -872,7 +879,6 @@
     var group = modeGroup(), control = schema[rowControl(name)];
     if (name === "VFO") { return true; }
     if (!control) { return false; }
-    if (name === "TX") { return group !== "VOICE" && group !== "2TONE" && group !== "FT8"; }
     if (name === "BW") { return group !== "FT8"; }
     return control.group === "RADIO" || control.group === group;
   }

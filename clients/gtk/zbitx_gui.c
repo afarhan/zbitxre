@@ -3302,8 +3302,10 @@ static void add_row(const char *control, enum place place) {
 // what is never a row of the list: what has a place or a button of its own,
 // and the two bandwidths, which BW stands for
 static int is_in_list(const struct known *k) {
+	// TX is nowhere in the list: the voice modes and 2TONE have their
+	// button for it, and CW and FT8 key themselves
 	static const char *const elsewhere[] = {
-		"FREQ", "BAND", "BW_VOICE", "BW_CW", NULL,
+		"FREQ", "BAND", "BW_VOICE", "BW_CW", "TX", NULL,
 	};
 	int i;
 
@@ -3317,11 +3319,17 @@ static int is_in_list(const struct known *k) {
 }
 
 // the rows, made again each time the radio sends its schema: those with a
-// place of their own, at their places; and in the list, the rest of the
-// radio's own, then BW and the modems' own, of which only the mode in
-// use's are shown
+// place of their own, at their places; and in the list, BW and the modems'
+// own, of which only the mode in use's are shown, and after them the rest
+// of the radio's own. The order of CW's is the author's: what is touched
+// often is at the top, BW, the speed and the pitch, and what is set once
+// and left is under it
 static void make_list(void) {
+	static const char *const first_in_cw[] = {
+		"WPM", "PITCH", "SIDETONE", "CW_DELAY", "CW_INPUT", NULL,
+	};
 	const struct top_place *p;
+	struct known *k;
 	int i;
 
 	for (i = 0; i < row_count; i++)
@@ -3330,14 +3338,19 @@ static void make_list(void) {
 	focus = ON_FREQUENCY;
 	for (p = top_places; p->control != NULL; p++)
 		add_row(p->control, ON_TOP);
-	for (i = 0; i < known_count; i++) {
-		if (!strcmp(known[i].group, "RADIO") && is_in_list(&known[i]))
-			add_row(known[i].name, IN_LIST);
-	}
 	add_row("BW", IN_LIST);
+	for (i = 0; first_in_cw[i] != NULL; i++) {
+		k = find_known(first_in_cw[i]);
+		if (k != NULL && is_in_list(k))
+			add_row(k->name, IN_LIST);
+	}
 	for (i = 0; i < known_count; i++) {
 		if (known[i].group[0] != 0 && strcmp(known[i].group, "RADIO")
 				&& strcmp(known[i].group, "WINDOW") && is_in_list(&known[i]))
+			add_row(known[i].name, IN_LIST);
+	}
+	for (i = 0; i < known_count; i++) {
+		if (!strcmp(known[i].group, "RADIO") && is_in_list(&known[i]))
 			add_row(known[i].name, IN_LIST);
 	}
 	show_values();
