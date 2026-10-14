@@ -49,10 +49,14 @@
 //
 // WHAT IS HEARD
 //
-// Until the codec has found a signal, the receiver's SSB audio, so that a
-// station can be tuned in by ear; it sounds like a buzz. Once it has, the
-// speech, from when a tenth of a second of it is waiting, the codec giving
-// it in pieces; and SSB again when the signal is lost or the over ends.
+// The speech, while the codec holds a signal, from when a tenth of a
+// second of it is waiting, the codec giving it in pieces; and silence
+// otherwise. The codec says when it has found a signal and when it has
+// lost it, and that is the squelch. The receiver's SSB audio was played
+// while there was none, so that a station could be tuned in by ear, a
+// buzz; the author asked on 14 October 2026 for the noise to be squelched
+// when no one is transmitting. A station is still found without it: the
+// codec takes a signal some way off tune, and says how far.
 //
 // WHICH SIDEBAND
 //
@@ -238,6 +242,7 @@ static atomic_int is_tail_made;
 // the audio thread's
 static int32_t baseband_output[BLOCK];
 static int32_t speech_output[BLOCK];
+static int32_t silence[BLOCK];
 static int heard_phase;
 static int is_speaking;
 static int is_tx_on;
@@ -510,7 +515,7 @@ static void rx_rade2(complex float *bins) {
 		heard_phase = (heard_phase + 1) % SIGNAL_STEP;
 	}
 	// speech is played from when enough of it is waiting until it runs
-	// out, and the receiver's own audio otherwise
+	// out, and silence otherwise
 	if (!is_speaking && ring_count(&spoken) >= SPOKEN_LEAST) {
 		is_speaking = 1;
 		rate_filter_clear(&speech_up);
@@ -526,7 +531,7 @@ static void rx_rade2(complex float *bins) {
 			speech_output[i] = (int32_t)(SPEAKER_A_SAMPLE * rate_filter_up(&speech_up, &spoken));
 		speaker_play(speech_output, BLOCK);
 	} else {
-		speaker_play(baseband_output, BLOCK);
+		speaker_play(silence, BLOCK);
 	}
 	sem_post(&work);
 }
