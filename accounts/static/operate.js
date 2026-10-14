@@ -1053,6 +1053,11 @@
     var band = { tuned: 0, low: 300, high: 300 + bw };
     if (mode === "LSB") { band.low = -300 - bw; band.high = -300; }
     if (mode === "AM") { band.low = -bw; band.high = bw; }
+    // RADE2's passband is fixed, and on the band's sideband, the lower below 10 MHz
+    if (mode === "RADE2") {
+      band.low = 250; band.high = 2750;
+      if (Number(values.FREQ || 0) < 10000000) { band.low = -2750; band.high = -250; }
+    }
     if (mode === "FT8") { band.tuned = Number(values.TX_PITCH || 0); band.low = 50; band.high = 4000; }
     if (mode === "CW") { band.tuned = pitch; band.low = pitch - bwCw / 2; band.high = pitch + bwCw / 2; }
     if (mode === "CWR") { band.tuned = -pitch; band.low = -pitch - bwCw / 2; band.high = -pitch + bwCw / 2; }

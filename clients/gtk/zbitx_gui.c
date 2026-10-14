@@ -2866,6 +2866,10 @@ static void open_knobs(void) {
 // is where the radio's oscillator puts the tuned frequency. In CW the
 // oscillator is set off by the pitch, so that a signal on the tuned
 // frequency lies the pitch away from the middle
+#define RADE2_LOW_HZ 250
+#define RADE2_HIGH_HZ 2750
+#define LOWER_SIDEBAND_BELOW_HZ 10000000
+
 static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 	const char *mode = value_of("MODE");
 	int pitch = atoi(value_of("PITCH"));
@@ -2882,6 +2886,16 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 	if (!strcmp(mode, "AM")) {
 		*low_hz = -bw_voice;
 		*high_hz = bw_voice;
+	}
+	// RADE2's passband is fixed, and on the band's sideband, the lower
+	// below 10 MHz, as speech's is; modems/modem_rade2.c says why
+	if (!strcmp(mode, "RADE2")) {
+		*low_hz = RADE2_LOW_HZ;
+		*high_hz = RADE2_HIGH_HZ;
+		if (atoi(value_of("FREQ")) < LOWER_SIDEBAND_BELOW_HZ) {
+			*low_hz = -RADE2_HIGH_HZ;
+			*high_hz = -RADE2_LOW_HZ;
+		}
 	}
 	if (!strcmp(mode, "FT8")) {
 		*tuned_hz = atoi(value_of(TX_PITCH_CONTROL));

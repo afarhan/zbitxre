@@ -910,6 +910,21 @@ static void show_passband(){
 		low_hz = -bw_voice;
 		high_hz = bw_voice;
 	}
+	//RADE2's passband is fixed, and on the band's sideband, the lower
+	//below 10 MHz, as speech's is
+	if (!strcmp(mode, "RADE2")){
+		low_hz = 250;
+		high_hz = 2750;
+		if (controls_find("FREQ") != NULL) {
+			char hz[CONTROL_TEXT_MAX];
+
+			controls_value_text(controls_find("FREQ"), hz, sizeof(hz));
+			if (atol(hz) < 10000000L) {
+				low_hz = -2750;
+				high_hz = -250;
+			}
+		}
+	}
 	if (!strcmp(mode, "FT8")){
 		low_hz = FT8_LOW_HZ;
 		high_hz = FT8_HIGH_HZ;
