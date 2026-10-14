@@ -94,18 +94,16 @@
 // "tinny": the codec was trained on speech whose strength is mostly below
 // 300 Hz, FreeDV's own test speech two thirds of it. Then, at the author's
 // asking, nothing is cut but the offset, by a high-pass at 10 Hz, far
-// below any voice; the leveller would take the offset for speech. The hum
-// goes to the codec as it comes.
+// below any voice, where it would only eat the codec's room. The hum goes
+// to the codec as it comes.
 //
 // The same day the two radios' microphones gave speech 20 dB apart at
-// nearly the same MIC, 49 and 50: the zbitx's an average of 760 in the
-// codec's 16 bits, the sbitx's with peaks three times its full scale,
-// which were clipped and came out of the far receiver clipped. So the
-// speech is levelled before the codec: its peaks are followed, quickly
-// when they rise and slowly when they fall, and brought to half the full
-// scale, by a gain of a tenth to ten. The gain is not raised in the pauses,
-// so that the noise there is not lifted to the speech's level. What peak
-// still goes over is rounded off rather than clipped.
+// nearly the same MIC, 49 and 50, and the sbitx's peaks went to three
+// times the codec's full scale and were clipped. A leveller before the
+// codec was tried, and the author heard "a background chatter of
+// intelligible voices" when he stopped speaking, the pauses' noise lifted
+// with the speech; he asked for it to be taken out. MIC sets the level,
+// and what goes over the full scale is clipped.
 //
 // Receiving: the receiver's audio, levelled by its AGC, is divided by
 // HEARD_FULL_SCALE to come to the codec near the level it expects, which
@@ -182,14 +180,6 @@
 #define SPEECH_LOW_HZ 10.0
 #define BUTTERWORTH_Q 0.70710678
 #define SPEECH_BIQUADS 1
-// the leveller: where it puts the peaks, the gain it may give, how fast it
-// follows the peaks up and down, and the peak under which it is a pause
-#define LEVEL_PEAK 16384.0f
-#define LEVEL_GAIN_MOST 10.0f
-#define LEVEL_GAIN_LEAST 0.1f
-#define LEVEL_RISE_MS 2.0
-#define LEVEL_FALL_MS 800.0
-#define LEVEL_PAUSE_PEAK 1000.0f
 // the codec's peaks, of one, put where 2TONE's are
 #define TX_LEVEL 0.042
 
@@ -264,11 +254,6 @@ static atomic_int over_blocks;
 // the modem thread's
 static enum over over;
 static struct biquad speech_cut[SPEECH_BIQUADS];
-static float level_peak;
-static float level_gain;
-// how much of the way to a new peak the leveller goes in a sample
-static float level_rise;
-static float level_fall;
 // the thread that owns the controls'
 static char status_shown[STATUS_ROOM];
 
@@ -397,44 +382,6 @@ static void biquad_clear(struct biquad *b) {
 	b->x1 = b->x2 = b->y1 = b->y2 = 0;
 }
 
-/* the leveller */
-
-static void level_make(void) {
-	level_rise = (float)(1 - exp(-1000.0 / (LEVEL_RISE_MS * RADE2_SPEECH_RATE_HZ)));
-	level_fall = (float)(1 - exp(-1000.0 / (LEVEL_FALL_MS * RADE2_SPEECH_RATE_HZ)));
-}
-
-static void level_begin(void) {
-	level_peak = 0;
-	level_gain = 1;
-}
-
-// a sample of the speech, at the codec's rate, brought to the level the
-// codec is given, and rounded off near the full scale
-static float level_speech(float sample) {
-	static const float knee = SPEECH_MOST * 0.75f;
-	float size = fabsf(sample);
-	float out;
-
-	if (size > level_peak)
-		level_peak += level_rise * (size - level_peak);
-	else
-		level_peak -= level_fall * level_peak;
-	if (level_peak > LEVEL_PAUSE_PEAK) {
-		level_gain = LEVEL_PEAK / level_peak;
-		if (level_gain > LEVEL_GAIN_MOST)
-			level_gain = LEVEL_GAIN_MOST;
-		if (level_gain < LEVEL_GAIN_LEAST)
-			level_gain = LEVEL_GAIN_LEAST;
-	}
-	out = sample * level_gain;
-	size = fabsf(out);
-	if (size <= knee)
-		return out;
-	size = knee + (SPEECH_MOST - knee) * tanhf((size - knee) / (SPEECH_MOST - knee));
-	return out < 0 ? -size : size;
-}
-
 /* the thread */
 
 // what has been heard goes to the codec in the pieces it asks for, and the
@@ -493,7 +440,6 @@ static void send_said(void) {
 		ring_empty(&said);
 		for (i = 0; i < SPEECH_BIQUADS; i++)
 			biquad_clear(&speech_cut[i]);
-		level_begin();
 		rade2_tx_begin();
 		atomic_store(&tx_end_wanted, 0);
 		atomic_store(&is_tail_made, 0);
@@ -508,7 +454,10 @@ static void send_said(void) {
 			sample = ring_take(&said);
 			for (k = 0; k < SPEECH_BIQUADS; k++)
 				sample = biquad_filter(&speech_cut[k], sample);
-			sample = level_speech(sample);
+			if (sample > SPEECH_MOST)
+				sample = SPEECH_MOST;
+			if (sample < -SPEECH_MOST)
+				sample = -SPEECH_MOST;
 			speech[i] = (int16_t)sample;
 		}
 		rade2_tx_analyse(speech, features);
@@ -705,7 +654,6 @@ static void rade2_start(void) {
 	rate_filter_make(&signal_up, SIGNAL_STEP, SIGNAL_CUTOFF_HZ, SIGNAL_STEP);
 	rate_filter_make(&mic_down, SPEECH_STEP, SPEECH_CUTOFF_HZ, 1.0);
 	biquad_make_high_pass(&speech_cut[0], SPEECH_LOW_HZ, RADE2_SPEECH_RATE_HZ, BUTTERWORTH_Q);
-	level_make();
 	if (rade2_codec_open() < 0) {
 		printf("rade2: the codec would not open, and the mode will be plain SSB\n");
 		return;
