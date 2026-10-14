@@ -305,6 +305,12 @@ static const struct footer footers[] = {
 		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
 		{"TX", "OFF", "RX", COLOUR_BOX},
 	}},
+	//RADE2 is spoken into as the voice modes are
+	{"RADE2", {
+		{"MIC", NULL, NULL, COLOUR_BOX},
+		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
+		{"TX", "OFF", "RX", COLOUR_BOX},
+	}},
 };
 #define FOOTERS ((int)(sizeof(footers) / sizeof(footers[0])))
 
