@@ -122,7 +122,7 @@
   var STEPS = { "10H": 10, "100H": 100, "500H": 500, "1K": 1000, "10K": 10000 };
   // what has a place of its own, or is this page's business and not a row
   var PLACED = ["FREQ", "BAND", "MODE", "AUDIO", "IF", "AGC", "DRIVE", "BW_VOICE", "BW_CW",
-    "STACK"];
+    "STACK", "MIC"];
   var FULL_SCALE_DB = 80, RIT_MOST_HZ = 25000, PIXELS_A_STEP = 14;
 
   var values = {};        // every control's value, as the radio tells them
@@ -213,6 +213,10 @@
       += " button";
   });
   tile("MODE", 10, 2, "MODE", function () { adjust("MODE"); });
+
+  // the first place of the bottom row, beside TX and RX, in the modes that
+  // are spoken into: where the panel has the microphone's gain
+  tile("MIC", 1, 7, "MIC", function () { adjust("MIC"); });
 
   var column = ["LOG", "SET", "TERM", ""].map(function (label, i) {
     var t = tile("COLUMN " + i, 1, i + 3, null, function () { columnTapped(i); });
@@ -496,6 +500,8 @@
     tiles.IF.value.textContent = values.IF || "";
     tiles.VOL.value.textContent = own.VOL;
     tiles.MODE.value.textContent = values.MODE || "";
+    tiles.MIC.value.textContent = values.MIC || "";
+    tiles.MIC.box.className = "tile" + (group === "VOICE" || group === "RADE2" ? "" : " hidden");
     BANDS.forEach(function (band) {
       var t = tiles["BAND " + band];
       t.value.textContent = band;
@@ -888,8 +894,6 @@
     var group = modeGroup(), control = schema[rowControl(name)];
     if (!control) { return false; }
     if (name === "BW") { return group !== "FT8"; }
-    // RADE2 is spoken into, and has the voice modes' microphone gain
-    if (group === "RADE2" && name === "MIC") { return true; }
     return control.group === "RADIO" || control.group === group;
   }
 

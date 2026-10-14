@@ -631,6 +631,9 @@ static const struct top_place top_places[] = {
 	{"IF", 384, 0},
 	{"AUDIO", 432, 0},
 	{"MODE", 432, BANDS_TOP},
+	// the first place of the bottom row, beside TX and RX, in the modes
+	// that are spoken into: where the panel has it
+	{"MIC", 0, FOOTER_TOP},
 	{NULL, 0, 0},
 };
 
@@ -944,10 +947,10 @@ static int is_row_shown(const struct row *r) {
 		return 0;
 	if (!strcmp(r->control, "BW") || !strcmp(r->control, "TX"))
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
+	// the microphone's gain is for the modes that are spoken into
+	if (!strcmp(r->control, "MIC"))
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "RADE2");
 	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
-		return 1;
-	// RADE2 is spoken into, and has the voice modes' microphone gain
-	if (!strcmp(mode_group(), "RADE2") && !strcmp(r->control, "MIC"))
 		return 1;
 	return !strcmp(k->group, mode_group());
 }
