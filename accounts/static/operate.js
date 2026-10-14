@@ -540,8 +540,9 @@
   }
 
   function footerLabel(place, group, macros) {
-    if (group === "VOICE") { return ["", "TX", "RX", "", "", ""][place]; }
-    if (group === "2TONE" || group === "RADE2") { return ["TX", "RX", "", "", "", ""][place]; }
+    // RADE2 is laid out as the voice modes are
+    if (group === "VOICE" || group === "RADE2") { return ["", "TX", "RX", "", "", ""][place]; }
+    if (group === "2TONE") { return ["TX", "RX", "", "", "", ""][place]; }
     if (group === "CW") { return macros[place] || ""; }
     return "";
   }

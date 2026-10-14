@@ -639,8 +639,8 @@ static const struct footer_button footer_buttons[] = {
 	{"VOICE", 2, "RX", "TX", "OFF"},
 	{"2TONE", 0, "TX", "TX", "ON"},
 	{"2TONE", 1, "RX", "TX", "OFF"},
-	{"RADE2", 0, "TX", "TX", "ON"},
-	{"RADE2", 1, "RX", "TX", "OFF"},
+	{"RADE2", 1, "TX", "TX", "ON"},
+	{"RADE2", 2, "RX", "TX", "OFF"},
 	{NULL, 0, NULL, NULL, NULL},
 };
 
