@@ -10,12 +10,12 @@
 // file keeps what was described, and each control's value.
 //
 // The panel has controls of its own too, which the radio never hears of:
-// the tuning step, RIT, split and the VFO in use. The author's rule is that
-// tuning belongs to each client, since the zbitx's knob is on the panel
-// and not on the radio. They are kept in the same table, in the group
-// PANEL, with no number on the link, so that the screen treats every
-// control alike. They come first in the table and stay when the radio
-// describes its controls afresh.
+// the tuning step, OFFSET (NORM, RIT or SPLIT) and the VFO in use. The
+// author's rule is that tuning belongs to each client, since the zbitx's
+// knob is on the panel and not on the radio. They are kept in the same
+// table, in the group PANEL, with no number on the link, so that the
+// screen treats every control alike. They come first in the table and stay
+// when the radio describes its controls afresh.
 //
 // A value is kept as a number. A choice's value is which of its choices it
 // is, counted from 0, as it is on the link. An action, the macros', has

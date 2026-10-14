@@ -9,7 +9,7 @@
 // Every widget is 48 high, as on the zbitx's shipping panel, and all but
 // the frequency and the list's rows are 48 wide. The screen is 480 by 320:
 //
-//   y 0     STEP | FREQ 144 | RIT, SPLIT, DRIVE, AGC, IF, VOL
+//   y 0     STEP | FREQ 144 | VFO, OFFSET, DRIVE, AGC, IF, VOL
 //   y 48    a button for each band, 10M to 80M, and MODE
 //   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
 //           beside it, 288 wide: a line of text, 16 high, the status
@@ -50,8 +50,8 @@
 // the foot of the screen, under the status line, which says how the
 // contact stands: the author's layout.
 // While a contact is under way, the status line has the exchange the
-// radio sends for it, "VU2XZ > -19 > R-14 > RR73", white on red, as RIT and
-// SPLIT are red when they are on, so that a contact in progress is not
+// radio sends for it, "VU2XZ > -19 > R-14 > RR73", white on red, as OFFSET
+// is red when it is not NORM, so that a contact in progress is not
 // missed; when it ends, the line goes back to what was last said. The
 // radio's FT8_DO is two buttons in the left column, under LOG and SET: CQ,
 // which starts calling CQ, and HALT, which stops whatever is being sent and
@@ -86,8 +86,14 @@
 // The frequency is shown with the VFO in use before it, A: or B:, and a
 // click of the knob while the frequency is selected goes to the other VFO.
 //
-// RIT and SPLIT are red while they are on. The author's reason: they are
+// OFFSET is red while it is RIT or SPLIT. The author's reason: they are
 // switched on and then forgotten.
+//
+// The tiles' names are cyan and their values white, as in the desktop's
+// window. A value is in a font of 14, and one too wide for a tile at that,
+// as RADE2 is, in a font of 12: the author asked for the values a little
+// smaller, so that RADE2 fit its box, and 14 was not enough. A name is in
+// 12, and one too wide at that, as OFFSET is, in 10.
 //
 // A band's button goes to that band at a touch. A touch on the button of
 // the band already in use goes to the next place in that band's stack,
@@ -121,8 +127,8 @@
 //                   back here from anywhere.
 //   A control in    turning changes its value, and the radio follows as it
 //   the top rows    turns. A click moves a choice to its next choice, and
-//   or the bottom   round from the last to the first, so RIT is switched
-//   row             with a click. A touch on a choice that is already
+//   or the bottom   round from the last to the first, so OFFSET goes from
+//   row             NORM to RIT to SPLIT with clicks. A touch on a choice that is already
 //                   selected does the same, for working by touch alone.
 //   The list        turning scrolls: it moves the mark from one row to the
 //                   next, and the list moves to keep the mark in view. A
@@ -140,11 +146,19 @@
 // The tuning is the panel's own, as it is each client's: the zbitx's knob
 // is on the panel. What is to be there when the panel is next switched on
 // the radio keeps for it, as controls of the radio's that the radio does
-// nothing with: STEP, the VFO in use, and each VFO's dial. RIT and SPLIT
-// start afresh each time, as it would not do to come up with RIT on. It is the desktop window's, which was zbitxv2's. The
-// dial moves by STEP, onto a multiple of it. While RIT is on, tuning moves
-// the receiver's offset and leaves the dial. With SPLIT on, the
-// transmitter is on the other VFO's dial. The radio is sent where the
+// nothing with: STEP, the VFO in use, and each VFO's dial. OFFSET starts
+// at NORM each time, as it would not do to come up with RIT on. It is the
+// desktop window's, which was zbitxv2's. The dial moves by STEP, onto a
+// multiple of it.
+//
+// VFO and OFFSET are on the top row beside the frequency, as in the
+// desktop's window, since they are what the frequency's box shows. RIT and
+// SPLIT were two switches there; the author made them one control, OFFSET,
+// as they are never wanted together, a split being a RIT with a very wide
+// range. OFFSET is NORM, RIT or SPLIT. At RIT, tuning moves the receiver's
+// offset and leaves the dial; leaving RIT puts the offset back to nothing.
+// At SPLIT, the transmitter is on the other VFO's dial; choosing it goes to
+// VFO A, so that it receives on A and transmits on B. The radio is sent where the
 // receiver listens, and, when the radio says it has gone to transmit,
 // where the transmitter is to be, if that is elsewhere; and the receiver's
 // frequency again when it comes back.
@@ -204,7 +218,7 @@
 #define COLOUR_BOX 0x101820
 #define COLOUR_TAKEN_UP 0x604800
 #define COLOUR_SWITCHED_ON 0xB02020
-#define COLOUR_TITLE 0x90A0B0
+#define COLOUR_TITLE 0x00FFFF
 #define COLOUR_VALUE 0xFFFFFF
 #define COLOUR_DIM 0x506070
 #define COLOUR_WITH_FOCUS 0xFFC000
@@ -222,6 +236,15 @@
 #define VFOS 2
 #define NOT_USED_YET 0
 #define SHOWN_MAX 24
+//a tile's value, and the smaller font for one too wide for it; the room is
+//what is inside the bright edge
+#define VALUE_FONT (&lv_font_montserrat_14)
+#define VALUE_FONT_NARROW (&lv_font_montserrat_12)
+#define TILE_VALUE_ROOM (TILE_WIDTH - 2 * BORDER_WITH_FOCUS)
+//a tile's name likewise, from where it begins at the left
+#define TITLE_FONT (&lv_font_montserrat_12)
+#define TITLE_FONT_NARROW (&lv_font_montserrat_10)
+#define TILE_TITLE_ROOM (TILE_WIDTH - TITLE_LEFT - BORDER_WITH_FOCUS)
 #define NOWHERE (-1)
 
 //what is selected, and so what the knob does
@@ -238,6 +261,8 @@ struct widget {
 	lv_obj_t *title;
 	lv_obj_t *value;
 	struct panel_control *control;
+	//a tile of the top rows or the bottom row, whose value is fitted to it
+	bool is_tile;
 	//how its edge and its fill were last drawn, so that they are drawn
 	//again only when they change
 	bool is_look_known;
@@ -274,8 +299,8 @@ struct footer {
 
 static const struct place places[] = {
 	{"STEP", "STEP", 0, 0, TILE_WIDTH},
-	{"RIT", "RIT", 192, 0, TILE_WIDTH},
-	{"SPLIT", "SPLIT", 240, 0, TILE_WIDTH},
+	{"VFO", "VFO", 192, 0, TILE_WIDTH},
+	{"OFFSET", "OFFSET", 240, 0, TILE_WIDTH},
 	{"DRIVE", "DRIVE", 288, 0, TILE_WIDTH},
 	{"AGC", "AGC", 336, 0, TILE_WIDTH},
 	{"IF", "IF", 384, 0, TILE_WIDTH},
@@ -380,8 +405,9 @@ static bool note_is_large;
 
 /* tuning, as the desktop's window does it */
 
-static bool is_on(const char *name){
-	return controls_is(name, "ON");
+//whether OFFSET is at this one of NORM, RIT and SPLIT
+static bool is_offset(const char *choice){
+	return controls_is("OFFSET", choice);
 }
 
 static int own_value(const char *name){
@@ -392,19 +418,19 @@ static int own_value(const char *name){
 	return (int)c->value;
 }
 
-//where the receiver listens: the dial, moved by RIT_DELTA while RIT is on
+//where the receiver listens: the dial, moved by RIT_DELTA at RIT
 static int receiver_hz(){
-	if (is_on("RIT"))
+	if (is_offset("RIT"))
 		return dial_hz + own_value("RIT_DELTA");
 	return dial_hz;
 }
 
-//where the transmitter is to be: the dial, or while SPLIT is on the other
-//VFO's dial, if that VFO has been used
+//where the transmitter is to be: the dial, or at SPLIT the other VFO's
+//dial, if that VFO has been used
 static int transmitter_hz(){
 	int other = VFO_B;
 
-	if (!is_on("SPLIT"))
+	if (!is_offset("SPLIT"))
 		return dial_hz;
 	if (vfo_in_use == VFO_B)
 		other = VFO_A;
@@ -459,7 +485,7 @@ static void tune(int steps){
 	struct panel_control *delta = controls_find("RIT_DELTA");
 	int step = step_hz();
 
-	if (is_on("RIT") && delta != NULL)
+	if (is_offset("RIT") && delta != NULL)
 		delta->value = clamp((int)delta->value + steps * step, -RIT_MAX_HZ, RIT_MAX_HZ);
 	else
 		dial_hz = clamp((dial_hz / step + steps) * step, LOWEST_HZ, HIGHEST_HZ);
@@ -491,25 +517,27 @@ static void choose_vfo(int vfo){
 	dial_hz = vfo_dial_hz[vfo];
 }
 
-//one of the tuning's controls has changed: RIT, SPLIT or the VFO
+//one of the tuning's controls has changed: OFFSET or the VFO
 static void apply_own(struct panel_control *c){
 	struct panel_control *vfo = controls_find("VFO");
+	struct panel_control *delta = controls_find("RIT_DELTA");
 
-	if (!strcmp(c->d.name, "SPLIT") && is_on("SPLIT"))
+	if (!strcmp(c->d.name, "OFFSET") && is_offset("SPLIT"))
 		keep_on_the_radio("VFO", VFO_A);
+	if (!is_offset("RIT") && delta != NULL)
+		delta->value = 0;
 	if (vfo != NULL)
 		choose_vfo((int)vfo->value);
 	send_frequency();
 }
 
-//the radio tells where it is; the dial is that, less RIT_DELTA while RIT
-//is on. While the panel has it transmitting somewhere else than the dial,
+//the radio tells where it is; the dial is that, less RIT_DELTA at RIT. While the panel has it transmitting somewhere else than the dial,
 //what it tells is the transmitter's frequency and the dial is left
 static void take_radio_frequency(int hz){
 	if (is_transmitting && transmitter_hz() != receiver_hz())
 		return;
 	dial_hz = hz;
-	if (is_on("RIT"))
+	if (is_offset("RIT"))
 		dial_hz -= own_value("RIT_DELTA");
 }
 
@@ -717,11 +745,22 @@ static void show_edge(struct widget *w, bool has_focus, bool is_taken_up){
 	show_look(w, has_focus, fill);
 }
 
-//RIT and SPLIT are red while they are on
+//OFFSET is red while it is RIT or SPLIT
 static bool is_switched_on(const struct panel_control *c){
-	if (c == NULL || (strcmp(c->d.name, "RIT") && strcmp(c->d.name, "SPLIT")))
+	if (c == NULL || strcmp(c->d.name, "OFFSET"))
 		return false;
-	return controls_is(c->d.name, "ON");
+	return !is_offset("NORM");
+}
+
+//a tile's name or value in its font, or in the smaller one if it is too
+//wide for the room at that; the font is set only when it changes, as
+//label_show() does for the text
+static void fit_text(lv_obj_t *label, const char *text, const lv_font_t *font,
+		const lv_font_t *narrow, int room){
+	if (lv_text_get_width(text, strlen(text), font, 0) > room)
+		font = narrow;
+	if (lv_obj_get_style_text_font(label, LV_PART_MAIN) != font)
+		lv_obj_set_style_text_font(label, font, 0);
 }
 
 static void show_widget(struct widget *w, const char *label, bool has_edge,
@@ -735,6 +774,10 @@ static void show_widget(struct widget *w, const char *label, bool has_edge,
 	set_hidden(w->box, false);
 	controls_value_text(w->control, text, sizeof(text));
 	label_show(w->title, label);
+	if (w->is_tile){
+		fit_text(w->title, label, TITLE_FONT, TITLE_FONT_NARROW, TILE_TITLE_ROOM);
+		fit_text(w->value, text, VALUE_FONT, VALUE_FONT_NARROW, TILE_VALUE_ROOM);
+	}
 	label_show(w->value, text);
 	if (is_switched_on(w->control))
 		show_look(w, has_edge, COLOUR_SWITCHED_ON);
@@ -1198,7 +1241,7 @@ static void tile_create(struct widget *w, int x, int y, int width,
 		const lv_font_t *value_font){
 	w->box = box_create(x, y, width, ROW_HEIGHT);
 	lv_obj_add_event_cb(w->box, on_touched, LV_EVENT_CLICKED, w);
-	w->title = text_create(w->box, &lv_font_montserrat_12, COLOUR_TITLE);
+	w->title = text_create(w->box, TITLE_FONT, COLOUR_TITLE);
 	lv_obj_align(w->title, LV_ALIGN_TOP_LEFT, TITLE_LEFT, TITLE_TOP);
 	w->value = text_create(w->box, value_font, COLOUR_VALUE);
 	lv_obj_align(w->value, LV_ALIGN_BOTTOM_MID, 0, -VALUE_UP);
@@ -1305,9 +1348,10 @@ static void screen_create(){
 	menu_button = dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
 
 	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_20);
-	for (i = 0; i < PLACES; i++)
-		tile_create(&placed[i], places[i].x, places[i].y, places[i].w,
-			&lv_font_montserrat_16);
+	for (i = 0; i < PLACES; i++){
+		tile_create(&placed[i], places[i].x, places[i].y, places[i].w, VALUE_FONT);
+		placed[i].is_tile = true;
+	}
 	for (i = 0; i < BANDS; i++){
 		band_widget[i].box = box_create(i * TILE_WIDTH, ROW_HEIGHT, TILE_WIDTH, ROW_HEIGHT);
 		lv_obj_add_event_cb(band_widget[i].box, on_band_touched, LV_EVENT_CLICKED,
@@ -1317,9 +1361,11 @@ static void screen_create(){
 		lv_label_set_text(band_widget[i].value, band_names[i]);
 		lv_obj_align(band_widget[i].value, LV_ALIGN_CENTER, 0, 0);
 	}
-	for (i = 0; i < FOOTER_TILES; i++)
+	for (i = 0; i < FOOTER_TILES; i++){
 		tile_create(&footer_widget[i], WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP, TILE_WIDTH,
-			&lv_font_montserrat_16);
+			VALUE_FONT);
+		footer_widget[i].is_tile = true;
+	}
 	for (i = 0; i < FOOTER_TILES; i++){
 		footer_button[i].box = box_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
 			TILE_WIDTH, ROW_HEIGHT);
@@ -1674,9 +1720,8 @@ void main_select(const char *name){
 void main_ui(){
 	if (!main_screen){
 		Serial.println("Creating the main screen");
-		controls_add_own("RIT", "OFF/ON", 0, 0, 0);
+		controls_add_own("OFFSET", "NORM/RIT/SPLIT", 0, 0, 0);
 		controls_add_own("RIT_DELTA", NULL, -RIT_MAX_HZ, RIT_MAX_HZ, 0);
-		controls_add_own("SPLIT", "OFF/ON", 0, 0, 0);
 		screen_create();
 		lay_out();
 		show();
