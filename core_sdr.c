@@ -260,6 +260,23 @@ static atomic_int tx_peak_before = 0;
 //zbitxv2's user interface sets this as it starts, with set_volume(20000000),
 //and tx_process() scales what it sends by it
 static double volume = 20000000.0;
+
+//a recording of what is sent, asked for by the radio program's
+//"txrecord=": for each block while transmitting, the modem's samples, as
+//its tx() made them, and what tx_process() gives the sound card for the
+//transmitter, after the sideband's filter and the shift to the IF. It is
+//there so that a modem's signal can be checked against a reference: on
+//14 October 2026 RADE2's signal reached the far receiver undecodable, and
+//this tells whether the modem, the sideband's filter or what follows the
+//sound card spoiled it. A block that finds the ring full is counted and
+//lost, as audio.c does for its recording
+#define TX_RECORD_RING_BLOCKS 512
+#define TX_RECORD_BLOCK (2 * (MAX_BINS / 2))
+static float tx_recorded[TX_RECORD_RING_BLOCKS * TX_RECORD_BLOCK];
+static atomic_int is_tx_recording;
+static atomic_uint tx_record_head;
+static atomic_uint tx_record_tail;
+static atomic_long tx_record_dropped_count;
 //set by tr_switch() for the audio thread: the transform's buffers are to
 //be cleared at the first block of transmitting, at the first of receiving
 //again, and the spectrum's smoothing begun afresh
@@ -897,6 +914,53 @@ static void sdr_modulation_update(int32_t *samples, int count, double scale_up){
 	}
 }
 
+//the block just sent goes into the recording, the modem's samples and the
+//transmitter's interleaved
+static void tx_record_block(const int32_t *output_tx){
+	unsigned head = atomic_load(&tx_record_head);
+	float *block;
+	int i;
+
+	if (!atomic_load(&is_tx_recording))
+		return;
+	if (head - atomic_load(&tx_record_tail) >= TX_RECORD_RING_BLOCKS){
+		atomic_fetch_add(&tx_record_dropped_count, 1);
+		return;
+	}
+	block = tx_recorded + (head % TX_RECORD_RING_BLOCKS) * TX_RECORD_BLOCK;
+	for (i = 0; i < MAX_BINS/2; i++){
+		block[2 * i] = (float)tx_samples[i];
+		block[2 * i + 1] = (float)output_tx[i];
+	}
+	atomic_store(&tx_record_head, head + 1);
+}
+
+void tx_record(int on){
+	if (on){
+		atomic_store(&tx_record_dropped_count, 0);
+		atomic_store(&tx_record_tail, atomic_load(&tx_record_head));
+	}
+	atomic_store(&is_tx_recording, on);
+}
+
+//the oldest block recorded and not yet taken, or NULL; tx_record_taken()
+//lets it go
+const float *tx_record_next(void){
+	unsigned tail = atomic_load(&tx_record_tail);
+
+	if (tail == atomic_load(&tx_record_head))
+		return NULL;
+	return tx_recorded + (tail % TX_RECORD_RING_BLOCKS) * TX_RECORD_BLOCK;
+}
+
+void tx_record_taken(void){
+	atomic_fetch_add(&tx_record_tail, 1);
+}
+
+long tx_record_dropped(void){
+	return atomic_load(&tx_record_dropped_count);
+}
+
 static void tx_process(
 	int32_t *input_rx, int32_t *input_mic,
 	int32_t *output_speaker, int32_t *output_tx,
@@ -999,6 +1063,7 @@ static void tx_process(
 	}
 	atomic_store(&tx_peak, peak);
 	sdr_modulation_update(output_tx, MAX_BINS/2, tx_amp);
+	tx_record_block(output_tx);
 }
 
 /*

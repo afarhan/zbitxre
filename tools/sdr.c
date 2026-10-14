@@ -148,6 +148,13 @@
 // through the receiver as tests/hw_stand_ins.c plays a test's. Ten minutes
 // is about 460 MB.
 //
+// "txrecord=20" writes what is sent, for the next 20 seconds of
+// transmitting, into data/txrecord_<UTC time>.raw with its note: for each
+// block, the samples the modem made and those the transmitter was given,
+// after the sideband's filter. It is for checking a modem's signal with a
+// reference decoder, at each step on its way out; core_sdr.c says why it
+// was added. "txrecord=0" stops it.
+//
 // "play=data/record_20261004_023102.raw" plays such a recording back, in
 // real time: each block of it takes the place of what the sound card
 // heard, both channels, before the receiver has it, so that the decoders,
@@ -270,6 +277,7 @@
 #define LOGBOOK_FILE "data/sbitx.db"
 #define LOG_FOR "log="
 #define RECORD_FOR "record="
+#define TX_RECORD_FOR "txrecord="
 #define PLAY_FOR "play="
 #define NOTE_LINE_ROOM 256
 #define NOTE_VALUE_ROOM 16
@@ -829,6 +837,81 @@ static void record_save(void) {
 		record_stop();
 }
 
+// a recording of what is sent: for so many seconds of transmitting, each
+// block the modem made and the transmitter was given, as core_sdr.c keeps
+// them in its ring. Only blocks sent are recorded, so the seconds are
+// seconds on the air, and "txrecord=0" stops it early
+static FILE *tx_record_file;
+static long tx_record_blocks_left;
+static long tx_record_blocks_written;
+
+static void tx_record_stop(void) {
+	tx_record(0);
+	fclose(tx_record_file);
+	tx_record_file = NULL;
+	printf("txrecord: done, %ld blocks written, %ld lost\n", tx_record_blocks_written,
+		tx_record_dropped());
+	fflush(stdout);
+}
+
+static void tx_record_start(int seconds) {
+	char name[RECORD_NAME_ROOM];
+	char stamp[RECORD_STAMP_ROOM];
+	FILE *note;
+	time_t now = time(NULL);
+	struct tm utc;
+
+	if (tx_record_file != NULL)
+		tx_record_stop();
+	if (seconds <= 0)
+		return;
+	gmtime_r(&now, &utc);
+	strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &utc);
+	snprintf(name, sizeof(name), "data/txrecord_%s.raw", stamp);
+	tx_record_file = fopen(name, "wb");
+	if (tx_record_file == NULL) {
+		printf("txrecord: could not write %s\n", name);
+		return;
+	}
+	snprintf(name, sizeof(name), "data/txrecord_%s.txt", stamp);
+	note = fopen(name, "w");
+	if (note != NULL) {
+		fprintf(note, "began %s UTC, for %d seconds of transmitting\n", stamp, seconds);
+		fprintf(note, "frequency %s Hz, mode %s, drive %s, mic %s\n",
+			control_get("FREQ"), control_get("MODE"), control_get("DRIVE"),
+			control_get("MIC"));
+		fprintf(note, "board %s, centre bin %d\n", board_in_use()->name,
+			board_in_use()->centre_bin);
+		fprintf(note, "samples: %d a second, float32, little endian, two channels, "
+			"the modem's as its tx() made them, then the transmitter's as the "
+			"sound card is given them, %d frames to a block, only while "
+			"transmitting\n", SAMPLE_RATE_HZ, AUDIO_BLOCK_FRAMES);
+		fclose(note);
+	}
+	tx_record_blocks_left = ((long)seconds * SAMPLE_RATE_HZ + AUDIO_BLOCK_FRAMES - 1)
+		/ AUDIO_BLOCK_FRAMES;
+	tx_record_blocks_written = 0;
+	tx_record(1);
+	printf("txrecord: %d seconds of transmitting into data/txrecord_%s.raw\n", seconds,
+		stamp);
+	fflush(stdout);
+}
+
+static void tx_record_save(void) {
+	const float *block;
+
+	if (tx_record_file == NULL)
+		return;
+	while (tx_record_blocks_left > 0 && (block = tx_record_next()) != NULL) {
+		fwrite(block, sizeof(float), AUDIO_BLOCK_FRAMES * 2, tx_record_file);
+		tx_record_taken();
+		tx_record_blocks_left--;
+		tx_record_blocks_written++;
+	}
+	if (tx_record_blocks_left == 0)
+		tx_record_stop();
+}
+
 static void set_setting(const char *name, const char *value, int origin);
 
 // a recording played back: the main loop keeps the ring full from the
@@ -1061,6 +1144,10 @@ static void handle_command(char *line) {
 	}
 	if (begins_with(line, PLAY_FOR)) {
 		play_start(line + strlen(PLAY_FOR));
+		return;
+	}
+	if (begins_with(line, TX_RECORD_FOR)) {
+		tx_record_start(atoi(line + strlen(TX_RECORD_FOR)));
 		return;
 	}
 	if (begins_with(line, RECORD_FOR)) {
@@ -1321,6 +1408,7 @@ static void main_loop(void) {
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();
+		tx_record_save();
 		play_fill();
 		follow_ptt(now_ms());
 		panel_poll(now_ms(), on_panel_record, on_panel_bytes);

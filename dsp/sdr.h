@@ -203,3 +203,11 @@ void speaker_play(const int32_t *samples, int count);
 void set_passband(int low_hz, int high_hz);
 float bin_of_audio(int audio_hz);
 int tr_wait_to_tx_ms(void);
+
+// a recording of what is sent: each block while transmitting, the modem's
+// samples and the transmitter's, interleaved, MAX_BINS / 2 frames of two
+// floats; core_sdr.c says what for
+void tx_record(int on);
+const float *tx_record_next(void);
+void tx_record_taken(void);
+long tx_record_dropped(void);
