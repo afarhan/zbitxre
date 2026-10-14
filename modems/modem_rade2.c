@@ -55,8 +55,10 @@
 // lost it, and that is the squelch. The receiver's SSB audio was played
 // while there was none, so that a station could be tuned in by ear, a
 // buzz; the author asked on 14 October 2026 for the noise to be squelched
-// when no one is transmitting. A station is still found without it: the
-// codec takes a signal some way off tune, and says how far.
+// when no one is transmitting, and for the squelch to be a switch in the
+// mode's list: SQUELCH, ON as the radio starts. At OFF the SSB audio is
+// heard while there is no signal, as before. A station is still found with
+// it ON: the codec takes a signal some way off tune, and says how far.
 //
 // WHICH SIDEBAND
 //
@@ -243,6 +245,8 @@ static atomic_int is_tail_made;
 static int32_t baseband_output[BLOCK];
 static int32_t speech_output[BLOCK];
 static int32_t silence[BLOCK];
+// SQUELCH, set by the thread that owns the controls
+static atomic_int is_squelched;
 static int heard_phase;
 static int is_speaking;
 static int is_tx_on;
@@ -515,7 +519,7 @@ static void rx_rade2(complex float *bins) {
 		heard_phase = (heard_phase + 1) % SIGNAL_STEP;
 	}
 	// speech is played from when enough of it is waiting until it runs
-	// out, and silence otherwise
+	// out, and otherwise silence, or the SSB audio with SQUELCH OFF
 	if (!is_speaking && ring_count(&spoken) >= SPOKEN_LEAST) {
 		is_speaking = 1;
 		rate_filter_clear(&speech_up);
@@ -530,8 +534,10 @@ static void rx_rade2(complex float *bins) {
 		for (i = 0; i < BLOCK; i++)
 			speech_output[i] = (int32_t)(SPEAKER_A_SAMPLE * rate_filter_up(&speech_up, &spoken));
 		speaker_play(speech_output, BLOCK);
-	} else {
+	} else if (atomic_load(&is_squelched)) {
 		speaker_play(silence, BLOCK);
+	} else {
+		speaker_play(baseband_output, BLOCK);
 	}
 	sem_post(&work);
 }
@@ -580,6 +586,20 @@ static void tx_rade2(const int32_t *mic, double *samples) {
 }
 
 /* the thread that owns the controls */
+
+static int apply_squelch(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	atomic_store(&is_squelched, !strcmp(value, "ON"));
+	return 0;
+}
+
+static struct control squelch_control = {
+	.group = "RADE2", .name = "SQUELCH", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "ON", .apply = apply_squelch,
+};
 
 static struct control rade2_status = {
 	.group = "RADE2", .name = "RADE2_STATUS", .kind = CONTROL_TEXT,
@@ -655,6 +675,8 @@ static void rade2_reset(void) {
 
 static void rade2_start(void) {
 	control_register(&rade2_status);
+	control_register(&squelch_control);
+	atomic_store(&is_squelched, !strcmp(squelch_control.value, "ON"));
 	rate_filter_make(&speech_up, SPEECH_STEP, SPEECH_CUTOFF_HZ, SPEECH_STEP);
 	rate_filter_make(&signal_up, SIGNAL_STEP, SIGNAL_CUTOFF_HZ, SIGNAL_STEP);
 	rate_filter_make(&mic_down, SPEECH_STEP, SPEECH_CUTOFF_HZ, 1.0);
