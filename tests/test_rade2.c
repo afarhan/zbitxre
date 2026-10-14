@@ -53,7 +53,9 @@
 #define QUIET_AFTER_S 2
 #define BLOCK_NS ((long)(1000000000LL * BLOCK / SAMPLE_RATE))
 #define NS_PER_S 1000000000L
-#define MIC_A_SAMPLE 65536.0
+// the speech comes from the microphone 20 dB under the sound card's full
+// scale, as it does from a real one at the gain SSB is worked at
+#define MIC_A_SAMPLE 6553.6
 #define RECEIVED_PEAK 2.0e6
 #define ENVELOPE_SAMPLES (SAMPLE_RATE / 50)
 #define LAG_MOST 100

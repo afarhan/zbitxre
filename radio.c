@@ -117,6 +117,9 @@
 #define STARTING_BAND "40M"
 #define STARTING_MODE "LSB"
 #define SIDEBAND_CHANGES_AT_HZ 10000000
+#define END_OF_OVER_MOST_MS 1500
+#define END_OF_OVER_POLL_NS 10000000
+#define NS_PER_MS 1000000
 #define STARTING_VOLUME "60"
 #define STARTING_IF "60"
 #define STARTING_DRIVE "40"
@@ -434,9 +437,31 @@ static int apply_mic(struct control *c, const char *value, char *why, int room) 
 	return 0;
 }
 
+// A modem that ends its over with something of its own, as RADE2 does, is
+// told that the transmission is to end, and the radio goes on sending until
+// the modem has sent it or END_OF_OVER_MOST_MS has passed. This waits here
+// for it, some four tenths of a second in RADE2, and nothing else of the
+// radio's is attended to meanwhile; the audio goes on, being another
+// thread's. modem.h says what tx_end and wants_tx are.
+static void end_the_over(void) {
+	const struct modem *m = modem_find(control_get("MODE"));
+	struct timespec pause = { 0, END_OF_OVER_POLL_NS };
+	int waited_ms = 0;
+
+	if (m == NULL || m->tx_end == NULL || m->wants_tx == NULL)
+		return;
+	m->tx_end();
+	while (m->wants_tx() && waited_ms < END_OF_OVER_MOST_MS) {
+		nanosleep(&pause, NULL);
+		waited_ms += END_OF_OVER_POLL_NS / NS_PER_MS;
+	}
+}
+
 static int apply_tx(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	if (!strcmp(value, "OFF")) {
+		if (!strcmp(control_get("TX"), "ON"))
+			end_the_over();
 		core_request("tx", "off");
 		return 0;
 	}

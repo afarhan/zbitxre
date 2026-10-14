@@ -142,8 +142,15 @@
 // that the buzz of a signal not yet found is no louder than the voice that
 // follows it
 #define SPEAKER_A_SAMPLE 16000.0f
-// the microphone's 32 bits to the 16 the codec takes
-#define MIC_A_SAMPLE 65536.0f
+// the microphone's 32 bits to the 16 the codec takes, and ten times that.
+// The author had to turn MIC from 40, where it stands for SSB, to 80 for
+// the speech to come through whole at the far end, on 14 October 2026, the
+// first day two radios spoke in this mode: that is 20 dB of the sound
+// card's gain. Speech from a microphone at SSB's setting is that far under
+// the sound card's full scale, and the codec, made for speech at ordinary
+// levels, took the quieter parts of it for silence. So the speech is
+// brought up by that much here, and MIC can stay where SSB has it
+#define MIC_A_SAMPLE 6553.6f
 #define SPEECH_MOST 32767.0f
 // the codec's peaks, of one, put where 2TONE's are
 #define TX_LEVEL 0.042
