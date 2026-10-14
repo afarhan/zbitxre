@@ -887,6 +887,8 @@
     var group = modeGroup(), control = schema[rowControl(name)];
     if (!control) { return false; }
     if (name === "BW") { return group !== "FT8"; }
+    // RADE2 is spoken into, and has the voice modes' microphone gain
+    if (group === "RADE2" && name === "MIC") { return true; }
     return control.group === "RADIO" || control.group === group;
   }
 

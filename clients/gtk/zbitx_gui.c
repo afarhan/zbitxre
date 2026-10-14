@@ -946,6 +946,9 @@ static int is_row_shown(const struct row *r) {
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
 	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
 		return 1;
+	// RADE2 is spoken into, and has the voice modes' microphone gain
+	if (!strcmp(mode_group(), "RADE2") && !strcmp(r->control, "MIC"))
+		return 1;
 	return !strcmp(k->group, mode_group());
 }
 
