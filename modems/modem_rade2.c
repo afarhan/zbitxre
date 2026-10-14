@@ -127,7 +127,12 @@
 #define HAMMING_B 0.46
 #define RING_SAMPLES 32768
 #define SPOKEN_LEAST (RADE2_SPEECH_RATE_HZ / 10)
-#define SENT_LEAST 640
+// three frames of the signal, 120 ms. It was two, and on the first day two
+// radios spoke, the receiving one lost the signal every few seconds when
+// the zbitx was the sender: the signal was thought to be running out, the
+// zbitx's thread being late with a frame. What the terminal now says at
+// the end of each over is how that is known
+#define SENT_LEAST 960
 #define TAIL_SAMPLES (RADE2_MODEM_RATE_HZ / 5)
 // the radio still sending this long after an over's end has gone, the
 // PTT has been pressed again: another over
@@ -210,6 +215,11 @@ static int is_sending;
 static atomic_int is_tail_sent;
 static atomic_int is_over_on;
 static int blocks_since_tail;
+// counted by the audio thread for the terminal: how often the signal ran
+// out while sending, and the speech while a signal was held
+static atomic_int sent_ran_out;
+static atomic_int spoken_ran_out;
+static atomic_int over_blocks;
 
 // the modem thread's
 static enum over over;
@@ -442,8 +452,12 @@ static void rx_rade2(complex float *bins) {
 		is_speaking = 1;
 		rate_filter_clear(&speech_up);
 	}
-	if (is_speaking && ring_count(&spoken) == 0 && !atomic_load(&is_synced))
-		is_speaking = 0;
+	if (is_speaking && ring_count(&spoken) == 0) {
+		if (atomic_load(&is_synced))
+			atomic_fetch_add(&spoken_ran_out, 1);
+		else
+			is_speaking = 0;
+	}
 	if (is_speaking) {
 		for (i = 0; i < BLOCK; i++)
 			speech_output[i] = (int32_t)(SPEAKER_A_SAMPLE * rate_filter_up(&speech_up, &spoken));
@@ -486,7 +500,10 @@ static void tx_rade2(const int32_t *mic, double *samples) {
 		is_sending = 0;
 		if (atomic_load(&is_tail_made))
 			atomic_store(&is_tail_sent, 1);
+		else
+			atomic_fetch_add(&sent_ran_out, 1);
 	}
+	atomic_fetch_add(&over_blocks, 1);
 	for (i = 0; i < BLOCK; i++)
 		samples[i] = is_sending ? TX_LEVEL * rate_filter_up(&signal_up, &sent) : 0.0;
 	sem_post(&work);
@@ -499,8 +516,40 @@ static struct control rade2_status = {
 	.value = STATUS_QUIET,
 };
 
+// what the terminal is told: when an over has been sent, how long it was and
+// whether the signal ever ran out; when a signal that was held is lost, how
+// long it was held, and whether the speech ever ran out
+static void say_what_happened(void) {
+	static int was_over_on;
+	static int was_synced;
+	int is_on = atomic_load(&is_over_on);
+	int synced = atomic_load(&is_synced);
+
+	if (was_over_on && !is_on) {
+		printf("rade2: sent for %.1f s; the signal ran out %d times\n",
+			atomic_exchange(&over_blocks, 0) * (double)BLOCK / AUDIO_RATE_HZ,
+			atomic_exchange(&sent_ran_out, 0));
+		fflush(stdout);
+	}
+	if (!was_over_on && is_on) {
+		atomic_store(&over_blocks, 0);
+		atomic_store(&sent_ran_out, 0);
+	}
+	if (!was_synced && synced)
+		atomic_store(&spoken_ran_out, 0);
+	if (was_synced && !synced) {
+		printf("rade2: a signal was held and lost, last %d dB %+d Hz; the speech ran out %d times\n",
+			atomic_load(&snr_db), atomic_load(&offset_hz), atomic_exchange(&spoken_ran_out, 0));
+		fflush(stdout);
+	}
+	was_over_on = is_on;
+	was_synced = synced;
+}
+
 static void show_status(void) {
 	char status[STATUS_ROOM];
+
+	say_what_happened();
 
 	if (atomic_load(&is_synced))
 		snprintf(status, sizeof(status), "SYNC %d dB %+d Hz", atomic_load(&snr_db),
