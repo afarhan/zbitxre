@@ -211,6 +211,39 @@ To stop zbitxre starting by itself, rename the entry to
 
 On the sbitx it was put in on 8 October 2026.
 
+## Updating a radio from GitHub
+
+A radio away from the bench, with a tester of the development team, follows
+GitHub's main and is brought up to it by one command on the radio:
+
+    ~/zbitxre/setup/update.sh
+
+It pulls main, fetches RADE's weights if any are missing, builds the radio
+program, the window and zbitx_remote, waits until the radio is not
+transmitting, and starts it again on its screen. `--build-only` builds and
+leaves the running radio alone. The script's header says what it will not
+do: it does not overwrite work of the radio's own, a failed build leaves the
+programs that were there, and nothing in `data/` is reached.
+
+The repository is private, so each such radio reads it with a key of its
+own, which can read this repository and nothing else, and cannot push.
+Once, on the radio:
+
+    ssh-keygen -t ed25519 -N "" -C <name> -f ~/.ssh/github_zbitxre
+    printf 'Host github.com\n\tIdentityFile ~/.ssh/github_zbitxre\n\tIdentitiesOnly yes\n' >> ~/.ssh/config
+    cat ~/.ssh/github_zbitxre.pub
+
+and the line printed is added on GitHub, in the repository's Settings,
+Deploy keys, under the tester's name, with "Allow write access" left
+unticked. GitHub asks the owner to confirm it. Then:
+
+    git clone git@github.com:afarhan/zbitxre.git ~/zbitxre
+
+If the radio is lost, its key is deleted on GitHub and nothing else need
+change.
+
+The first was the sbitx of Sasi, key "sasi", on 14 October 2026.
+
 ## What zbitxre keeps on the radio
 
 `data/snapshot.raw`, when "snapshot" has been asked for in the radio's
