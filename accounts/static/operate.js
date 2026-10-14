@@ -893,7 +893,8 @@
   function isRowShown(name) {
     var group = modeGroup(), control = schema[rowControl(name)];
     if (!control) { return false; }
-    if (name === "BW") { return group !== "FT8"; }
+    // BW sets the passband of the voice modes and CW; the other modes' are their own
+    if (name === "BW") { return group === "VOICE" || group === "CW"; }
     return control.group === "RADIO" || control.group === group;
   }
 

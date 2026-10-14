@@ -945,7 +945,11 @@ static int is_row_shown(const struct row *r) {
 		return 0;
 	if (r->place == IN_LIST && has_footer_button(r->control))
 		return 0;
-	if (!strcmp(r->control, "BW") || !strcmp(r->control, "TX"))
+	// BW sets the passband of the voice modes and CW; the other modes'
+	// passbands are their own
+	if (!strcmp(r->control, "BW"))
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "CW");
+	if (!strcmp(r->control, "TX"))
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
 	// the microphone's gain is for the modes that are spoken into
 	if (!strcmp(r->control, "MIC"))
