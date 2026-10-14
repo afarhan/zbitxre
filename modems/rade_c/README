@@ -8,8 +8,21 @@ vocoder works in, is put by a neural encoder onto an OFDM signal that fits
 an SSB passband, and a neural decoder takes it off again.
 
 These are the files of the library, rade_c's src/ as its CMakeLists builds
-the "rade" library of them, at its commit c8a3dc1 of 7 October 2026. They
-are not changed here. Its tools, tests and CMake files are not carried.
+the "rade" library of them, at its commit c8a3dc1 of 7 October 2026. Its
+tools, tests and CMake files are not carried. One change is made here, and
+is to be offered to FreeDV:
+
+    rade_rx_v2.c, rade_rx_v2.h   the receiver follows a drift in timing
+
+Once in sync, version 2's receiver followed the timing with a one-term
+IIR of 1000 symbols, 20 s, which falls behind a steady drift by the drift
+times 1000 symbols. Two radios' sound cards differ by their crystals; on
+14 October 2026 an sbitx and a zbitx were 229 ppm apart, the timing fell
+37 samples behind, past the cyclic prefix of 32, and the speech broke up
+some 20 s into each over and came back with the next. A second term now
+follows the rate of the drift, so that a steady drift leaves no lag. The
+change is marked "zbitxre" in rade_rx_v2.c, which says more. Moving to a
+newer rade_c, see whether FreeDV has done this, and if not, carry it.
 Version 1's files are here because rade_api.c refers to both; the radio
 offers version 2 only, as the mode RADE2, and modems/modem_rade2.c says why.
 

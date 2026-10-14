@@ -101,7 +101,8 @@ typedef struct {
     float gain;            /* AGC gain applied to the current symbol */
 
     /* Timing / frequency tracking */
-    float delta_hat;      /* IIR-smoothed timing offset */
+    float delta_hat;      /* tracked timing offset */
+    float delta_rate;     /* tracked timing drift, samples per symbol (zbitxre) */
     float delta_hat_g;    /* Instantaneous timing offset (argmax |Ry_smooth|) */
     float freq_offset;    /* IIR-smoothed frequency offset (Hz) */
     float freq_offset_g;  /* Instantaneous frequency offset (Hz) */

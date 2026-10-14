@@ -48,7 +48,20 @@
 \*---------------------------------------------------------------------------*/
 
 #define ALPHA      0.95f    /* Ry_smooth IIR coefficient                     */
-#define BETA       0.999f   /* delta_hat / freq_offset IIR coefficient       */
+#define BETA       0.999f   /* freq_offset IIR coefficient                   */
+/* zbitxre, 14 October 2026: the timing is followed by a loop of two terms,
+   one for where it is and one for how fast it drifts. With BETA alone, a
+   one-term IIR of 1000 symbols (20 s), a steady drift left delta_hat behind
+   by the drift times 1000 symbols: two radios whose sound cards were 229 ppm
+   apart (1.8 samples a second at 8 kHz) put it 37 samples behind, more than
+   the cyclic prefix, and speech fell apart some 20 s into each over and came
+   back when the next one was acquired afresh. With the rate term a steady
+   drift leaves no lag. The gains make a critically damped loop whose worst
+   lag at 229 ppm, while it learns the rate, is some 6 samples; the rate is
+   held within +/-1000 ppm. */
+#define DELTA_KP        0.004f   /* timing loop: share of the error taken     */
+#define DELTA_KI        8.0e-6f  /* timing loop: share added to the rate      */
+#define DELTA_RATE_MAX  (1.0e-3f * RADE_V2_SYM_LEN) /* 1000 ppm, per symbol   */
 #define TSIG       0.38f    /* Signal-detection threshold on |Ry_smooth|     */
 #define TSIN       4.0f     /* Sine-wave detection ratio threshold            */
 #define TEOO       0.75f    /* EOO smoothed sparsity threshold                */
@@ -445,6 +458,7 @@ int rade_rx_v2_process(rade_rx_v2_state *rx, float *features_out,
             float delta_phi     = atan2f(rx->Ry_smooth[dg].imag,
                                          rx->Ry_smooth[dg].real);
             rx->delta_hat       = rx->delta_hat_g;
+            rx->delta_rate      = 0.0f;
             rx->freq_offset     = -delta_phi * (float)RADE_FS / (2.0f * (float)M_PI * RADE_V2_M);
             rx->count           = 0;
             rx->count1          = 0;
@@ -466,7 +480,11 @@ int rade_rx_v2_process(rade_rx_v2_state *rx, float *features_out,
         float delta_phi     = atan2f(rx->Ry_smooth[dg].imag,
                                      rx->Ry_smooth[dg].real);
         rx->freq_offset_g   = -delta_phi * (float)RADE_FS / (2.0f * (float)M_PI * RADE_V2_M);
-        rx->delta_hat       = BETA * rx->delta_hat       + (1.0f - BETA) * (float)rx->delta_hat_g;
+        float delta_err     = (float)rx->delta_hat_g - rx->delta_hat;
+        rx->delta_rate     += DELTA_KI * delta_err;
+        if (rx->delta_rate >  DELTA_RATE_MAX) rx->delta_rate =  DELTA_RATE_MAX;
+        if (rx->delta_rate < -DELTA_RATE_MAX) rx->delta_rate = -DELTA_RATE_MAX;
+        rx->delta_hat      += rx->delta_rate + DELTA_KP * delta_err;
         rx->freq_offset     = BETA * rx->freq_offset     + (1.0f - BETA) * rx->freq_offset_g;
 
         /* Hangover counter */
