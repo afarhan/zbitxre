@@ -482,6 +482,8 @@ static void tx_rade2(const int32_t *mic, double *samples) {
 	if (!is_tx_on) {
 		is_tx_on = 1;
 		blocks_since_tail = 0;
+		atomic_store(&over_blocks, 0);
+		atomic_store(&sent_ran_out, 0);
 		atomic_store(&is_over_on, 1);
 		is_sending = 0;
 		is_speaking = 0;
@@ -516,7 +518,9 @@ static struct control rade2_status = {
 	.value = STATUS_QUIET,
 };
 
-// what the terminal is told: when an over has been sent, how long it was and
+// what the terminal is told, by the thread that owns the controls, which
+// calls this many times a second but not while the PTT is held: when an
+// over has been sent, how long it was and
 // whether the signal ever ran out; when a signal that was held is lost, how
 // long it was held, and whether the speech ever ran out
 static void say_what_happened(void) {
@@ -530,10 +534,6 @@ static void say_what_happened(void) {
 			atomic_exchange(&over_blocks, 0) * (double)BLOCK / AUDIO_RATE_HZ,
 			atomic_exchange(&sent_ran_out, 0));
 		fflush(stdout);
-	}
-	if (!was_over_on && is_on) {
-		atomic_store(&over_blocks, 0);
-		atomic_store(&sent_ran_out, 0);
 	}
 	if (!was_synced && synced)
 		atomic_store(&spoken_ran_out, 0);
