@@ -85,6 +85,15 @@
 // training was on speech at ordinary levels; MIC is how the operator sets
 // it.
 //
+// Below 300 Hz the microphone's samples are taken away before the codec,
+// where SSB's passband begins. On 14 October 2026 the author heard "a badly
+// singing voice" in place of speech from the zbitx. Its microphone, recorded,
+// carried a hum at 93.75 Hz, the rate of the sound card's blocks, and at
+// twice that, 11 dB under the speech in its pauses, and stood a third of
+// the codec's full scale off nought. SSB never sends either. The codec took
+// the hum for the voice's pitch and sang it. The filter is a Butterworth of
+// four poles, two biquads: the hum is 40 dB down, its double 16.
+//
 // Receiving: the receiver's audio, levelled by its AGC, is divided by
 // HEARD_FULL_SCALE to come to the codec near the level it expects, which
 // its own levelling then corrects within 20 dB. The figure was set with
@@ -157,6 +166,11 @@
 // brought up by that much here, and MIC can stay where SSB has it
 #define MIC_A_SAMPLE 6553.6f
 #define SPEECH_MOST 32767.0f
+#define SPEECH_LOW_HZ 300.0
+// the two biquads' Qs that make a Butterworth of four poles
+#define BUTTERWORTH_Q_FIRST 0.54119610
+#define BUTTERWORTH_Q_SECOND 1.30656296
+#define SPEECH_BIQUADS 2
 // the codec's peaks, of one, put where 2TONE's are
 #define TX_LEVEL 0.042
 
@@ -174,6 +188,12 @@ struct rate_filter {
 	float history[TAPS_A_PHASE * SIGNAL_STEP];
 	int at;
 	int phase;
+};
+
+// a high-pass of two poles, as Robert Bristow-Johnson's cookbook has it
+struct biquad {
+	float b0, b1, b2, a1, a2;
+	float x1, x2, y1, y2;
 };
 
 enum over {
@@ -223,6 +243,7 @@ static atomic_int over_blocks;
 
 // the modem thread's
 static enum over over;
+static struct biquad speech_low_cut[SPEECH_BIQUADS];
 // the thread that owns the controls'
 static char status_shown[STATUS_ROOM];
 
@@ -324,6 +345,33 @@ static void rate_filter_clear(struct rate_filter *f) {
 	f->phase = 0;
 }
 
+static void biquad_make_high_pass(struct biquad *b, double cutoff_hz, double rate_hz, double q) {
+	double w = 2 * M_PI * cutoff_hz / rate_hz;
+	double alpha = sin(w) / (2 * q);
+	double a0 = 1 + alpha;
+
+	memset(b, 0, sizeof(*b));
+	b->b0 = (float)((1 + cos(w)) / 2 / a0);
+	b->b1 = (float)(-(1 + cos(w)) / a0);
+	b->b2 = b->b0;
+	b->a1 = (float)(-2 * cos(w) / a0);
+	b->a2 = (float)((1 - alpha) / a0);
+}
+
+static float biquad_filter(struct biquad *b, float x) {
+	float y = b->b0 * x + b->b1 * b->x1 + b->b2 * b->x2 - b->a1 * b->y1 - b->a2 * b->y2;
+
+	b->x2 = b->x1;
+	b->x1 = x;
+	b->y2 = b->y1;
+	b->y1 = y;
+	return y;
+}
+
+static void biquad_clear(struct biquad *b) {
+	b->x1 = b->x2 = b->y1 = b->y2 = 0;
+}
+
 /* the thread */
 
 // what has been heard goes to the codec in the pieces it asks for, and the
@@ -376,9 +424,12 @@ static void send_said(void) {
 	float sample;
 	int count;
 	int i;
+	int k;
 
 	if (atomic_exchange(&tx_begin_wanted, 0)) {
 		ring_empty(&said);
+		for (i = 0; i < SPEECH_BIQUADS; i++)
+			biquad_clear(&speech_low_cut[i]);
 		rade2_tx_begin();
 		atomic_store(&tx_end_wanted, 0);
 		atomic_store(&is_tail_made, 0);
@@ -391,6 +442,8 @@ static void send_said(void) {
 	while (ring_count(&said) >= RADE2_SPEECH_FRAME) {
 		for (i = 0; i < RADE2_SPEECH_FRAME; i++) {
 			sample = ring_take(&said);
+			for (k = 0; k < SPEECH_BIQUADS; k++)
+				sample = biquad_filter(&speech_low_cut[k], sample);
 			if (sample > SPEECH_MOST)
 				sample = SPEECH_MOST;
 			if (sample < -SPEECH_MOST)
@@ -590,6 +643,10 @@ static void rade2_start(void) {
 	rate_filter_make(&speech_up, SPEECH_STEP, SPEECH_CUTOFF_HZ, SPEECH_STEP);
 	rate_filter_make(&signal_up, SIGNAL_STEP, SIGNAL_CUTOFF_HZ, SIGNAL_STEP);
 	rate_filter_make(&mic_down, SPEECH_STEP, SPEECH_CUTOFF_HZ, 1.0);
+	biquad_make_high_pass(&speech_low_cut[0], SPEECH_LOW_HZ, RADE2_SPEECH_RATE_HZ,
+		BUTTERWORTH_Q_FIRST);
+	biquad_make_high_pass(&speech_low_cut[1], SPEECH_LOW_HZ, RADE2_SPEECH_RATE_HZ,
+		BUTTERWORTH_Q_SECOND);
 	if (rade2_codec_open() < 0) {
 		printf("rade2: the codec would not open, and the mode will be plain SSB\n");
 		return;
