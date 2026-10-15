@@ -1050,7 +1050,7 @@ class Settings:
         self.listen_port = int(listen_port)
         # the most packets a second the VoIP repeater sends, all channels
         # together; voip.py says why there is a ceiling
-        self.voip_packets_a_second = int(remote.get("voip_packets_a_second", "2000"))
+        self.voip_packets_a_second = int(remote.get("voip_packets_a_second", "2500"))
         self.host, _, port = server.get("listen", "127.0.0.1:8100").rpartition(":")
         self.port = int(port)
         self.base_url = server.get("base_url", "http://127.0.0.1:8100").rstrip("/")

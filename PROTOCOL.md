@@ -635,7 +635,8 @@ A radio may send 50 packets a second, with a little more allowed for the
 internet's unevenness; a channel holds 50 radios; the radio that has just
 spoken waits three seconds before it may again, so that another may answer;
 and all channels together are sent no more than the service's ceiling,
-`voip_packets_a_second` in its settings, 2000. Every over is noted, with
+`voip_packets_a_second` in its settings, 2500, enough for one full channel
+(49 listeners at 50 packets a second). Every over is noted, with
 its callsign, channel and length.
 
 **On the radio.** The owner's speech goes from the radio program to the
