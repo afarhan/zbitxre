@@ -1724,7 +1724,10 @@ static void line_open(long now) {
 	last_heard_ms = now;
 	retry_after_ms = RETRY_FIRST_MS;
 	state = ONLINE;
+	// a new connection is a new radio to the service, which knows nothing
+	// of the grid or the switches until it is told them again
 	is_grid_told = 0;
+	allowed_told[0] = 0;
 	snprintf(said, sizeof(said), "ONLINE %.22s", name);
 	say_status(said);
 }
