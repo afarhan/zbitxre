@@ -31,6 +31,7 @@ static void am_select(void) {
 
 const struct modem modem_am = {
 	.name = "AM",
+	.is_spoken = 1,
 	.order = 5,
 	.select = am_select,
 	.rx = rx_am,

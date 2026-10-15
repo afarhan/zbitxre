@@ -1103,6 +1103,27 @@ static void sound_process(
 */
 static int32_t input_rx_halved[MAX_BINS/2];
 static int32_t input_mic_halved[MAX_BINS/2];
+static int32_t speech_streamed[MAX_BINS/2];
+
+/*
+	While the owner speaks, on the air in a mode that carries speech or
+	over VoIP, the speaker is silent, and so was what those listening from
+	afar were sent: the author found his RADE1, RADE2 and VoIP overs missing
+	on the map. They are now sent the microphone instead, what the
+	transmitter or the internet is given, a remote operator's speech
+	among it. rtp_audio.c makes what it takes eight times larger, for the
+	receiver's quiet samples; the microphone's, halved, come to 2^30 at
+	most, and taken an eighth as large they come out as they are and can
+	never be clipped.
+*/
+#define SPEECH_TO_STREAM 8
+
+static int is_speech_going_out(void){
+	const struct modem *m = modem_in_use;
+
+	return (atomic_load(&in_tx) && m != NULL && m->is_spoken)
+		|| rtp_voip_is_speaking();
+}
 
 static void sound_block(struct audio_block *block){
 	for (int i = 0; i < block->frames; i++){
@@ -1122,8 +1143,14 @@ static void sound_block(struct audio_block *block){
 		block->to_speaker, block->to_transmitter, block->frames);
 	rtp_voip_speaker(block->to_speaker, block->frames, atomic_load(&in_tx));
 	// what the speaker is given is given to whoever else listens on the
-	// radio; rtp_audio.c says who and how
-	rtp_audio_take(block->to_speaker, block->frames);
+	// radio, rtp_audio.c says who and how, or the speech going out
+	if (is_speech_going_out()){
+		for (int i = 0; i < block->frames; i++)
+			speech_streamed[i] = input_mic_halved[i] / SPEECH_TO_STREAM;
+		rtp_audio_take(speech_streamed, block->frames);
+	}
+	else
+		rtp_audio_take(block->to_speaker, block->frames);
 }
 
 static void set_rx_filter(){

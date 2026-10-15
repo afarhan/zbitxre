@@ -56,6 +56,10 @@
 //            until its hang time after the last element. It may be left
 //            out: a mode that is keyed only by the PTT or by TX.
 //
+//   is_spoken says that the mode carries speech, as USB, LSB, AM, RADE1,
+//            RADE2 and VOIP do: while it sends, those listening to the radio
+//            from afar hear the microphone, which the speaker does not play.
+//
 //   tx_end   is called by the thread that owns the controls when the PTT
 //            that keyed the radio is let go, before the radio goes back to
 //            receive. A modem that has to end its over with something of
@@ -79,6 +83,7 @@ struct modem {
 	void (*tx)(const int32_t *mic, double *samples);
 	int (*wants_tx)(void);
 	void (*tx_end)(void);
+	int is_spoken;
 };
 
 extern const struct modem *modem_list[];

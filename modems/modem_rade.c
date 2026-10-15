@@ -814,6 +814,7 @@ static void rade2_start(void) {
 
 const struct modem modem_rade1 = {
 	.name = "RADE1",
+	.is_spoken = 1,
 	.order = 8,
 	.start = rade1_start,
 	.select = rade1_select,
@@ -826,6 +827,7 @@ const struct modem modem_rade1 = {
 
 const struct modem modem_rade2 = {
 	.name = "RADE2",
+	.is_spoken = 1,
 	.order = 9,
 	.start = rade2_start,
 	.select = rade2_select,

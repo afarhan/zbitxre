@@ -55,6 +55,7 @@ static void voip_select(void) {
 
 const struct modem modem_voip = {
 	.name = "VOIP",
+	.is_spoken = 1,
 	.order = 10,
 	.select = voip_select,
 	.rx = rx_voip,

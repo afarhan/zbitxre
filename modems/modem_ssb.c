@@ -84,6 +84,7 @@ static void ssb_start(void) {
 
 const struct modem modem_usb = {
 	.name = "USB",
+	.is_spoken = 1,
 	.order = 1,
 	.start = ssb_start,
 	.select = ssb_select,
@@ -93,6 +94,7 @@ const struct modem modem_usb = {
 
 const struct modem modem_lsb = {
 	.name = "LSB",
+	.is_spoken = 1,
 	.order = 2,
 	.select = ssb_select,
 	.rx = rx_ssb,
