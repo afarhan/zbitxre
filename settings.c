@@ -53,11 +53,12 @@
 #define QUIET_FOR_MS 2000
 #define NOT_WAITING (-1L)
 
-static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET" };
+static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET", "NEW_COOKIE" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
 // what the panel measures, the entry being written for the logbook, and
-// what was last said of reaching the radio from afar
-static const char *const groups_not_kept[] = { "METER", "LOGGER", "REMOTE" };
+// what was last said of reaching the radio from afar, and of VoIP: who is
+// heard, what the gateway says, and the owner's speaking
+static const char *const groups_not_kept[] = { "METER", "LOGGER", "REMOTE", "VOIP" };
 #define GROUPS_NOT_KEPT ((int)(sizeof(groups_not_kept) / sizeof(groups_not_kept[0])))
 
 static char file_path[PATH_MAX_LENGTH];

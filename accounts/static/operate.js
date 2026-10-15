@@ -43,7 +43,11 @@
 //
 // In the voice modes TX opens this browser's microphone, and what the owner
 // says goes to the radio to be sent; "sending, and in the voice modes
-// speaking", below, says how.
+// speaking", below, says how. In VOIP it goes the same way, and the radio
+// passes it to my.sbitx.net's repeater and does not send it: TX there is
+// VOIP_TX, blue and not red, the author having asked for a colour of its
+// own, and the frequency says IP where it says TX on the air. Whoever is
+// heard over VoIP is named on the status line, white on that blue.
 //
 // The radio's sound comes as it does to anyone listening from the globe,
 // over a second WebSocket, /listen: twenty milliseconds of mu-law to a
@@ -339,6 +343,13 @@
     if (name === "SAY" || name === "ERROR") { say(value); return; }
     if (name === "WARN") { say(value, "warning"); return; }
     if (name === "QSO") { say(value, value ? "qso" : ""); return; }
+    // who is heard over VoIP, while they speak
+    if (name === "VOIP_SPEAKER") {
+      values[name] = value;
+      if (value) { say("VoIP: " + value, "voip"); }
+      else if (status.className === "voip") { say(""); }
+      return;
+    }
     if (name === "LOG_LIST") { logBegins(); return; }
     if (name === "LOG") { logRow(value); return; }
     if (name === "TIME") { return; }
@@ -399,6 +410,7 @@
   }
   function isFt8() { return modeGroup() === "FT8"; }
   function isSending() { return values.TX === "ON"; }
+  function isVoipSending() { return values.VOIP_TX === "ON"; }
 
   /* tuning */
 
@@ -503,7 +515,8 @@
     tiles.VOL.value.textContent = own.VOL;
     tiles.MODE.value.textContent = values.MODE || "";
     tiles.MIC.value.textContent = values.MIC || "";
-    tiles.MIC.box.className = "tile" + (group === "VOICE" || group === "RADE" ? "" : " hidden");
+    tiles.MIC.box.className = "tile"
+      + (group === "VOICE" || group === "RADE" || group === "VOIP" ? "" : " hidden");
     BANDS.forEach(function (band) {
       var t = tiles["BAND " + band];
       t.value.textContent = band;
@@ -520,7 +533,8 @@
       figures.textContent = "RX:" + dotted(receiveHz);
     } else {
       waiting.textContent = other + ":" + dotted(vfoHz[other] || dialHz);
-      figures.textContent = (isSending() ? "TX" : own.VFO) + ":" + dotted(dialHz);
+      figures.textContent = (isSending() ? "TX" : isVoipSending() ? "IP" : own.VFO) + ":"
+        + dotted(dialHz);
     }
 
     var labels = ["LOG", "SET", "TERM", ""];
@@ -539,7 +553,8 @@
       footer[i].value.textContent = label;
       footer[i].box.className = "tile button" + (label ? "" : " hidden")
         + (label === "TX" && isSending() ? " on" : "")
-        + (label === "RX" && !isSending() ? " focused" : "");
+        + (label === "TX" && isVoipSending() ? " voip-on" : "")
+        + (label === "RX" && !isSending() && !isVoipSending() ? " focused" : "");
     }
     app.className = isFt8() ? "ft8" : "";
 
@@ -548,8 +563,10 @@
   }
 
   function footerLabel(place, group, macros) {
-    // RADE1 and RADE2 are laid out as the voice modes are
-    if (group === "VOICE" || group === "RADE") { return ["", "TX", "RX", "", "", ""][place]; }
+    // RADE1, RADE2 and VOIP are laid out as the voice modes are
+    if (group === "VOICE" || group === "RADE" || group === "VOIP") {
+      return ["", "TX", "RX", "", "", ""][place];
+    }
     if (group === "2TONE") { return ["TX", "RX", "", "", "", ""][place]; }
     if (group === "CW") { return macros[place] || ""; }
     return "";
@@ -575,21 +592,27 @@
 
   var SPEECH_TAIL_MS = 300, MONITOR_TAIL_MS = 500;
   var isSpeaking = false, isMuted = false, tailTimer = null;
+  // TX, or in VOIP VOIP_TX: the radio's to send what is said, or to pass
+  // it to the repeater
+  var speakingBy = "TX";
 
   function sendSpeech(bytes) {
     if (isSpeaking && work && work.readyState === 1) { work.send(bytes); }
   }
 
   function startSending() {
-    // in RADE1 and RADE2 as in the voice modes, what is sent is what is said
-    if (modeGroup() !== "VOICE" && modeGroup() !== "RADE") { set("TX", "ON"); return; }
+    // in RADE1, RADE2 and VOIP as in the voice modes, what is sent is what
+    // is said
+    var group = modeGroup();
+    if (group !== "VOICE" && group !== "RADE" && group !== "VOIP") { set("TX", "ON"); return; }
     if (!player) { return; }
     if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
+    speakingBy = group === "VOIP" ? "VOIP_TX" : "TX";
     player.openMicrophone(sendSpeech).then(function () {
       isSpeaking = true;
       isMuted = true;
       setLoudness();
-      set("TX", "ON");
+      set(speakingBy, "ON");
     }, function (refused) {
       say("the microphone could not be opened, and the radio is not sending: "
         + refused.message, "warning");
@@ -597,10 +620,10 @@
   }
 
   function stopSending() {
-    if (!isSpeaking) { set("TX", "OFF"); return; }
+    if (!isSpeaking) { set(modeGroup() === "VOIP" ? "VOIP_TX" : "TX", "OFF"); return; }
     isSpeaking = false;
     tailTimer = setTimeout(function () {
-      set("TX", "OFF");
+      set(speakingBy, "OFF");
       tailTimer = setTimeout(function () {
         tailTimer = null;
         isMuted = false;
@@ -873,15 +896,18 @@
     listed.forEach(function (name) {
       var control = schema[name];
       // BW is one of two controls
+      // of the texts, VOIP_STATUS is listed, to be read and not tapped
       if (name !== "BW" && (!control || control.kind === "action"
-          || control.kind === "text" || PLACED.indexOf(name) >= 0)) {
+          || (control.kind === "text" && name !== "VOIP_STATUS") || PLACED.indexOf(name) >= 0)) {
         return;
       }
       if (rows.some(function (r) { return r.name === name; })) { return; }
       var row = make("div", "row", null, list);
       make("div", "title", name, row);
       var r = { name: name, box: row, value: make("div", "value", "", row) };
-      row.addEventListener("click", function () { adjust(rowControl(name)); });
+      if (control && control.kind !== "text") {
+        row.addEventListener("click", function () { adjust(rowControl(name)); });
+      }
       rows.push(r);
     });
   }
@@ -896,7 +922,9 @@
     var group = modeGroup(), control = schema[rowControl(name)];
     if (!control) { return false; }
     // BW sets the passband of the voice modes and CW; the other modes' are their own
-    if (name === "BW") { return group === "VOICE" || group === "CW"; }
+    if (name === "BW") { return group === "VOICE" || group === "CW" || group === "VOIP"; }
+    // VOIP_TX is the TX and RX buttons
+    if (name === "VOIP_TX") { return false; }
     return control.group === "RADIO" || control.group === group;
   }
 
@@ -1056,6 +1084,8 @@
     var band = { tuned: 0, low: 300, high: 300 + bw };
     if (mode === "LSB") { band.low = -300 - bw; band.high = -300; }
     if (mode === "AM") { band.low = -bw; band.high = bw; }
+    // VOIP hears the band as speech is heard, on the band's sideband
+    if (mode === "VOIP" && Number(values.FREQ || 0) < 10000000) { band.low = -300 - bw; band.high = -300; }
     // RADE1's and RADE2's passband is fixed, and on the band's sideband, the lower below 10 MHz
     if (mode === "RADE1" || mode === "RADE2") {
       band.low = 250; band.high = 2750;

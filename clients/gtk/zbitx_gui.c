@@ -205,6 +205,17 @@
 // sends nothing; a message is tapped twice, or CQ pressed, and HALT stops
 // it. The frequency in red says the radio is sending.
 //
+// VOIP is a mode with the same two buttons, TX and RX, but they work
+// VOIP_TX: the owner's speech goes to my.sbitx.net and the transmitter is
+// not keyed, modems/modem_voip.c says why. So that it is never taken for
+// the air, the author asked that it have a colour of its own: TX is blue
+// and not red while the owner speaks over VoIP, and the frequency's large
+// line says IP where it says TX on the air. In VOIP the list has
+// VOIP_STATUS, the channel and how many radios are in it, "7074 KHZ, 3
+// HERE", or why the owner's speech was not passed. Whoever is heard over
+// VoIP, in any voice mode, is named on the status line, white on that
+// blue, for as long as they speak: VOIP_SPEAKER, which the radio says.
+//
 // SET opens the settings, a screen of their own in the window, as on the
 // panel: a row to each of the radio's controls in its group STATION, the
 // callsign and the grid, and how FT8 is worked. A tap on a choice moves it
@@ -644,6 +655,8 @@ static const struct footer_button footer_buttons[] = {
 	{"2TONE", 1, "RX", "TX", "OFF"},
 	{"RADE", 1, "TX", "TX", "ON"},
 	{"RADE", 2, "RX", "TX", "OFF"},
+	{"VOIP", 1, "TX", "VOIP_TX", "ON"},
+	{"VOIP", 2, "RX", "VOIP_TX", "OFF"},
 	{NULL, 0, NULL, NULL, NULL},
 };
 
@@ -668,6 +681,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define SET_ROW 1
 #define STATION_GROUP "STATION"
 #define REMOTE_GROUP "REMOTE"
+#define VOIP_GROUP "VOIP"
+#define VOIP_SPEAKER_CONTROL "VOIP_SPEAKER"
 #define CONNECTIONS_GROUP "CONNECTIONS"
 #define PAGE_CONNECTIONS "connections"
 #define COOKIE_WORD "COOKIE "
@@ -838,6 +853,7 @@ static GtkWidget *list_row_new(const char *name, GtkWidget **value);
 // a remark on the status line, from its left end
 static void show_status(const char *text) {
 	set_class(status_label, "warning", 0);
+	set_class(status_label, "voip", 0);
 	gtk_label_set_xalign(GTK_LABEL(status_label), 0);
 	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_END);
 	gtk_label_set_text(GTK_LABEL(status_label), text);
@@ -849,6 +865,23 @@ static void show_warning(const char *text) {
 	show_status(text);
 	set_class(status_label, "qso", 0);
 	set_class(status_label, "warning", 1);
+}
+
+// whoever is heard over VoIP, named while they speak; when they stop the
+// line is cleared, if it still has their name
+static void show_voip_speaker(const char *callsign) {
+	char text[TEXT_MAX];
+
+	if (callsign[0] == 0) {
+		if (gtk_style_context_has_class(gtk_widget_get_style_context(status_label), "voip"))
+			show_status("");
+		set_class(status_label, "voip", 0);
+		return;
+	}
+	snprintf(text, sizeof(text), "VoIP: %s", callsign);
+	show_status(text);
+	set_class(status_label, "qso", 0);
+	set_class(status_label, "voip", 1);
 }
 
 // CW read off the air: the characters join the end of what was read
@@ -951,12 +984,19 @@ static int is_row_shown(const struct row *r) {
 	// BW sets the passband of the voice modes and CW; the other modes'
 	// passbands are their own
 	if (!strcmp(r->control, "BW"))
-		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "CW");
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "CW")
+			|| !strcmp(mode_group(), VOIP_GROUP);
+	// VOIP has no transmitter: its TX and RX are VOIP_TX's
 	if (!strcmp(r->control, "TX"))
-		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
+		return strcmp(mode_group(), MESSAGES_GROUP) != 0
+			&& strcmp(mode_group(), VOIP_GROUP) != 0;
 	// the microphone's gain is for the modes that are spoken into
 	if (!strcmp(r->control, "MIC"))
-		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "RADE");
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "RADE")
+			|| !strcmp(mode_group(), VOIP_GROUP);
+	// who is heard over VoIP is on the status line
+	if (!strcmp(r->control, VOIP_SPEAKER_CONTROL))
+		return 0;
 	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
 		return 1;
 	return !strcmp(k->group, mode_group());
@@ -1082,6 +1122,8 @@ static void show_frequency(void) {
 		format_dial_line(large_line, sizeof(large_line), value_of("VFO"), dial_hz);
 		if (is_transmitting)
 			format_dial_line(large_line, sizeof(large_line), "TX", dial_hz);
+		if (is_on("VOIP_TX"))
+			format_dial_line(large_line, sizeof(large_line), "IP", dial_hz);
 	}
 	gtk_label_set_text(GTK_LABEL(vfo_label), small_line);
 	gtk_label_set_text(GTK_LABEL(frequency_label), large_line);
@@ -1174,8 +1216,12 @@ static void show_buttons(void) {
 		if (!is_a_button)
 			continue;
 		gtk_label_set_text(GTK_LABEL(footer_label[i]), label);
-		is_in_force = !strcmp(control, "TX") && !strcmp(value_of("TX"), choice);
-		set_class(footer_box[i], "on", is_in_force && !strcmp(choice, "ON"));
+		is_in_force = (!strcmp(control, "TX") || !strcmp(control, "VOIP_TX"))
+			&& !strcmp(value_of(control), choice);
+		set_class(footer_box[i], "on", is_in_force && !strcmp(choice, "ON")
+			&& !strcmp(control, "TX"));
+		set_class(footer_box[i], "voip-on", is_in_force && !strcmp(choice, "ON")
+			&& !strcmp(control, "VOIP_TX"));
 		set_class(footer_box[i], "focused", is_in_force && !strcmp(choice, "OFF"));
 	}
 	for (i = 0; i < COLUMN_BUTTONS; i++) {
@@ -1816,6 +1862,8 @@ static void handle_line(const char *name, char *value) {
 	if (k == NULL || k->is_own)
 		return;
 	snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
+	if (!strcmp(name, VOIP_SPEAKER_CONTROL))
+		show_voip_speaker(value);
 	if (!strcmp(name, "FREQ"))
 		take_radio_frequency(atoi(value));
 	take_kept_dial(name, atoi(value));
@@ -2894,6 +2942,11 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 		*low_hz = -bw_voice;
 		*high_hz = bw_voice;
 	}
+	// VOIP hears the band as speech is heard, on the band's sideband
+	if (!strcmp(mode, "VOIP") && atoi(value_of("FREQ")) < LOWER_SIDEBAND_BELOW_HZ) {
+		*low_hz = -VOICE_LOW_HZ - bw_voice;
+		*high_hz = -VOICE_LOW_HZ;
+	}
 	// RADE1's and RADE2's passband is fixed, and on the band's sideband,
 	// the lower below 10 MHz, as speech's is; modems/modem_rade.c says why
 	if (!strcmp(mode, "RADE1") || !strcmp(mode, "RADE2")) {
@@ -3550,6 +3603,7 @@ static void load_style(void) {
 		".tile { background-color: #101820; box-shadow: inset 0 0 0 1px #405060; }"
 		".tile.in-use { background-color: #604800; }"
 		".tile.on { background-color: #B02020; }"
+		".tile.voip-on { background-color: #2050C0; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
 		".tile-title { font-size: %dpx; color: #00FFFF; }"
 		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
@@ -3558,6 +3612,7 @@ static void load_style(void) {
 		".status.warning { font-family: sans-serif; font-weight: bold; color: #FFE000;"
 		" background-color: #000000; }"
 		".status.meter { color: #FFC000; background-color: #000000; }"
+		".status.voip { color: #FFFFFF; background-color: #2050C0; }"
 		".tile-value { font-size: %dpx; font-weight: bold; color: #FFFFFF; }"
 		".dim .tile-value { color: #506070; }"
 		".frequency { font-family: monospace; font-size: %dpx; font-weight: bold;"

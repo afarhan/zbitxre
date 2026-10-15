@@ -18,7 +18,8 @@
 //   BAND    the amateur band the frequency is in: 80M, 60M, 40M, 30M, 20M,
 //           17M, 15M, 12M or 10M, or OUT when it is in none. Setting BAND
 //           goes to that band, to the frequency and mode last used on it.
-//   MODE    USB, LSB, CW, CWR, AM, FT8, 2TONE, RADE1 or RADE2.
+//   MODE    USB, LSB, CW, CWR, AM, FT8, 2TONE, RADE1, RADE2 or VOIP.
+//           VOIP does not transmit: modems/modem_voip.c says what it is.
 //   AUDIO   the volume, 0 to 100: 0 is silence, and 1 to 100 are spread
 //           over the 40 dB of the sound card's range that are of use;
 //           hw/audio.c says how.
@@ -34,8 +35,8 @@
 //           or FAST, as in zbitxv2, which starts with SLOW.
 //   TX      OFF or ON: whether the radio is transmitting. Setting it ON
 //           goes to transmit, if the mode in use can transmit: USB, LSB,
-//           CW, CWR and 2TONE can; AM cannot yet, and setting TX ON in it
-//           is refused. Changing the mode or the band goes back to
+//           CW, CWR and 2TONE can; AM cannot yet, and VOIP never does,
+//           and setting TX ON in either is refused. Changing the mode or the band goes back to
 //           receive first.
 //
 //   MYCALLSIGN, MYGRID   the station's callsign and its grid, as text, in a
@@ -288,10 +289,11 @@ static int apply_freq(struct control *c, const char *value, char *why, int room)
 		tell_the_place(band);
 	}
 	core_request("r1:freq", value);
-	// RADE1 and RADE2 are on the sideband of the band, which the core
-	// chooses when it is asked for the mode: it is asked again when the
-	// frequency has crossed from the one to the other
-	if ((!strcmp(control_get("MODE"), "RADE1") || !strcmp(control_get("MODE"), "RADE2"))
+	// RADE1, RADE2 and VOIP are on the sideband of the band, which the
+	// core chooses when it is asked for the mode: it is asked again when
+	// the frequency has crossed from the one to the other
+	if ((!strcmp(control_get("MODE"), "RADE1") || !strcmp(control_get("MODE"), "RADE2")
+			|| !strcmp(control_get("MODE"), "VOIP"))
 			&& was_lower != (atoi(value) < SIDEBAND_CHANGES_AT_HZ))
 		core_request("r1:mode", control_get("MODE"));
 	return 0;
@@ -491,7 +493,7 @@ static struct control stack = {
 
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
-	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2",
+	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP",
 	.value = STARTING_MODE, .apply = apply_mode,
 };
 

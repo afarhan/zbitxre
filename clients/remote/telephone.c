@@ -31,7 +31,12 @@
 // that the copies of the speech that lie above 4 kHz are not there.
 //
 // Each way keeps the last samples it was given, so that one packet runs on
-// into the next. They are two streams and do not share what they keep.
+// into the next. The gateway has more than one stream each way: the
+// radio's sound for those listening and the owner's speech for VoIP go
+// from the whole, the owner's speech to transmit and another's over VoIP
+// come to it. So what is kept is a struct telephone, one for each stream,
+// begun with telephone_begin(); the filters themselves, made by
+// telephone_open(), are the same for all.
 
 #include <math.h>
 #include <string.h>
@@ -39,8 +44,8 @@
 #include "telephone.h"
 
 #define STEP (WHOLE_RATE_HZ / TELEPHONE_RATE_HZ)
-#define TAPS 96
-#define TAPS_A_PHASE (TAPS / STEP)
+#define TAPS TELEPHONE_TAPS
+#define TAPS_A_PHASE TELEPHONE_TAPS_A_PHASE
 #define CUTOFF_HZ 3600.0
 #define HAMMING_A 0.54
 #define HAMMING_B 0.46
@@ -55,15 +60,6 @@ static float taps[TAPS];
 // up the level it was, the same in all six
 static float taps_up[STEP][TAPS_A_PHASE];
 static int16_t linear[256];
-
-// from the whole: the last TAPS samples, going round
-static float past_whole[TAPS];
-static int past_whole_at;
-static int until_kept = STEP;
-
-// to the whole: the last TAPS_A_PHASE samples, going round
-static float past_telephone[TAPS_A_PHASE];
-static int past_telephone_at;
 
 // a sample as G.711 writes it, mu-law: the sign, three bits for which of
 // eight segments its size falls in, and four for where in the segment
@@ -116,15 +112,16 @@ void telephone_open(void) {
 		size = (((value & 0x0f) << 3) + ULAW_BIAS) << ((value & 0x70) >> 4);
 		linear[i] = (int16_t)((value & 0x80) ? ULAW_BIAS - size : size - ULAW_BIAS);
 	}
-	memset(past_whole, 0, sizeof(past_whole));
-	memset(past_telephone, 0, sizeof(past_telephone));
-	past_whole_at = 0;
-	past_telephone_at = 0;
-	until_kept = STEP;
+}
+
+// a stream begins with nothing kept, as if silence had come before it
+void telephone_begin(struct telephone *t) {
+	memset(t, 0, sizeof(*t));
+	t->until_kept = STEP;
 }
 
 // 960 samples of the whole, 1920 bytes, become 160 bytes of mu-law
-void telephone_from_whole(const uint8_t *whole, uint8_t *telephone) {
+void telephone_from_whole(struct telephone *t, const uint8_t *whole, uint8_t *telephone) {
 	float sum;
 	int kept = 0;
 	int i;
@@ -132,18 +129,18 @@ void telephone_from_whole(const uint8_t *whole, uint8_t *telephone) {
 	int at;
 
 	for (i = 0; i < WHOLE_FRAME_SAMPLES; i++) {
-		past_whole[past_whole_at] = (float)(int16_t)(whole[2 * i] << 8 | whole[2 * i + 1]);
-		past_whole_at++;
-		if (past_whole_at == TAPS)
-			past_whole_at = 0;
-		until_kept--;
-		if (until_kept > 0)
+		t->past_whole[t->past_whole_at] = (float)(int16_t)(whole[2 * i] << 8 | whole[2 * i + 1]);
+		t->past_whole_at++;
+		if (t->past_whole_at == TAPS)
+			t->past_whole_at = 0;
+		t->until_kept--;
+		if (t->until_kept > 0)
 			continue;
-		until_kept = STEP;
+		t->until_kept = STEP;
 		sum = 0;
-		at = past_whole_at;
+		at = t->past_whole_at;
 		for (tap = 0; tap < TAPS; tap++) {
-			sum += taps[tap] * past_whole[at];
+			sum += taps[tap] * t->past_whole[at];
 			at++;
 			if (at == TAPS)
 				at = 0;
@@ -154,7 +151,7 @@ void telephone_from_whole(const uint8_t *whole, uint8_t *telephone) {
 }
 
 // 160 bytes of mu-law become 960 samples of the whole, 1920 bytes
-void telephone_to_whole(const uint8_t *telephone, uint8_t *whole) {
+void telephone_to_whole(struct telephone *t, const uint8_t *telephone, uint8_t *whole) {
 	float sum;
 	int sample;
 	int i;
@@ -163,16 +160,16 @@ void telephone_to_whole(const uint8_t *telephone, uint8_t *whole) {
 	int at;
 
 	for (i = 0; i < TELEPHONE_FRAME_SAMPLES; i++) {
-		past_telephone_at++;
-		if (past_telephone_at == TAPS_A_PHASE)
-			past_telephone_at = 0;
-		past_telephone[past_telephone_at] = (float)linear[telephone[i]];
+		t->past_telephone_at++;
+		if (t->past_telephone_at == TAPS_A_PHASE)
+			t->past_telephone_at = 0;
+		t->past_telephone[t->past_telephone_at] = (float)linear[telephone[i]];
 		for (phase = 0; phase < STEP; phase++) {
 			// taps_up[phase][j] multiplies the sample j back from the newest
 			sum = 0;
-			at = past_telephone_at;
+			at = t->past_telephone_at;
 			for (tap = 0; tap < TAPS_A_PHASE; tap++) {
-				sum += taps_up[phase][tap] * past_telephone[at];
+				sum += taps_up[phase][tap] * t->past_telephone[at];
 				at--;
 				if (at < 0)
 					at = TAPS_A_PHASE - 1;

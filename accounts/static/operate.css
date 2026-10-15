@@ -26,6 +26,7 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
 .tile.button .value { font-size: 4.2vh; }
 .tile.in-use { background: #604800; }
 .tile.on { background: #b02020; }
+.tile.voip-on { background: #2050c0; }
 .tile.focused { box-shadow: inset 0 0 0 2px #ffc000; }
 .tile.dim .value, .tile.dim .title { color: #4a5a68; }
 .tile.hidden { visibility: hidden; }
@@ -42,6 +43,7 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
 #status { height: 4.6vh; line-height: 4.6vh; font-size: 3vh; color: #9ab; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; padding: 0 0.4vw; background: #000; }
 #status.qso { color: #fff; background: #b02020; }
+#status.voip { color: #fff; background: #2050c0; }
 #status.warning { color: #ffe000; font-weight: bold; }
 #views { flex: 1; display: flex; min-height: 0; }
 #scope-box { flex: 1; }

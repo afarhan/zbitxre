@@ -541,7 +541,7 @@ the same RTP the radio's sound is, payload type 96, 960 16-bit samples to a
 packet, with a label of eleven bytes before it: one for the kind of sound, 1
 for speech from the owner working the radio from afar, 2 for sound from
 another program on the radio, 3 for someone speaking over the internet, which
-is to be heard and not transmitted and is not taken yet; and ten for the
+is to be heard and not transmitted, see VoIP below; and ten for the
 callsign of whoever is speaking, with noughts after it. Any program on the radio may send it; the daemon does. While the radio
 is sending, speech that comes takes the microphone's place, from its first
 sample until that transmission ends, and a gap in it is silence, not the
@@ -571,6 +571,90 @@ stops a packet that somebody kept from being sent again.
 mu-law as a binary message on the WebSocket it works the radio by,
 `wss://my.sbitx.net/work?radio=<number>`, which is the owner's alone. A binary
 message of any other length is dropped.
+
+## VoIP: the repeater
+
+The author's design: the dial is the room. A radio whose owner has `VOIP`
+`ONLINE`, among its `CONNECTIONS`, is in the channel of its dial, the
+frequency rounded to the nearest kilohertz. Whoever speaks there is heard in
+every other radio in the channel, in place of its receiver, in any voice mode,
+while it receives. The owner speaks by putting the radio in the mode `VOIP`
+and pressing the PTT, which in that mode sets `VOIP_TX` and not `TX`: the mode
+has no transmitter, and the radio program refuses `TX ON` in it. The first to
+speak holds the channel, for a minute at most. `VOIP` is kept from one start
+to the next. `accounts/voip.py` says what the service does and why;
+`modems/modem_voip.c` and `rtp_voip.c` what the radio does.
+
+**On the connection the daemon keeps.** `ALLOWS` has `voip` among its words
+while `VOIP` is online, and the daemon is on line for it as for the other two.
+The service answers with a stream:
+
+    VOIP STREAM 3f9a1c2b4d5e6f70 8d2e...    the stream's id, 16 hex digits,
+                                            and a nonce, 32
+    VOIP ROOM 7074 3                        the radio's channel, in kHz, and
+                                            how many radios are in it
+    VOIP BUSY VU3XYZ                        the owner's speech was not passed:
+                                            VU3XYZ holds the channel, or why,
+                                            one minute, wait, channel full,
+                                            service full
+
+How many are in a channel is all that is said of them: the author's rule,
+"that's the nature of ham radio: you have no idea who is listening". The
+radio shows the two in `VOIP_STATUS`, `7074 KHZ, 3 HERE` or `BUSY VU3XYZ`.
+
+**The packet, by UDP, both ways**, 196 bytes, to the service's port, the
+same number as its TCP port:
+
+    8 bytes     the stream's id
+    1 byte      kind: 0 where the radio is tuned, 3 speech
+    1 byte      codec: 0, mu-law at 8000 a second, 20 ms
+    10 bytes    callsign, with noughts after it
+    4 bytes     the dial's frequency in Hz, the more significant byte first
+    4 bytes     the packet's number, likewise
+    160 bytes   sound
+    8 bytes     the tag
+
+The tag is the first eight bytes of HMAC-SHA256 of all before it, with the
+key
+
+    HMAC-SHA256(the radio's stretched cookie, "zbitx-voip-up-1 <nonce>")
+
+for what the radio sends, and `zbitx-voip-down-1` for what it is sent. The
+daemon sends a packet of kind 0 every fifteen seconds and within a second of
+the dial moving to another kilohertz: it puts the radio in its channel and
+keeps the way back through the owner's router open. It leaves the callsign
+empty; the service writes in the speaker's, from the account the radio
+belongs to, and never takes the radio's word for it.
+
+**What keeps the repeater from being used against anyone.** The author asked
+that it throttle and be sure of who is speaking, since a repeater sends many
+packets for each it is sent. Nothing is ever sent back to where a packet came
+from: a packet whose tag is wrong is answered by nothing, and speech goes
+only to radios on line, at the address their own tagged packets come from.
+A radio may send 50 packets a second, with a little more allowed for the
+internet's unevenness; a channel holds 50 radios; the radio that has just
+spoken waits three seconds before it may again, so that another may answer;
+and all channels together are sent no more than the service's ceiling,
+`voip_packets_a_second` in its settings, 2000. Every over is noted, with
+its callsign, channel and length.
+
+**On the radio.** The owner's speech goes from the radio program to the
+daemon as RTP, the same as the radio's sound, to port 5007 on `127.0.0.1`.
+Another's comes back to the radio program's port 5006 under the label of kind
+3, with the speaker's callsign, which the radio shows in `VOIP_SPEAKER` while
+they speak.
+
+## A new cookie
+
+The author's way of putting right a cookie that has gone where it should not:
+a new one is made on the radio and typed into the owner's list at
+my.sbitx.net. `NEW_COOKIE`, among the `CONNECTIONS`, takes two taps, `TAP
+AGAIN` and then `MAKING`, within five seconds; the daemon makes the cookie,
+lets go of the service, and shows it in `REMOTE_STATUS`. Beside the radio on
+the website, "new cookie" takes it; the radio keeps its name and its client
+password. The service lets go, within twenty seconds, of a radio on line
+whose cookie has been changed on the website, or which has been removed
+there, or whose owner's account has been suspended.
 
 ## Not done yet
 

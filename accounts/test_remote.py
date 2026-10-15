@@ -180,7 +180,7 @@ class Client:
         one of its connections, which comes when it comes"""
         line = self.file.readline().strip()
         while line.startswith(("SMETER ", "BLUETOOTH_STATUS ", "SOUND_CARD_STATUS ",
-                               "CAT_STATUS ")):
+                               "CAT_STATUS ", "VOIP_STATUS ")):
             line = self.file.readline().strip()
         return line
 
@@ -317,6 +317,19 @@ class Browser:
         self.socket.close()
 
 
+def free_port(kind):
+    with socket.socket(socket.AF_INET, kind) as spare:
+        spare.bind(("127.0.0.1", 0))
+        return spare.getsockname()[1]
+
+
+def whole_packet(sequence, level):
+    """RTP of the whole sound, as rtp_voip.c sends the owner's speech: 960
+    samples at one steady level"""
+    return struct.pack(">BBHII", 0x80, 96, sequence, sequence * 960, 0x766f6970) \
+        + struct.pack(">h", level) * 960
+
+
 @unittest.skipUnless(os.path.exists(DAEMON), "zbitx_remote is not built: make remote")
 class RemoteTest(unittest.TestCase):
     def setUp(self):
@@ -360,20 +373,26 @@ class RemoteTest(unittest.TestCase):
         # in place of the radio program's port for speech to transmit
         self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.microphone.bind(("127.0.0.1", 0))
-        # a port for programs that set the radio through Hamlib, free now
-        with socket.socket() as spare:
-            spare.bind(("127.0.0.1", 0))
-            self.cat_port = spare.getsockname()[1]
+        # a port for programs that set the radio through Hamlib, free now,
+        # and one where the radio program would send the owner's VoIP speech
+        self.cat_port = free_port(socket.SOCK_STREAM)
+        self.voip_port = free_port(socket.SOCK_DGRAM)
         self.daemon = subprocess.Popen(
             [DAEMON, "--server", "127.0.0.1", "--port", str(self.port),
              "--radio-port", str(self.radio.port), "--key", self.key_file,
              "--microphone-port", str(self.microphone.getsockname()[1]),
              "--bluetooth-script", self.bluetooth_script,
-             "--cat-port", str(self.cat_port)],
+             "--cat-port", str(self.cat_port), "--voip-port", str(self.voip_port)],
             stdout=subprocess.DEVNULL)
+        self.others = []
         self.account = self.make_account("VU2ESE", "farhan@example.org")
 
     def tearDown(self):
+        for daemon, radio, microphone in self.others:
+            daemon.kill()
+            daemon.wait()
+            radio.close()
+            microphone.close()
         self.daemon.kill()
         self.daemon.wait()
         self.microphone.close()
@@ -1034,6 +1053,104 @@ class RemoteTest(unittest.TestCase):
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status() == "COOKIE " + accounts.show_secret(radio["cookie"]),
                       "the cookie was not shown again")
+
+    # VoIP: the repeater, through two radios' gateways
+
+    def another_radio(self, callsign, email):
+        """a second radio, its own account, stand-in and gateway, with only
+        VOIP online, added on the website; returns its stand-in and the
+        socket its speech to be heard comes to"""
+        account = self.make_account(callsign, email)
+        radio = RadioProgram()
+        radio.controls["MYCALLSIGN"] = callsign
+        microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        microphone.bind(("127.0.0.1", 0))
+        daemon = subprocess.Popen(
+            [DAEMON, "--server", "127.0.0.1", "--port", str(self.port),
+             "--radio-port", str(radio.port),
+             "--key", os.path.join(self.folder, callsign + ".key"),
+             "--microphone-port", str(microphone.getsockname()[1]),
+             "--bluetooth-script", self.bluetooth_script,
+             "--cat-port", str(free_port(socket.SOCK_STREAM)),
+             "--voip-port", str(free_port(socket.SOCK_DGRAM))],
+            stdout=subprocess.DEVNULL)
+        self.others.append((daemon, radio, microphone))
+        radio.set("VOIP", "ONLINE")
+        self.wait_for(lambda: radio.controls.get("REMOTE_STATUS", "").startswith("COOKIE "),
+                      "the second radio showed no cookie")
+        ok, told = self.service.radio_add(account, "home",
+                                          radio.controls["REMOTE_STATUS"][len("COOKIE "):])
+        self.assertTrue(ok, told)
+        return radio, microphone
+
+    def test_two_radios_on_voip_hear_each_other_and_the_first_holds_the_channel(self):
+        self.switch_on_and_add()
+        self.radio.set("VOIP", "ONLINE")
+        self.wait_for(lambda: self.radio.controls.get("VOIP_STATUS") == "7074 KHZ, 1 HERE",
+                      "the first radio was not put in its channel")
+        other, heard = self.another_radio("VU3XYZ", "xyz@example.org")
+        self.wait_for(lambda: other.controls.get("VOIP_STATUS") == "7074 KHZ, 2 HERE"
+                      and self.radio.controls.get("VOIP_STATUS") == "7074 KHZ, 2 HERE",
+                      "the two radios were not both told of the channel")
+        # the owner of the first speaks: the radio program's packets to the
+        # gateway, a steady level, twenty milliseconds apart
+        speaking = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        heard.settimeout(5)
+        got = []
+        for number in range(40):
+            speaking.sendto(whole_packet(number, 3000), ("127.0.0.1", self.voip_port))
+            time.sleep(0.02)
+        while len(got) < 30:
+            got.append(heard.recv(4000))
+        for packet in got:
+            # to be heard, not transmitted, and whose: the account's callsign
+            self.assertEqual(len(packet), 11 + 12 + 1920)
+            self.assertEqual(packet[0], 3, "not labelled as speech to be heard")
+            self.assertEqual(packet[1:11].rstrip(b"\0"), b"VU2ESE")
+        for sample in struct.unpack(">480h", got[-1][-960:]):
+            self.assertLess(abs(sample - 3000), 3000 * 0.06)
+        # the first holds the channel: the second, speaking now, is told
+        # who has it, and its speech does not reach the first
+        self.microphone.settimeout(0.5)
+        other_port = None
+        for daemon, radio, microphone in self.others:
+            other_port = int(daemon.args[daemon.args.index("--voip-port") + 1])
+        for number in range(40, 60):
+            speaking.sendto(whole_packet(number, 3000), ("127.0.0.1", self.voip_port))
+            speaking.sendto(whole_packet(number, 5000), ("127.0.0.1", other_port))
+            time.sleep(0.02)
+        self.wait_for(lambda: other.controls.get("VOIP_STATUS") == "BUSY VU2ESE",
+                      "the second was not told the channel was held")
+        with self.assertRaises(socket.timeout):
+            self.microphone.recv(4000)
+        speaking.close()
+        # the second tunes away, to another channel
+        other.set("FREQ", "7076000")
+        self.wait_for(lambda: self.radio.controls.get("VOIP_STATUS") == "7074 KHZ, 1 HERE",
+                      "the first was not told the second had gone")
+        # VOIP offline: the first leaves the service's channels
+        self.radio.set("VOIP", "OFFLINE")
+        self.wait_for(lambda: self.radio.controls.get("VOIP_STATUS") == "OFFLINE",
+                      "VOIP_STATUS did not say OFFLINE")
+        self.wait_for(lambda: len(self.remote.voip.streams) == 1,
+                      "the service kept the first radio's stream")
+
+    def test_a_new_cookie_made_at_the_radio_and_typed_on_the_website(self):
+        before = self.switch_on_and_add()
+        self.radio.set("NEW_COOKIE", "MAKING")
+        self.wait_for(lambda: self.status().startswith("COOKIE ")
+                      and self.radio.controls.get("NEW_COOKIE") == "-",
+                      "no new cookie was shown")
+        shown = self.status()[len("COOKIE "):]
+        self.assertNotEqual(shown, accounts.show_secret(before["cookie"]))
+        with open(self.key_file) as file:
+            self.assertEqual(accounts.show_secret(file.read().strip()), shown)
+        ok, told = self.service.radio_new_cookie(self.account, before["id"], shown)
+        self.assertTrue(ok, told)
+        self.wait_for(lambda: self.status() == "ONLINE vu2ese-home",
+                      "the radio did not come back on line with its new cookie")
+        after = self.service.radio_called("vu2ese-home")
+        self.assertEqual(after["client_password"], before["client_password"])
 
 
 if __name__ == "__main__":

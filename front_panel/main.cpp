@@ -218,6 +218,9 @@
 #define COLOUR_BOX 0x101820
 #define COLOUR_TAKEN_UP 0x604800
 #define COLOUR_SWITCHED_ON 0xB02020
+//the owner speaking over VoIP, which keys no transmitter: blue and not
+//red, the author's ruling, so that it is never taken for the air
+#define COLOUR_VOIP_ON 0x2050C0
 #define COLOUR_TITLE 0x00FFFF
 #define COLOUR_VALUE 0xFFFFFF
 #define COLOUR_DIM 0x506070
@@ -335,6 +338,13 @@ static const struct footer footers[] = {
 		{"MIC", NULL, NULL, COLOUR_BOX},
 		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
 		{"TX", "OFF", "RX", COLOUR_BOX},
+	}},
+	//in VOIP, TX and RX are VOIP_TX: the owner's speech goes to
+	//my.sbitx.net, and the transmitter is not keyed
+	{"VOIP", {
+		{"MIC", NULL, NULL, COLOUR_BOX},
+		{"VOIP_TX", "ON", "TX", COLOUR_VOIP_ON},
+		{"VOIP_TX", "OFF", "RX", COLOUR_BOX},
 	}},
 };
 #define FOOTERS ((int)(sizeof(footers) / sizeof(footers[0])))
@@ -956,6 +966,16 @@ static void show_passband(){
 		low_hz = -bw_voice;
 		high_hz = bw_voice;
 	}
+	//VOIP hears the band as speech is heard, on the band's sideband
+	if (!strcmp(mode, "VOIP") && controls_find("FREQ") != NULL) {
+		char hz[CONTROL_TEXT_MAX];
+
+		controls_value_text(controls_find("FREQ"), hz, sizeof(hz));
+		if (atol(hz) < 10000000L) {
+			low_hz = -VOICE_LOW_HZ - bw_voice;
+			high_hz = -VOICE_LOW_HZ;
+		}
+	}
 	//RADE1's and RADE2's passband is fixed, and on the band's sideband,
 	//the lower below 10 MHz, as speech's is
 	if (!strcmp(mode, "RADE1") || !strcmp(mode, "RADE2")){
@@ -1482,6 +1502,18 @@ void main_radio_says_text(int number, const char *text){
 			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS)
 		return;
 	snprintf(c->text, sizeof(c->text), "%s", text);
+	//whoever is heard over VoIP is named on the status line while they
+	//speak, and the line cleared after, if it still names them
+	if (!strcmp(c->d.name, "VOIP_SPEAKER")){
+		char line[LINK_SAY_MAX + 1];
+
+		if (text[0] != 0){
+			snprintf(line, sizeof(line), "VoIP: %s", text);
+			main_status(line);
+		}
+		else if (!strncmp(said_text, "VoIP: ", strlen("VoIP: ")))
+			main_status("");
+	}
 	screens_radio_said();
 }
 

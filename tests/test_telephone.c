@@ -29,6 +29,8 @@ static double phase;
 static double down[PACKETS * TELEPHONE_FRAME_SAMPLES];
 static double up[PACKETS * WHOLE_FRAME_SAMPLES];
 static uint8_t carried[PACKETS][TELEPHONE_FRAME_SAMPLES];
+static struct telephone stream;
+static struct telephone other;
 
 static void expect(int ok, const char *what) {
 	if (ok) {
@@ -55,6 +57,7 @@ static void carry_a_tone(double hz) {
 	int i;
 
 	telephone_open();
+	telephone_begin(&stream);
 	for (p = 0; p < PACKETS; p++) {
 		for (i = 0; i < WHOLE_FRAME_SAMPLES; i++) {
 			sample = (int)(HALF_SCALE * sin(phase));
@@ -62,10 +65,10 @@ static void carry_a_tone(double hz) {
 			whole[2 * i] = (uint8_t)((uint16_t)sample >> 8);
 			whole[2 * i + 1] = (uint8_t)sample;
 		}
-		telephone_from_whole(whole, carried[p]);
+		telephone_from_whole(&stream, whole, carried[p]);
 		for (i = 0; i < TELEPHONE_FRAME_SAMPLES; i++)
 			down[p * TELEPHONE_FRAME_SAMPLES + i] = linear_of(carried[p][i]);
-		telephone_to_whole(carried[p], whole);
+		telephone_to_whole(&stream, carried[p], whole);
 		for (i = 0; i < WHOLE_FRAME_SAMPLES; i++)
 			up[p * WHOLE_FRAME_SAMPLES + i] = (int16_t)(whole[2 * i] << 8 | whole[2 * i + 1]);
 	}
@@ -100,6 +103,7 @@ int main(void) {
 	int to_up = PACKETS * WHOLE_FRAME_SAMPLES;
 	uint8_t whole[WHOLE_FRAME_BYTES];
 	uint8_t telephone[TELEPHONE_FRAME_SAMPLES];
+	uint8_t silence[WHOLE_FRAME_BYTES];
 	double size;
 	double all;
 	int is_steady = 1;
@@ -132,19 +136,34 @@ int main(void) {
 
 	// a level that does not change, as the tests of the gateway use: it
 	// comes down the one byte in every place, from packet to packet
-	telephone_open();
+	telephone_begin(&stream);
 	for (i = 0; i < WHOLE_FRAME_SAMPLES; i++) {
 		whole[2 * i] = (uint8_t)(1052 >> 8);
 		whole[2 * i + 1] = (uint8_t)(1052 & 0xff);
 	}
 	for (p = 0; p < 4; p++) {
-		telephone_from_whole(whole, telephone);
+		telephone_from_whole(&stream, whole, telephone);
 		for (i = 0; i < TELEPHONE_FRAME_SAMPLES; i++)
 			if (p > 0 && telephone[i] != telephone[0])
 				is_steady = 0;
 	}
 	expect(is_steady && linear_of(telephone[0]) > 1000 && linear_of(telephone[0]) < 1100,
 		"a steady level comes down the same byte in every place of every packet");
+
+	// two streams taken by turns, the gateway's sound for listeners and
+	// its VoIP speech: silence in one stays silence, whatever the other has
+	telephone_begin(&stream);
+	telephone_begin(&other);
+	is_steady = 1;
+	memset(silence, 0, sizeof(silence));
+	for (p = 0; p < 4; p++) {
+		telephone_from_whole(&stream, whole, telephone);
+		telephone_from_whole(&other, silence, telephone);
+		for (i = 0; i < TELEPHONE_FRAME_SAMPLES; i++)
+			if (linear_of(telephone[i]) != 0)
+				is_steady = 0;
+	}
+	expect(is_steady, "one stream's samples do not come out in another's");
 
 	if (checks_failed) {
 		printf("telephone: %d checks FAILED\n", checks_failed);

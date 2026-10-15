@@ -192,6 +192,7 @@
 #include "modem.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
+#include "rtp_voip.h"
 #include "kiss_fft.h"
 
 static int center_bin = 512;
@@ -1101,10 +1102,17 @@ static void sound_block(struct audio_block *block){
 		input_mic_halved[i] = block->from_microphone[i] / 2;
 	}
 	// speech from whoever works the radio from afar takes the microphone's
-	// place while it is sending; rtp_microphone.c says when and how
-	rtp_microphone_fill(input_mic_halved, block->frames, atomic_load(&in_tx));
+	// place while it is sending, or speaking over VoIP; rtp_microphone.c
+	// says when and how
+	rtp_microphone_fill(input_mic_halved, block->frames,
+		atomic_load(&in_tx) || rtp_voip_is_speaking());
+	// in the mode VOIP the owner's speech goes to the internet and not to
+	// the transmitter, and another's speech over VoIP takes the receiver's
+	// place in the speaker; rtp_voip.c says when
+	rtp_voip_microphone(input_mic_halved, block->frames);
 	sound_process(input_rx_halved, input_mic_halved,
 		block->to_speaker, block->to_transmitter, block->frames);
+	rtp_voip_speaker(block->to_speaker, block->frames, atomic_load(&in_tx));
 	// what the speaker is given is given to whoever else listens on the
 	// radio; rtp_audio.c says who and how
 	rtp_audio_take(block->to_speaker, block->frames);
@@ -1420,8 +1428,10 @@ void sdr_request(char *request, char *response){
 		else if (!strcmp(value, "USB"))
 			rx_wanted->mode = MODE_USB;
 		//RADE1 and RADE2 are sent as speech is, on the sideband of the
-		//band; the modem, modems/modem_rade.c, does the rest
-		else if (!strcmp(value, "RADE1") || !strcmp(value, "RADE2"))
+		//band; the modem, modems/modem_rade.c, does the rest. VOIP is
+		//heard on the band's sideband, and sends nothing
+		else if (!strcmp(value, "RADE1") || !strcmp(value, "RADE2")
+				|| !strcmp(value, "VOIP"))
 			rx_wanted->mode = freq_hdr < LOWER_SIDEBAND_BELOW_HZ ? MODE_LSB : MODE_USB;
 		else {
 			strcpy(response, "error");

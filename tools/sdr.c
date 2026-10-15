@@ -242,6 +242,7 @@
 #include "radio_clock.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
+#include "rtp_voip.h"
 #include "ft8_qso.h"
 #include "logger.h"
 #include "messages.h"
@@ -301,6 +302,9 @@
 #define TX_PEAK_ASKED "stat:tx_peak="
 
 #define TX_LIMIT_MS     120000
+// NEW_COOKIE's second tap is waited for this long
+#define NEW_COOKIE_WAIT_MS 5000
+#define NOT_ASKED 0
 #define PTT_SETTLED_MS  30
 #define NOT_TRANSMITTING 0
 
@@ -331,6 +335,8 @@
 static volatile sig_atomic_t is_done;
 static long tx_began_ms;
 static int is_ptt_transmitting;
+static long voip_tx_began_ms;
+static long new_cookie_asked_ms;
 static int is_ptt_to_be_let_go;
 static int ptt_level;
 static int ptt_level_seen;
@@ -390,6 +396,8 @@ static void report(void) {
 		rtp_audio_peak_percent());
 	printf("speech taken in on the radio to transmit: %d packets since last asked\n",
 		rtp_microphone_packets());
+	printf("the owner's speech sent to VoIP: %d packets since last asked\n",
+		rtp_voip_packets_sent());
 	printf("meter: power %.1f W, swr %.1f, battery %.2f V, smeter %d\n",
 		control_get_int("POWER") / TENTHS, control_get_int("SWR") / TENTHS,
 		control_get_int("BATTERY") / HUNDREDTHS, control_get_int("SMETER"));
@@ -545,6 +553,71 @@ static struct control cat = {
 
 static struct control cat_status = {
 	.group = "REMOTE", .name = "CAT_STATUS", .kind = CONTROL_TEXT,
+};
+
+// VOIP is the sixth: whether the radio is on VoIP at my.sbitx.net, where
+// the dial is the room. ONLINE, another's speech on the radio's frequency
+// is heard in any voice mode; and in the mode VOIP, the PTT sends the
+// owner's speech there and not to the transmitter. modems/modem_voip.c
+// says what the author asked for. It is kept from one start to the next,
+// his ruling: it is how a radio is reached when its owner is not at it.
+// The gateway does the talking to my.sbitx.net, and VOIP_STATUS is what
+// it says: the channel and how many radios are in it, "7074 KHZ, 3 HERE",
+// or why the owner's speech was not passed, "BUSY VU3XYZ"
+static struct control voip = {
+	.group = "CONNECTIONS", .name = "VOIP", .kind = CONTROL_CHOICE,
+	.choices = "OFFLINE/ONLINE",
+	.value = "OFFLINE",
+};
+
+static struct control voip_status = {
+	.group = "VOIP", .name = "VOIP_STATUS", .kind = CONTROL_TEXT,
+};
+
+// VOIP_TX is the PTT in the mode VOIP: ON while the owner is speaking over
+// the internet. A client's PTT sets it as the radio's own PTT does; it is
+// apart from TX so that every client can show it apart, in a colour of
+// its own and not transmitting's red, the author's ruling: the finals are
+// not keyed. VOIP_SPEAKER is the callsign of whoever is being heard over
+// VoIP now, for the line above the spectrum, and nothing while nobody is
+static int apply_voip_tx(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	if (!strcmp(value, "ON") && (strcmp(control_get("MODE"), "VOIP")
+			|| strcmp(control_get("VOIP"), "ONLINE"))) {
+		snprintf(why, room, "only in the mode VOIP, with VOIP ONLINE");
+		return -1;
+	}
+	return 0;
+}
+
+static struct control voip_tx = {
+	.group = "VOIP", .name = "VOIP_TX", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "OFF", .apply = apply_voip_tx,
+};
+
+static struct control voip_speaker = {
+	.group = "VOIP", .name = "VOIP_SPEAKER", .kind = CONTROL_TEXT,
+};
+
+// NEW_COOKIE makes the radio a new cookie, for when the old one has gone
+// where it should not: the author's way, a new key made on the radio and
+// typed into its owner's list at my.sbitx.net. It takes two taps, TAP
+// AGAIN and then MAKING, within NEW_COOKIE_WAIT_MS, so that a slip of the
+// finger does not take the radio off line. The gateway makes the cookie,
+// shows it in REMOTE_STATUS and puts this back to -
+static int apply_new_cookie(struct control *c, const char *value, char *why, int room) {
+	if (!strcmp(value, "MAKING") && strcmp(c->value, "TAP AGAIN")) {
+		snprintf(why, room, "TAP AGAIN first");
+		return -1;
+	}
+	return 0;
+}
+
+static struct control new_cookie = {
+	.group = "CONNECTIONS", .name = "NEW_COOKIE", .kind = CONTROL_CHOICE,
+	.choices = "-/TAP AGAIN/MAKING",
+	.value = "-", .apply = apply_new_cookie,
 };
 
 static struct control span = {
@@ -1292,6 +1365,54 @@ static int is_modem_wanting_tx(void) {
 	return m != NULL && m->wants_tx != NULL && m->wants_tx();
 }
 
+static int is_voice_mode(void) {
+	const char *mode = control_get("MODE");
+
+	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "AM")
+		|| !strcmp(mode, "VOIP");
+}
+
+// VoIP: in the mode VOIP the PTT is VOIP_TX and not TX; another's speech
+// is heard while VOIP is ONLINE, in a voice mode, while the radio
+// receives; NEW_COOKIE's first tap is let go if the second does not come
+static void follow_voip(long now) {
+	static int was_held;
+	char heard[CONTROL_VALUE_MAX];
+	int is_online = !strcmp(control_get("VOIP"), "ONLINE");
+	int is_voip_mode = !strcmp(control_get("MODE"), "VOIP");
+	int is_held = is_voip_mode && is_ptt_held(now);
+	int is_speaking = !strcmp(control_get("VOIP_TX"), "ON");
+
+	if (is_held && !was_held && !is_speaking)
+		set_setting("VOIP_TX", "ON", ORIGIN_NONE);
+	if (!is_held && was_held && is_speaking)
+		set_setting("VOIP_TX", "OFF", ORIGIN_NONE);
+	was_held = is_held;
+	is_speaking = !strcmp(control_get("VOIP_TX"), "ON");
+	if (!is_speaking)
+		voip_tx_began_ms = NOT_TRANSMITTING;
+	else if (voip_tx_began_ms == NOT_TRANSMITTING)
+		voip_tx_began_ms = now;
+	// the mode left, VOIP gone offline, or held too long by a client that
+	// went away: the owner's speech stops
+	if (is_speaking && (!is_voip_mode || !is_online || now - voip_tx_began_ms > TX_LIMIT_MS)) {
+		set_setting("VOIP_TX", "OFF", ORIGIN_NONE);
+		is_speaking = 0;
+	}
+	rtp_voip_set_speaking(is_speaking);
+	rtp_voip_set_hearing(is_online && is_voice_mode() && strcmp(control_get("TX"), "ON"));
+	rtp_voip_heard_callsign(heard, sizeof(heard));
+	if (strcmp(heard, control_get("VOIP_SPEAKER")))
+		set_setting("VOIP_SPEAKER", heard, ORIGIN_NONE);
+
+	if (!strcmp(control_get("NEW_COOKIE"), "-"))
+		new_cookie_asked_ms = NOT_ASKED;
+	else if (new_cookie_asked_ms == NOT_ASKED)
+		new_cookie_asked_ms = now;
+	else if (now - new_cookie_asked_ms > NEW_COOKIE_WAIT_MS)
+		set_setting("NEW_COOKIE", "-", ORIGIN_NONE);
+}
+
 static int is_ptt_mode(void) {
 	const char *mode = control_get("MODE");
 
@@ -1411,6 +1532,7 @@ static void main_loop(void) {
 		tx_record_save();
 		play_fill();
 		follow_ptt(now_ms());
+		follow_voip(now_ms());
 		panel_poll(now_ms(), on_panel_record, on_panel_bytes);
 		panel_controls_poll();
 		settings_poll(now_ms());
@@ -1427,6 +1549,7 @@ static void main_loop(void) {
 		meter_poll(now_ms());
 		rtp_audio_poll();
 		rtp_microphone_poll();
+		rtp_voip_poll();
 
 		polls[0].fd = TERMINAL;
 		polls[0].events = POLLIN;
@@ -1469,6 +1592,8 @@ int main(int argc, char **argv) {
 	if (rtp_microphone_open() < 0)
 		printf("speech from afar cannot be transmitted: port %d on the radio is taken\n",
 			RTP_MICROPHONE_PORT);
+	if (rtp_voip_open() < 0)
+		printf("the owner's speech cannot go to VoIP: no socket for it\n");
 	panel_open();
 	radio_open();
 	meter_open();
@@ -1486,6 +1611,11 @@ int main(int argc, char **argv) {
 	control_register(&sound_card_status);
 	control_register(&cat);
 	control_register(&cat_status);
+	control_register(&voip);
+	control_register(&new_cookie);
+	control_register(&voip_status);
+	control_register(&voip_tx);
+	control_register(&voip_speaker);
 	panel_wifi_open();
 	panel_log_open(LOGBOOK_FILE);
 	ft8_qso_open();

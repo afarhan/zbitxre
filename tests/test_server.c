@@ -1027,7 +1027,7 @@ int main(void) {
 	say(one, "schema\n");
 	hear(one, heard);
 	expect(has(heard, "CONTROL RADIO FREQ number 500000 30000000 1\n")
-		&& has(heard, "CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2\n")
+		&& has(heard, "CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP\n")
 		&& has(heard, "CONTROL CW WPM number 5 50 1\n")
 		&& has(heard, "CONTROL RADIO IF number 0 100 1\n")
 		&& has(heard, "CONTROL RADIO DRIVE number 0 100 1\n")

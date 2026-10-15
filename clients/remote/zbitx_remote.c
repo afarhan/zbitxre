@@ -211,6 +211,45 @@
 // rtp_microphone.c says what it does with it. So speech can come only
 // while the sound is going, which it is whenever the owner's page is open.
 //
+// VOIP
+//
+// The sixth of the CONNECTIONS is VOIP, ONLINE or OFFLINE: my.sbitx.net's
+// repeater, where the dial is the room. accounts/voip.py has what the
+// author asked for, and the packet. With VOIP online this program is on
+// line as it is for REMOTE, says "voip" among what the owner allows, and is
+// given a stream by the service, "VOIP STREAM <id> <nonce>", with two keys
+// made as the sound's are, of the words "zbitx-voip-up-1" for what it
+// sends and "zbitx-voip-down-1" for what it is sent. Every quarter of a
+// minute, and within a second of the dial moving to another kilohertz, it
+// sends a packet that says where the radio is tuned: that puts the radio
+// in its channel, and keeps the way back through a home's router open.
+//
+// The owner's speech, in the mode VOIP with the PTT down, comes from the
+// radio program to this program's port on the radio, VOIP_PORT, as RTP of
+// the whole sound; rtp_voip.c sends it. It is made the telephone's and sent
+// on, with the dial's frequency. Another's speech, from the service, is
+// checked by its tag and its number, and by its frequency, which has to be
+// in the channel the radio is tuned to; it is then handed to the radio
+// program's port for speech, as the owner's speech to transmit is, but
+// under the label that says it is to be heard, with the speaker's
+// callsign, which the service wrote in from the speaker's account.
+//
+// What the service says of the channel is shown in VOIP_STATUS: "7074 KHZ,
+// 3 HERE", how many radios are in it, the author's rule being a count and
+// no names; and for a few seconds after the owner's speech was not passed
+// on, why, "BUSY VU3XYZ" when another holds the channel, or "BUSY ONE
+// MINUTE", "BUSY WAIT", "BUSY CHANNEL FULL", "BUSY SERVICE FULL".
+//
+// A NEW COOKIE
+//
+// The owner can have the radio make a new cookie, with NEW_COOKIE among the
+// CONNECTIONS, which the radio program asks for two taps of: the author's
+// way of putting right a cookie that has gone where it should not, a new
+// key made on the radio and typed into the owner's list at my.sbitx.net,
+// beside the radio, which keeps its name and client password. This program
+// makes it, lets go of the service, and shows it in REMOTE_STATUS until the
+// website has it.
+//
 // HOW IT RUNS
 //
 // One thread and one loop around poll(). The connections that carry a
@@ -245,6 +284,7 @@
 #include "cat.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
+#include "rtp_voip.h"
 #include "sha256.h"
 #include "telephone.h"
 
@@ -260,6 +300,21 @@
 // where the radio program listens for speech: RTP_MICROPHONE_PORT, as a word
 #define DEFAULT_MICROPHONE_PORT "5006"
 #define DEFAULT_CAT_PORT "4532"
+// where the radio program sends the owner's speech for VoIP: RTP_VOIP_PORT
+#define DEFAULT_VOIP_PORT "5007"
+#define VOIP_STATUS_CONTROL "VOIP_STATUS"
+#define VOIP_KIND_TUNED 0
+#define VOIP_KIND_SPEECH 3
+#define VOIP_CODEC_MULAW 0
+#define VOIP_CALLSIGN_BYTES 10
+// the stream's id, kind, codec, callsign, frequency, number, sound, tag
+#define VOIP_HEAD_BYTES (1 + 1 + VOIP_CALLSIGN_BYTES + 4 + 4)
+#define VOIP_PACKET_BYTES (STREAM_ID_BYTES + VOIP_HEAD_BYTES + TELEPHONE_FRAME_SAMPLES + TAG_BYTES)
+#define VOIP_TUNED_EVERY_MS 15000
+#define VOIP_TUNED_SOON_MS 1000
+#define VOIP_BUSY_SHOWN_MS 3000
+#define VOIP_AHEAD_MOST 3000
+#define HZ_A_CHANNEL 1000
 #define CAT_CLIENTS_MAX 4
 #define CAT_WAITING_MOST 4
 #define CAT_STATUS_CONTROL "CAT_STATUS"
@@ -355,6 +410,7 @@ static const char *port = DEFAULT_PORT;
 static const char *radio_port = DEFAULT_RADIO_PORT;
 static const char *microphone_port = DEFAULT_MICROPHONE_PORT;
 static const char *cat_port = DEFAULT_CAT_PORT;
+static const char *voip_port = DEFAULT_VOIP_PORT;
 
 static const char *key_file = DEFAULT_KEY_FILE;
 
@@ -362,6 +418,7 @@ static enum state state = OFF;
 static int is_wanted;
 static int is_remote_allowed;
 static int is_streaming_allowed;
+static int is_voip_wanted;
 static char allowed_told[ALLOWED_ROOM];
 // a switch that a script does the work of: the switch's control and the one
 // that says what came of it, the script, and how the last run of it stands
@@ -426,6 +483,29 @@ static int speech_out = NOT_OPEN;
 static struct sockaddr_in speech_port;
 static int is_speech_begun;
 static uint16_t speech_sequence;
+// what the telephone's filters keep, for each stream: telephone.c
+static struct telephone sound_telephone;
+static struct telephone speech_telephone;
+// VoIP: the service's socket and the radio program's, the stream's id and
+// keys, the numbers sent and taken, where the dial was said to be, and
+// what the service said of the channel
+static int voip_fd = NOT_OPEN;
+static int voip_radio_fd = NOT_OPEN;
+static uint8_t voip_id[STREAM_ID_BYTES];
+static char voip_up_key[SHA256_HEX_ROOM];
+static char voip_down_key[SHA256_HEX_ROOM];
+static uint32_t voip_sent;
+static uint32_t voip_taken;
+static int is_voip_taken_begun;
+static uint16_t voip_heard_sequence;
+static long voip_tuned_ms;
+static long voip_channel_told;
+static char voip_room[STATUS_ROOM];
+static char voip_busy[STATUS_ROOM];
+static long voip_busy_ms;
+static char voip_status[STATUS_ROOM];
+static struct telephone voip_spoken_telephone;
+static struct telephone voip_heard_telephone;
 static struct session sessions[SESSIONS_MAX];
 
 static long now_ms(void) {
@@ -489,6 +569,7 @@ static int dial(const char *host, const char *service) {
 }
 
 static void sessions_close(void);
+static void cookie_renew(void);
 
 static int send_text(int fd, const char *text) {
 	size_t length = strlen(text);
@@ -1055,6 +1136,7 @@ static void radio_poll(long now) {
 		snprintf(said, sizeof(said), "%s", cat_status[0] ? cat_status : "OFF");
 		cat_status[0] = 0;
 		status_say(CAT_STATUS_CONTROL, cat_status, said);
+		voip_status[0] = 0;
 	}
 	got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	while (got > 0) {
@@ -1066,7 +1148,13 @@ static void radio_poll(long now) {
 			is_streaming_allowed = 1;
 		if (!strcmp(line, "STREAMING OFF"))
 			is_streaming_allowed = 0;
-		is_wanted = is_remote_allowed || is_streaming_allowed;
+		if (!strcmp(line, "VOIP ONLINE"))
+			is_voip_wanted = 1;
+		if (!strcmp(line, "VOIP OFFLINE"))
+			is_voip_wanted = 0;
+		is_wanted = is_remote_allowed || is_streaming_allowed || is_voip_wanted;
+		if (!strcmp(line, "NEW_COOKIE MAKING"))
+			cookie_renew();
 		helper_follow(&bluetooth, line);
 		helper_follow(&sound_card, line);
 		cat_hear(line);
@@ -1089,6 +1177,7 @@ static void radio_poll(long now) {
 		close_fd(&radio_fd);
 		is_remote_allowed = 0;
 		is_streaming_allowed = 0;
+		is_voip_wanted = 0;
 		is_wanted = 0;
 		bluetooth.is_wanted = 0;
 		sound_card.is_wanted = 0;
@@ -1214,7 +1303,8 @@ static void sound_on(const char *id_hex, const char *nonce) {
 	snprintf(text, sizeof(text), "zbitx-speech-1 %.64s", nonce);
 	hmac_sha256_hex(stretched, text, speech_key);
 	is_speech_begun = 0;
-	telephone_open();
+	telephone_begin(&sound_telephone);
+	telephone_begin(&speech_telephone);
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -1280,7 +1370,7 @@ static void sound_pass_on(void) {
 			rtp[6] = (uint8_t)(sound_samples >> 8);
 			rtp[7] = (uint8_t)sound_samples;
 			memcpy(rtp + 8, whole + 8, RTP_SOURCE_BYTES);
-			telephone_from_whole(whole + RTP_HEADER_BYTES, rtp + RTP_HEADER_BYTES);
+			telephone_from_whole(&sound_telephone, whole + RTP_HEADER_BYTES, rtp + RTP_HEADER_BYTES);
 			hmac_sha256((const uint8_t *)stream_key, strlen(stream_key), packet,
 				STREAM_ID_BYTES + NET_RTP_BYTES, hash);
 			memcpy(packet + STREAM_ID_BYTES + NET_RTP_BYTES, hash, TAG_BYTES);
@@ -1342,11 +1432,251 @@ static void speech_pass_on(void) {
 		labelled[6] = (uint8_t)(stamp >> 8);
 		labelled[7] = (uint8_t)stamp;
 		memcpy(labelled + 8, packet + STREAM_ID_BYTES + 8, RTP_SOURCE_BYTES);
-		telephone_to_whole(packet + STREAM_ID_BYTES + RTP_HEADER_BYTES,
+		telephone_to_whole(&speech_telephone, packet + STREAM_ID_BYTES + RTP_HEADER_BYTES,
 			labelled + RTP_HEADER_BYTES);
 		sendto(speech_out, whole, sizeof(whole), MSG_NOSIGNAL,
 			(struct sockaddr *)&speech_port, sizeof(speech_port));
 	}
+}
+
+/* VoIP: my.sbitx.net's repeater; accounts/voip.py has the packet */
+
+static long channel_of(long hz) {
+	return (hz + HZ_A_CHANNEL / 2) / HZ_A_CHANNEL;
+}
+
+static void put_be32(uint8_t *at, uint32_t value) {
+	at[0] = (uint8_t)(value >> 24);
+	at[1] = (uint8_t)(value >> 16);
+	at[2] = (uint8_t)(value >> 8);
+	at[3] = (uint8_t)value;
+}
+
+static uint32_t be32(const uint8_t *at) {
+	return (uint32_t)at[0] << 24 | (uint32_t)at[1] << 16 | (uint32_t)at[2] << 8 | at[3];
+}
+
+static void voip_off(void) {
+	close_fd(&voip_fd);
+	close_fd(&voip_radio_fd);
+	voip_room[0] = 0;
+	voip_busy[0] = 0;
+}
+
+// the service's stream: its id, its two keys, a socket to the service and
+// one on the radio, where the radio program sends the owner's speech
+static void voip_on(const char *id_hex, const char *nonce) {
+	struct addrinfo hints;
+	struct addrinfo *found;
+	struct sockaddr_in here;
+	char text[TEXT_ROOM];
+	unsigned int byte;
+	int i;
+
+	voip_off();
+	for (i = 0; i < STREAM_ID_BYTES; i++) {
+		if (sscanf(id_hex + 2 * i, "%2x", &byte) != 1)
+			return;
+		voip_id[i] = (uint8_t)byte;
+	}
+	snprintf(text, sizeof(text), "zbitx-voip-up-1 %.64s", nonce);
+	hmac_sha256_hex(stretched, text, voip_up_key);
+	snprintf(text, sizeof(text), "zbitx-voip-down-1 %.64s", nonce);
+	hmac_sha256_hex(stretched, text, voip_down_key);
+	is_voip_taken_begun = 0;
+	voip_tuned_ms = 0;
+	voip_channel_told = -1;
+	telephone_begin(&voip_spoken_telephone);
+	telephone_begin(&voip_heard_telephone);
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (getaddrinfo(server, port, &hints, &found) != 0)
+		return;
+	voip_fd = socket(found->ai_family, found->ai_socktype | SOCK_NONBLOCK, found->ai_protocol);
+	if (voip_fd < 0 || connect(voip_fd, found->ai_addr, found->ai_addrlen) < 0) {
+		freeaddrinfo(found);
+		voip_off();
+		return;
+	}
+	freeaddrinfo(found);
+	voip_radio_fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+	memset(&here, 0, sizeof(here));
+	here.sin_family = AF_INET;
+	here.sin_port = htons((uint16_t)atoi(voip_port));
+	inet_pton(AF_INET, LOOPBACK, &here.sin_addr);
+	if (voip_radio_fd >= 0 && bind(voip_radio_fd, (struct sockaddr *)&here, sizeof(here)) < 0)
+		close_fd(&voip_radio_fd);
+	printf("remote: on VoIP\n");
+	fflush(stdout);
+}
+
+// a packet to the service: where the radio is tuned, or the owner's speech.
+// The callsign is left empty: the service writes it, from the account
+static void voip_send(int kind, const uint8_t *sound) {
+	uint8_t packet[VOIP_PACKET_BYTES];
+	uint8_t *head = packet + STREAM_ID_BYTES;
+	uint8_t hash[SHA256_BYTES];
+
+	memset(packet, 0, sizeof(packet));
+	memcpy(packet, voip_id, STREAM_ID_BYTES);
+	head[0] = (uint8_t)kind;
+	head[1] = VOIP_CODEC_MULAW;
+	put_be32(head + 2 + VOIP_CALLSIGN_BYTES, (uint32_t)atol(tuned_hz));
+	voip_sent++;
+	put_be32(head + 2 + VOIP_CALLSIGN_BYTES + 4, voip_sent);
+	if (sound != NULL)
+		memcpy(head + VOIP_HEAD_BYTES, sound, TELEPHONE_FRAME_SAMPLES);
+	hmac_sha256((const uint8_t *)voip_up_key, strlen(voip_up_key), packet,
+		VOIP_PACKET_BYTES - TAG_BYTES, hash);
+	memcpy(packet + VOIP_PACKET_BYTES - TAG_BYTES, hash, TAG_BYTES);
+	send(voip_fd, packet, sizeof(packet), MSG_NOSIGNAL);
+}
+
+// another's speech from the service is handed to the radio program, to be
+// heard, if its tag, its number and its frequency are right
+static void voip_hear(const uint8_t *packet, ssize_t got) {
+	uint8_t whole[RTP_MICROPHONE_LABEL_BYTES + RTP_PACKET_BYTES];
+	uint8_t *labelled = whole + RTP_MICROPHONE_LABEL_BYTES;
+	const uint8_t *head = packet + STREAM_ID_BYTES;
+	struct sockaddr_in microphone;
+	uint8_t hash[SHA256_BYTES];
+	uint8_t differing = 0;
+	uint32_t number;
+	uint32_t stamp;
+	int i;
+
+	if (got != VOIP_PACKET_BYTES || memcmp(packet, voip_id, STREAM_ID_BYTES) != 0
+			|| voip_radio_fd == NOT_OPEN)
+		return;
+	hmac_sha256((const uint8_t *)voip_down_key, strlen(voip_down_key), packet,
+		VOIP_PACKET_BYTES - TAG_BYTES, hash);
+	// compared without stopping at the first byte that differs
+	for (i = 0; i < TAG_BYTES; i++)
+		differing |= (uint8_t)(hash[i] ^ packet[VOIP_PACKET_BYTES - TAG_BYTES + i]);
+	if (differing || head[0] != VOIP_KIND_SPEECH || head[1] != VOIP_CODEC_MULAW)
+		return;
+	number = be32(head + 2 + VOIP_CALLSIGN_BYTES + 4);
+	if (is_voip_taken_begun && (uint32_t)(number - voip_taken - 1) >= VOIP_AHEAD_MOST)
+		return;
+	is_voip_taken_begun = 1;
+	voip_taken = number;
+	if (channel_of((long)be32(head + 2 + VOIP_CALLSIGN_BYTES)) != channel_of(atol(tuned_hz)))
+		return;
+	memset(whole, 0, RTP_MICROPHONE_LABEL_BYTES);
+	whole[0] = RTP_MICROPHONE_VOIP;
+	memcpy(whole + RTP_MICROPHONE_KIND_BYTES, head + 2, VOIP_CALLSIGN_BYTES);
+	voip_heard_sequence++;
+	stamp = (uint32_t)voip_heard_sequence * WHOLE_FRAME_SAMPLES;
+	labelled[0] = RTP_VERSION_2;
+	labelled[1] = RTP_AUDIO_PAYLOAD_TYPE;
+	labelled[2] = (uint8_t)(voip_heard_sequence >> 8);
+	labelled[3] = (uint8_t)voip_heard_sequence;
+	put_be32(labelled + 4, stamp);
+	put_be32(labelled + 8, number);
+	telephone_to_whole(&voip_heard_telephone, head + VOIP_HEAD_BYTES,
+		labelled + RTP_HEADER_BYTES);
+	memset(&microphone, 0, sizeof(microphone));
+	microphone.sin_family = AF_INET;
+	microphone.sin_port = htons((uint16_t)atoi(microphone_port));
+	inet_pton(AF_INET, LOOPBACK, &microphone.sin_addr);
+	sendto(voip_radio_fd, whole, sizeof(whole), MSG_NOSIGNAL, (struct sockaddr *)&microphone,
+		sizeof(microphone));
+}
+
+static void voip_poll(long now) {
+	uint8_t whole[RTP_PACKET_BYTES + 1];
+	uint8_t packet[VOIP_PACKET_BYTES + 1];
+	uint8_t sound[TELEPHONE_FRAME_SAMPLES];
+	long channel = channel_of(atol(tuned_hz));
+	ssize_t got;
+
+	if (voip_fd == NOT_OPEN)
+		return;
+	// where the radio is tuned: now and then, and soon after it moves
+	if (tuned_hz[0] != 0 && (now - voip_tuned_ms >= VOIP_TUNED_EVERY_MS
+			|| (channel != voip_channel_told && now - voip_tuned_ms >= VOIP_TUNED_SOON_MS))) {
+		voip_send(VOIP_KIND_TUNED, NULL);
+		voip_tuned_ms = now;
+		voip_channel_told = channel;
+	}
+	while (voip_radio_fd != NOT_OPEN && (got = recv(voip_radio_fd, whole, sizeof(whole), 0)) > 0) {
+		if (got != RTP_PACKET_BYTES || tuned_hz[0] == 0)
+			continue;
+		telephone_from_whole(&voip_spoken_telephone, whole + RTP_HEADER_BYTES, sound);
+		voip_send(VOIP_KIND_SPEECH, sound);
+	}
+	while ((got = recv(voip_fd, packet, sizeof(packet), 0)) > 0)
+		voip_hear(packet, got);
+}
+
+// VOIP_STATUS: what there is to say of VoIP
+static void voip_say(long now) {
+	char said[STATUS_ROOM];
+
+	if (!is_voip_wanted)
+		snprintf(said, sizeof(said), "OFFLINE");
+	else if (state != ONLINE || voip_fd == NOT_OPEN)
+		snprintf(said, sizeof(said), "CONNECTING");
+	else if (voip_radio_fd == NOT_OPEN)
+		snprintf(said, sizeof(said), "PORT %.5s IS IN USE", voip_port);
+	else if (voip_busy[0] != 0 && now - voip_busy_ms < VOIP_BUSY_SHOWN_MS)
+		snprintf(said, sizeof(said), "BUSY %.26s", voip_busy);
+	else if (voip_room[0] != 0)
+		snprintf(said, sizeof(said), "%s", voip_room);
+	else
+		snprintf(said, sizeof(said), "ONLINE");
+	status_say(VOIP_STATUS_CONTROL, voip_status, said);
+}
+
+// what the service says of VoIP on the connection that is kept
+static void voip_heard_of(const char *line, long now) {
+	char token[LINE_ROOM];
+	char nonce[LINE_ROOM];
+	long channel;
+	int count;
+	int i;
+
+	if (sscanf(line, "VOIP STREAM %16s %64s", token, nonce) == 2 && is_voip_wanted)
+		voip_on(token, nonce);
+	if (sscanf(line, "VOIP ROOM %ld %d", &channel, &count) == 2)
+		snprintf(voip_room, sizeof(voip_room), "%ld KHZ, %d HERE", channel, count);
+	if (!strncmp(line, "VOIP BUSY ", strlen("VOIP BUSY "))) {
+		snprintf(voip_busy, sizeof(voip_busy), "%.26s", line + strlen("VOIP BUSY "));
+		for (i = 0; voip_busy[i] != 0; i++) {
+			if (voip_busy[i] >= 'a' && voip_busy[i] <= 'z')
+				voip_busy[i] = (char)(voip_busy[i] - 'a' + 'A');
+		}
+		voip_busy_ms = now;
+	}
+}
+
+/* a new cookie, asked for at the radio */
+
+static void cookie_renew(void) {
+	char said[STATUS_ROOM];
+
+	if (make_a_cookie() < 0) {
+		say_status("COOKIE NOT SAVED");
+		return;
+	}
+	stretched_for[0] = 0;
+	// the service knows the old one: it is let go, and the radio shows the
+	// new one until the website has it
+	if (state != OFF) {
+		close_fd(&line_fd);
+		sound_off();
+		voip_off();
+		sessions_close();
+		state = OFF;
+	}
+	show_the_cookie(said, sizeof(said));
+	say_status(said);
+	if (radio_fd != NOT_OPEN)
+		send_text(radio_fd, "NEW_COOKIE -\n");
+	printf("remote: a new cookie is made\n");
+	fflush(stdout);
 }
 
 /* the connection kept to my.sbitx.net */
@@ -1354,6 +1684,7 @@ static void speech_pass_on(void) {
 static void line_close(long now) {
 	close_fd(&line_fd);
 	sound_off();
+	voip_off();
 	state = WAITING_TO_RETRY;
 	retry_ms = now + retry_after_ms;
 	retry_after_ms *= 2;
@@ -1412,6 +1743,7 @@ static void line_poll(long now) {
 			sound_on(token, nonce);
 		if (!strcmp(line, "AUDIO OFF"))
 			sound_off();
+		voip_heard_of(line, now);
 		got = take_line(&line_lines, line_fd, line, sizeof(line));
 	}
 	// the grid set on the radio, once the connection is made and again
@@ -1425,8 +1757,10 @@ static void line_poll(long now) {
 	}
 	// what the owner allows, once the connection is made and again whenever
 	// either switch is changed
-	snprintf(token, sizeof(token), "ALLOWS%s%s", is_remote_allowed ? " remote" : "",
-		is_streaming_allowed ? " streaming" : "");
+	snprintf(token, sizeof(token), "ALLOWS%s%s%s", is_remote_allowed ? " remote" : "",
+		is_streaming_allowed ? " streaming" : "", is_voip_wanted ? " voip" : "");
+	if (!is_voip_wanted)
+		voip_off();
 	if (got == 0 && strcmp(token, allowed_told)) {
 		snprintf(line, sizeof(line), "%.60s\n", token);
 		if (send_text(line_fd, line) < 0)
@@ -1459,6 +1793,7 @@ static void line_poll(long now) {
 static void switch_off(void) {
 	close_fd(&line_fd);
 	sound_off();
+	voip_off();
 	sessions_close();
 	state = OFF;
 	retry_after_ms = RETRY_FIRST_MS;
@@ -1473,6 +1808,7 @@ static void follow_the_owner(long now) {
 	}
 	if (is_callsign_new && state != OFF) {
 		close_fd(&line_fd);
+		voip_off();
 		sessions_close();
 		state = OFF;
 	}
@@ -1497,7 +1833,7 @@ static void follow_the_owner(long now) {
 }
 
 static void wait_and_pass_on(void) {
-	struct pollfd polls[5 + CAT_CLIENTS_MAX + 2 * SESSIONS_MAX];
+	struct pollfd polls[7 + CAT_CLIENTS_MAX + 2 * SESSIONS_MAX];
 	struct session *s;
 	int count = 0;
 	int first;
@@ -1520,6 +1856,16 @@ static void wait_and_pass_on(void) {
 	}
 	if (sound_out != NOT_OPEN) {
 		polls[count].fd = sound_out;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	if (voip_fd != NOT_OPEN) {
+		polls[count].fd = voip_fd;
+		polls[count].events = POLLIN;
+		polls[count++].revents = 0;
+	}
+	if (voip_radio_fd != NOT_OPEN) {
+		polls[count].fd = voip_radio_fd;
 		polls[count].events = POLLIN;
 		polls[count++].revents = 0;
 	}
@@ -1560,6 +1906,7 @@ static void wait_and_pass_on(void) {
 	poll(polls, count, LOOP_WAIT_MS);
 	sound_pass_on();
 	speech_pass_on();
+	voip_poll(now_ms());
 	for (i = 0; i < SESSIONS_MAX; i++) {
 		s = &sessions[i];
 		if (s->service_fd == NOT_OPEN)
@@ -1595,16 +1942,19 @@ int main(int argc, char **argv) {
 			sound_card.script = argv[i + 1];
 		else if (!strcmp(argv[i], "--cat-port"))
 			cat_port = argv[i + 1];
+		else if (!strcmp(argv[i], "--voip-port"))
+			voip_port = argv[i + 1];
 		else
 			i = argc;
 	}
 	if (i != argc) {
 		printf("zbitx_remote [--server host] [--port n] [--radio-port n] [--key file]"
 			" [--microphone-port n] [--bluetooth-script file] [--sound-card-script file]"
-			" [--cat-port n]\n");
+			" [--cat-port n] [--voip-port n]\n");
 		return EXIT_FAILURE;
 	}
 	signal(SIGPIPE, SIG_IGN);
+	telephone_open();
 	for (i = 0; i < SESSIONS_MAX; i++) {
 		sessions[i].service_fd = NOT_OPEN;
 		sessions[i].radio_fd = NOT_OPEN;
@@ -1620,6 +1970,7 @@ int main(int argc, char **argv) {
 		helper_poll(&sound_card, now_ms());
 		cat_poll(now_ms());
 		follow_the_owner(now_ms());
+		voip_say(now_ms());
 		wait_and_pass_on();
 	}
 	return EXIT_SUCCESS;

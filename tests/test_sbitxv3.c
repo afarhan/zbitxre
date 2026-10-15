@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "audio.h"
 #include "board.h"
@@ -70,6 +71,7 @@ static int pin_of_filter(uint32_t hz) {
 
 int main(void) {
 	const struct board *board;
+	char answer[ANSWER_MAX];
 	long expected_hz;
 	int pin_40m;
 	int pin_20m;
@@ -117,6 +119,14 @@ int main(void) {
 		"put in after the T/R line fell");
 	expect(hw_stand_in_pin_changed_at(ZBITX_RX_LINE) == 0,
 		"the zbitx's RX_LINE pin was never driven");
+
+	// the mode VOIP has no transmitter: whatever asks, the T/R line stays
+	// down. modems/modem_voip.c says why this is what keeps the finals off
+	ask("r1:mode=VOIP");
+	sdr_request("tx=on", answer);
+	expect(!strcmp(answer, "error") && gpio_read(board->transmitter_pin) == 0,
+		"in VOIP, asked to transmit, it says no and the T/R line stays low");
+	ask("r1:mode=LSB");
 
 	teardown();
 	if (checks_failed) {

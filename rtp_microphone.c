@@ -24,7 +24,8 @@
 // speech from the owner working the radio from afar, and sound from
 // another program on the radio, a digital mode's, both of which are to be
 // transmitted; and someone speaking over the internet, which is to be
-// heard and never transmitted, and is not taken here yet. It comes to UDP
+// heard and never transmitted, and is passed to rtp_voip.c, which plays it.
+// It comes to UDP
 // port 5006 on the loopback address and no other, so that nothing off the
 // radio can reach it. A packet of any other size or kind, or with a
 // sequence number at or behind the last, is dropped. When none has come
@@ -92,6 +93,7 @@
 
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
+#include "rtp_voip.h"
 
 #define RATE_OUT_HZ 96000
 #define INTERPOLATE (RATE_OUT_HZ / RTP_AUDIO_RATE_HZ)
@@ -214,7 +216,12 @@ void rtp_microphone_poll(void) {
 		if (length != PACKET_BYTES || (rtp[0] & RTP_VERSION_MASK) != RTP_VERSION_2
 				|| (rtp[1] & RTP_PAYLOAD_MASK) != RTP_AUDIO_PAYLOAD_TYPE)
 			continue;
-		// only what is to be transmitted is taken here, so far
+		// someone speaking over the internet is to be heard, not sent;
+		// the gateway has put it in order
+		if (packet[0] == RTP_MICROPHONE_VOIP) {
+			rtp_voip_take_heard(packet + RTP_MICROPHONE_KIND_BYTES, samples);
+			continue;
+		}
 		if (packet[0] != RTP_MICROPHONE_TO_TRANSMIT && packet[0] != RTP_MICROPHONE_FROM_A_PROGRAM)
 			continue;
 		sequence = (uint16_t)(rtp[2] << 8 | rtp[3]);
