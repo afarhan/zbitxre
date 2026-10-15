@@ -243,6 +243,19 @@ every few seconds, which is not passed on, and if nothing has come from it
 for twenty seconds, or its connection closes, the radio is told "TX OFF"
 before the session is let go.
 
+THE REPEATER
+
+A radio whose owner has VOIP online says "voip" among what it allows, and
+is given a stream for it, "VOIP STREAM <id> <nonce>", which takes the
+repeater's packets on the same UDP port; they are 196 bytes where the
+sound's are 188, and that is how the two are told apart. voip.py does the
+deciding: who is in which channel, who holds it, and the throttling the
+author asked for, a repeater being a traffic amplifier. This file gives it
+the packets and the times, sends what it says to send, and tells the
+radios what it says to tell them. A radio removed on the website, given a
+new cookie there, or whose owner is suspended, is let go within
+REVOKED_LOOK_S, its stream with it.
+
 NOTHING IS SENT THAT NOBODY ASKED FOR
 
 The author's rule. A radio that is on line and not in use costs a line a
@@ -285,6 +298,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accounts
 import decodes
 import ip_places
+import voip
 
 HELLO_WAIT_S = 10
 SESSION_WAIT_S = 10
@@ -311,6 +325,8 @@ REQUEST_LONGEST = 8192
 PAGE_QUIET_S = 20
 USAGE_EVERY_S = 300
 ALLOWED_OF_OLD = frozenset(("remote", "streaming"))
+ALLOWED_WORDS = frozenset(("remote", "streaming", "voip"))
+VOIP_SWEEP_S = 1
 REVOKED_LOOK_S = 20
 DECODES_KEPT_EVERY_S = 2
 DECODES_REMEMBERED = 400
@@ -388,6 +404,9 @@ class Remote:
         self.decodes_said = {}     # a radio's id -> the last messages it said, to know a repeat
         self.allowed = {}          # a radio's id -> what its owner allows: "remote", "streaming"
         self.owners_listening = set()  # those listening who are the radio's owner, signed in
+        self.callsign_of = {}      # a radio's id -> its account's callsign, while it is on line
+        self.voip = voip.Voip(self.send_voip, self.tell_radio, settings.voip_packets_a_second,
+                              lambda text: self.say(text))
 
     def say(self, text):
         print("remote: %s" % text, flush=True)
@@ -509,6 +528,7 @@ class Remote:
         writer.write(b"OK\n")
         self.say("%s is on line" % name)
         self.cookie_keys[radio] = accounts.stretch(device["cookie"], device["callsign"])
+        self.callsign_of[radio] = device["callsign"]
         # until its daemon says what its owner allows, it is taken to allow
         # everything, as a daemon from before there was a choice does
         self.set_allowed(radio, ALLOWED_OF_OLD)
@@ -516,6 +536,8 @@ class Remote:
         if self.listeners.get(radio):
             self.start_stream(radio)
         copying = asyncio.ensure_future(self.keep_a_copy(radio))
+        revoked = asyncio.ensure_future(self.until_revoked(
+            lambda: self.is_still_the_radio(device), writer.close))
         try:
             while True:
                 line = await self.read_line(reader, RADIO_QUIET_S)
@@ -531,14 +553,16 @@ class Remote:
                     if "streaming" in self.allowed.get(radio, ()):
                         self.take_decode(radio, line)
                 elif line.split(" ")[0] == "ALLOWS":
-                    self.set_allowed(radio, frozenset(line.split(" ")[1:]) & ALLOWED_OF_OLD)
+                    self.set_allowed(radio, frozenset(line.split(" ")[1:]) & ALLOWED_WORDS)
                 else:
                     break
         finally:
             copying.cancel()
+            revoked.cancel()
             if self.lines.get(radio) is writer:
                 del self.lines[radio]
                 self.forget_stream(radio)
+                self.voip.close(radio)
                 self.tell_listeners(radio, "offline")
                 with self.store.open() as db:
                     db.execute("update radios set online = 0, last_seen = ? where id = ?",
@@ -817,17 +841,21 @@ class Remote:
         while True:
             await asyncio.sleep(USAGE_EVERY_S)
             used = self.usage
+            voiced = self.voip.usage
             if not (used["came"] or used["turned away"] or used["heard"] or used["decodes"]
-                    or self.listening()):
+                    or self.listening() or voiced["in"] or voiced["dropped"]):
                 continue
             self.say("usage, last %d min: radios on line %d, listening now %d, most at once %d, "
                      "came %d, turned away %d, packets from radios %d, to listeners %d, "
                      "kept from slow listeners %d, speech packets %d, FT8 messages kept %d, "
-                     "working a radio now %d" % (
+                     "working a radio now %d; VoIP: on %d, overs %d, packets in %d, "
+                     "relayed %d, dropped %d" % (
                          USAGE_EVERY_S // 60, len(self.lines), self.listening(), used["most"],
                          used["came"], used["turned away"], used["heard"], used["sent"],
                          used["kept back"], used["spoken"], used["decodes"],
-                         sum(self.sessions.values())))
+                         sum(self.sessions.values()), len(self.voip.streams),
+                         voiced["overs"], voiced["in"], voiced["out"], voiced["dropped"]))
+            self.voip.usage = dict.fromkeys(voiced, 0)
             self.usage = dict.fromkeys(used, 0)
             self.usage["most"] = self.listening()
 
@@ -909,12 +937,56 @@ class Remote:
         with self.store.open() as db:
             db.execute("update radios set streaming = ? where id = ?",
                        (1 if "streaming" in allowed else 0, radio))
+        self.allow_voip(radio, "voip" in allowed)
         if "streaming" in allowed:
             return
         for listener in list(self.listeners.get(radio, ())):
             if listener not in self.owners_listening:
                 listener.write(self.text_message("closed"))
                 listener.close()
+
+    # the repeater, voip.py
+
+    def allow_voip(self, radio, is_allowed):
+        """a radio whose owner has VOIP online is given a stream for it,
+        an id and a nonce its keys are made of, as its sound is; one whose
+        owner has it offline is let go of"""
+        if not is_allowed:
+            if radio in self.voip.stream_of:
+                self.voip.close(radio)
+                self.say("radio %d has gone off VoIP" % radio)
+            return
+        if radio in self.voip.stream_of or radio not in self.lines:
+            return
+        stream = secrets.token_bytes(voip.STREAM_ID_BYTES)
+        nonce = secrets.token_hex(16)
+        self.voip.open(radio, stream, self.callsign_of[radio], self.cookie_keys[radio], nonce)
+        self.say("radio %d is on VoIP" % radio)
+        self.tell_radio(radio, "VOIP STREAM %s %s" % (stream.hex(), nonce))
+
+    def tell_radio(self, radio, text):
+        line = self.lines.get(radio)
+        if line is not None:
+            line.write((text + "\n").encode())
+
+    def send_voip(self, packet, address):
+        if self.sound_port is not None:
+            self.sound_port.sendto(packet, address)
+
+    async def sweep_voip(self):
+        while True:
+            await asyncio.sleep(VOIP_SWEEP_S)
+            self.voip.sweep(time.monotonic())
+
+    def is_still_the_radio(self, device):
+        """whether a radio on line would still be let in: it has not been
+        removed on the website, given a new cookie there, nor had its
+        owner's account suspended"""
+        with self.store.open() as db:
+            now = db.execute(
+                "select radios.cookie from radios join accounts on accounts.id = radios.account "
+                "where radios.id = ? and accounts.status = 'active'", (device["id"],)).fetchone()
+        return now is not None and now[0] == device["cookie"]
 
     def take_decode(self, radio, line):
         """a message a radio has copied in FT8, "DECODE 14074000
@@ -1067,16 +1139,18 @@ class Remote:
             self.sessions[radio["id"]] -= 1
             self.say("a client has left %s" % name)
 
-    async def until_revoked(self, is_still_good):
+    async def until_revoked(self, is_still_good, then=lambda: None):
         """comes back when what let someone in no longer would: the radio's
         client password has been changed, or the owner's password has, which
         signs every browser out. The author's way of shutting someone out
         of a radio is to change the password; this makes that take hold of
         one who is already in, within REVOKED_LOOK_S, and not only of the
-        next to come"""
+        next to come. So too for a radio: one removed on the website, or
+        given a new cookie there, or whose owner is suspended, is let go"""
         while True:
             await asyncio.sleep(REVOKED_LOOK_S)
             if not is_still_good():
+                then()
                 return
 
     async def pass_on(self, reader, writer):
@@ -1100,7 +1174,10 @@ class Remote:
 
         class Sound(asyncio.DatagramProtocol):
             def datagram_received(self, data, address):
-                remote.take_packet(data, address)
+                if len(data) == voip.PACKET_BYTES:
+                    remote.voip.take(data, address, time.monotonic())
+                else:
+                    remote.take_packet(data, address)
 
         self.sound_port, _ = await asyncio.get_running_loop().create_datagram_endpoint(
             Sound, local_addr=(host, port))
@@ -1108,6 +1185,7 @@ class Remote:
                                               limit=REQUEST_LONGEST)
         self.usage_teller = asyncio.ensure_future(self.tell_usage())
         self.decodes_keeper = asyncio.ensure_future(self.keep_decodes())
+        self.voip_sweeper = asyncio.ensure_future(self.sweep_voip())
         self.say("listening on %s:%d, and for browsers on %s:%d" % (
             host, port, web_host, self.web.sockets[0].getsockname()[1]))
         return server

@@ -45,6 +45,15 @@ typed on the radio, which on a zbitx has no keyboard, and no file on it is
 edited. From then on the cookie is what the radio answers this service's
 challenge with, and the radio no longer shows it.
 
+A radio's cookie can be changed, the author's way: the owner makes a new
+one on the radio, NEW COOKIE among its CONNECTIONS, and types it here
+beside the radio, "new cookie". The radio keeps its name and its client
+password, so the owner's clients reach it as before; the old cookie is
+forgotten, and remote.py lets go of the radio if it is on line with it,
+within twenty seconds. That is what to do when a radio, or a copy of its
+card, has gone where it should not. A radio sold is removed by the one who
+sold it and added by the one who bought it, after a new cookie.
+
 Each radio also has a client password, twelve letters that this site makes
 and shows beside the radio. That, with the radio's name, is what the owner
 types into a client, the window on another computer, to reach the radio
@@ -1039,6 +1048,9 @@ class Settings:
         self.listen_host, _, listen_port = remote.get(
             "listen_web", "127.0.0.1:8102").rpartition(":")
         self.listen_port = int(listen_port)
+        # the most packets a second the VoIP repeater sends, all channels
+        # together; voip.py says why there is a ceiling
+        self.voip_packets_a_second = int(remote.get("voip_packets_a_second", "2000"))
         self.host, _, port = server.get("listen", "127.0.0.1:8100").rpartition(":")
         self.port = int(port)
         self.base_url = server.get("base_url", "http://127.0.0.1:8100").rstrip("/")
@@ -1491,6 +1503,26 @@ class Service:
                       "if it is switched on and its remote access is on."
                       % radio_id(account["callsign"], suffix))
 
+    def radio_new_cookie(self, account, radio, cookie_typed):
+        """the cookie the owner made anew on the radio takes the old one's
+        place; the radio's name and client password stay. Returns (ok,
+        what to tell the owner)"""
+        cookie = tidy_secret(cookie_typed)
+        if not cookie:
+            return False, ("That is not a cookie. It is the twelve letters the radio "
+                           "shows in its settings, like abcd-jklm-wxyz.")
+        with self.store.open() as db:
+            found = db.execute("select suffix, cookie from radios where id = ? and account = ?",
+                               (radio, account["id"])).fetchone()
+            if found is None:
+                return False, "You have no such radio."
+            if found["cookie"] == cookie:
+                return False, "That is the cookie it has. Press NEW COOKIE on the radio first."
+            db.execute("update radios set cookie = ? where id = ?", (cookie, radio))
+        return True, ("%s has its new cookie. It will come on line within a quarter of a "
+                      "minute; the old cookie is no longer taken."
+                      % radio_id(account["callsign"], found["suffix"]))
+
     def radio_new_password(self, account, radio):
         with self.store.open() as db:
             db.execute("update radios set client_password = ? where id = ? and account = ?",
@@ -1684,6 +1716,13 @@ class Handler(BaseHTTPRequestHandler):
                             "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                             "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
                             "<button>%s</button></form> " % (action, guard, radio["id"], label))
+            buttons += ("<form method=\"post\" action=\"/radios/cookie\">"
+                        "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                        "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
+                        "<input type=\"text\" name=\"cookie\" class=\"code\" maxlength=\"20\" "
+                        "autocomplete=\"off\" placeholder=\"abcd-jklm-wxyz\" "
+                        "aria-label=\"the radio's new cookie\" required>"
+                        "<button>New cookie</button></form>" % (guard, radio["id"]))
             rows += ("<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td>"
                      "<td class=\"code\">%s</td><td>%s</td><td>%s</td></tr>"
                      % (html.escape(radio_id(account["callsign"], radio["suffix"])), state,
@@ -1693,7 +1732,10 @@ class Handler(BaseHTTPRequestHandler):
             radios = ("<table><tr><th>Radio</th><th></th><th>Grid</th><th>Client password</th>"
                       "<th>Kept here</th><th></th></tr>%s</table>"
                       "<p>To reach a radio from another computer, give the client its "
-                      "name and its client password.</p>" % rows)
+                      "name and its client password.</p>"
+                      "<p>To change a radio's cookie, press NEW COOKIE among the radio's "
+                      "CONNECTIONS and type the cookie it then shows beside the radio "
+                      "here. Its name and client password stay as they are.</p>" % rows)
         else:
             radios = "<p>You have added no radio yet.</p>"
         body = (said(told, is_wrong)
@@ -1952,6 +1994,12 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/radios/add":
             ok, told = self.service.radio_add(account, form.get("suffix", ""),
                                               form.get("cookie", ""))
+            self.home(account, told, not ok)
+        elif url.path == "/radios/cookie":
+            ok, told = False, "You have no such radio."
+            if form.get("radio", "").isdigit():
+                ok, told = self.service.radio_new_cookie(account, int(form["radio"]),
+                                                         form.get("cookie", ""))
             self.home(account, told, not ok)
         elif url.path in ("/radios/password", "/radios/remove"):
             if form.get("radio", "").isdigit():

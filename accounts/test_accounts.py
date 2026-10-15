@@ -359,6 +359,34 @@ class AccountsTest(unittest.TestCase):
         self.assertNotEqual(after["client_password"], before["client_password"])
         self.assertEqual(after["cookie"], before["cookie"])
 
+    def test_a_new_cookie_replaces_the_old_and_keeps_the_name_and_password(self):
+        browser = self.make_account()
+        self.add_radio(browser, "home", "abcd-efgh-jkmn")
+        before = self.service.radio_called("vu2ese-home")
+        _, text = browser.get("/")
+        guard = browser.hidden(text, "guard")
+        _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
+                                                  "cookie": "PQRS-TUVW-XYZA"})
+        self.assertIn("has its new cookie", text)
+        after = self.service.radio_called("vu2ese-home")
+        self.assertEqual(after["cookie"], "pqrstuvwxyza")
+        self.assertEqual(after["client_password"], before["client_password"])
+        self.assertEqual(after["id"], before["id"])
+        _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
+                                                  "cookie": "pqrs-tuvw-xyza"})
+        self.assertIn("That is the cookie it has", text)
+        _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
+                                                  "cookie": "pqrs"})
+        self.assertIn("That is not a cookie", text)
+        # another owner cannot change it
+        other = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        _, text = other.get("/")
+        _, text = other.post("/radios/cookie", {"guard": other.hidden(text, "guard"),
+                                                "radio": str(before["id"]),
+                                                "cookie": "bbbb-cccc-dddd"})
+        self.assertIn("You have no such radio", text)
+        self.assertEqual(self.service.radio_called("vu2ese-home")["cookie"], "pqrstuvwxyza")
+
     def test_a_radio_is_removed_only_by_its_owner(self):
         first = self.make_account()
         self.add_radio(first)
