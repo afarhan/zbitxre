@@ -119,6 +119,17 @@
 // below any voice, where it would only eat the codec's room. The hum goes
 // to the codec as it comes.
 //
+// On 15 October the zbitx's microphone was found to carry a buzz, at the
+// sound card's block rate, 93.75 Hz, and its harmonics, which the codec
+// sends as a voice: the far speaker played a voiced drone through every
+// pause, and played nothing when digital silence was sent in its place.
+// The buzz is on the signal before the line input's gain, from the board's
+// microphone stage. For the author to choose by ear, MIC_CUT in the list
+// puts one of two cuts after the offset's: 200HZ, a Butterworth high-pass
+// of four poles at 200 Hz, or NOTCH, narrow notches at 93.75 and 187.5 Hz.
+// It is a trial, to be taken out when one is chosen; a change takes
+// effect at the next over.
+//
 // The same day the two radios' microphones gave speech 20 dB apart at
 // nearly the same MIC, 49 and 50, and the sbitx's peaks went to three
 // times the codec's full scale and were clipped. A leveller before the
@@ -210,6 +221,19 @@
 #define SPEECH_LOW_HZ 10.0
 #define BUTTERWORTH_Q 0.70710678
 #define SPEECH_BIQUADS 1
+// MIC_CUT's: the 200 Hz high-pass, two biquads making a Butterworth of four
+// poles, and the notches, at the block rate and its double
+#define CUT_HZ 200.0
+#define CUT_Q_FIRST 0.54119610
+#define CUT_Q_SECOND 1.30656296
+#define HUM_HZ (AUDIO_RATE_HZ / (double)BLOCK)
+#define HUM_Q 8.0
+#define CUT_BIQUADS 2
+enum mic_cut {
+	MIC_CUT_OFF,
+	MIC_CUT_200HZ,
+	MIC_CUT_NOTCH,
+};
 // the codec's peaks put where 2TONE's are, at the transmitter. Both
 // versions' samples peak at one, measured on FreeDV's test speech on 15
 // October 2026; but what the transmitter sends is the signal's envelope,
@@ -302,6 +326,8 @@ static int32_t speech_output[BLOCK];
 static int32_t silence[BLOCK];
 // SQUELCH, set by the thread that owns the controls
 static atomic_int is_squelched;
+// MIC_CUT, set by the thread that owns the controls
+static atomic_int mic_cut;
 static int heard_phase;
 static int is_speaking;
 static int is_tx_on;
@@ -318,6 +344,10 @@ static atomic_int over_blocks;
 // the modem thread's
 static enum over over;
 static struct biquad speech_cut[SPEECH_BIQUADS];
+static struct biquad high_cut[CUT_BIQUADS];
+static struct biquad notch_cut[CUT_BIQUADS];
+// MIC_CUT as it is for the over being sent
+static enum mic_cut cut_in_use;
 // the thread that owns the controls'
 static char status_shown[STATUS_ROOM];
 
@@ -432,6 +462,19 @@ static void biquad_make_high_pass(struct biquad *b, double cutoff_hz, double rat
 	b->a2 = (float)((1 - alpha) / a0);
 }
 
+static void biquad_make_notch(struct biquad *b, double centre_hz, double rate_hz, double q) {
+	double w = 2 * M_PI * centre_hz / rate_hz;
+	double alpha = sin(w) / (2 * q);
+	double a0 = 1 + alpha;
+
+	memset(b, 0, sizeof(*b));
+	b->b0 = (float)(1 / a0);
+	b->b1 = (float)(-2 * cos(w) / a0);
+	b->b2 = b->b0;
+	b->a1 = b->b1;
+	b->a2 = (float)((1 - alpha) / a0);
+}
+
 static float biquad_filter(struct biquad *b, float x) {
 	float y = b->b0 * x + b->b1 * b->x1 + b->b2 * b->x2 - b->a1 * b->y1 - b->a2 * b->y2;
 
@@ -504,6 +547,11 @@ static void send_said(struct rade_codec *c) {
 		ring_empty(&said);
 		for (i = 0; i < SPEECH_BIQUADS; i++)
 			biquad_clear(&speech_cut[i]);
+		for (i = 0; i < CUT_BIQUADS; i++) {
+			biquad_clear(&high_cut[i]);
+			biquad_clear(&notch_cut[i]);
+		}
+		cut_in_use = atomic_load(&mic_cut);
 		rade_codec_tx_begin(c);
 		atomic_store(&tx_end_wanted, 0);
 		atomic_store(&is_tail_made, 0);
@@ -518,6 +566,12 @@ static void send_said(struct rade_codec *c) {
 			sample = ring_take(&said);
 			for (k = 0; k < SPEECH_BIQUADS; k++)
 				sample = biquad_filter(&speech_cut[k], sample);
+			for (k = 0; k < CUT_BIQUADS; k++) {
+				if (cut_in_use == MIC_CUT_200HZ)
+					sample = biquad_filter(&high_cut[k], sample);
+				if (cut_in_use == MIC_CUT_NOTCH)
+					sample = biquad_filter(&notch_cut[k], sample);
+			}
 			if (sample > SPEECH_MOST)
 				sample = SPEECH_MOST;
 			if (sample < -SPEECH_MOST)
@@ -659,6 +713,25 @@ static void tx_rade(const int32_t *mic, double *samples) {
 
 /* the thread that owns the controls */
 
+static int apply_mic_cut(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	(void)why;
+	(void)room;
+	if (!strcmp(value, "200HZ"))
+		atomic_store(&mic_cut, MIC_CUT_200HZ);
+	else if (!strcmp(value, "NOTCH"))
+		atomic_store(&mic_cut, MIC_CUT_NOTCH);
+	else
+		atomic_store(&mic_cut, MIC_CUT_OFF);
+	return 0;
+}
+
+static struct control mic_cut_control = {
+	.group = "RADE", .name = "MIC_CUT", .kind = CONTROL_CHOICE,
+	.choices = "OFF/200HZ/NOTCH",
+	.value = "OFF", .apply = apply_mic_cut,
+};
+
 static int apply_squelch(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
@@ -774,10 +847,16 @@ static void rade_start_shared(void) {
 	control_register(&rade_status);
 	control_register(&squelch_control);
 	atomic_store(&is_squelched, !strcmp(squelch_control.value, "ON"));
+	control_register(&mic_cut_control);
+	apply_mic_cut(&mic_cut_control, mic_cut_control.value, NULL, 0);
 	rate_filter_make(&speech_up, SPEECH_STEP, SPEECH_CUTOFF_HZ, SPEECH_STEP);
 	rate_filter_make(&signal_up, SIGNAL_STEP, SIGNAL_CUTOFF_HZ, SIGNAL_STEP);
 	rate_filter_make(&mic_down, SPEECH_STEP, SPEECH_CUTOFF_HZ, 1.0);
 	biquad_make_high_pass(&speech_cut[0], SPEECH_LOW_HZ, RADE_CODEC_SPEECH_RATE_HZ, BUTTERWORTH_Q);
+	biquad_make_high_pass(&high_cut[0], CUT_HZ, RADE_CODEC_SPEECH_RATE_HZ, CUT_Q_FIRST);
+	biquad_make_high_pass(&high_cut[1], CUT_HZ, RADE_CODEC_SPEECH_RATE_HZ, CUT_Q_SECOND);
+	biquad_make_notch(&notch_cut[0], HUM_HZ, RADE_CODEC_SPEECH_RATE_HZ, HUM_Q);
+	biquad_make_notch(&notch_cut[1], 2 * HUM_HZ, RADE_CODEC_SPEECH_RATE_HZ, HUM_Q);
 	sem_init(&work, 0, 0);
 	if (pthread_create(&rade_thread, NULL, rade_thread_function, NULL) != 0) {
 		printf("rade: no thread could be started, and RADE1 and RADE2 will be plain SSB\n");
