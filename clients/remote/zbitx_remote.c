@@ -525,6 +525,8 @@ static void close_fd(int *fd) {
 
 // a TCP connection, waited for no longer than STEP_WAIT_MS, and after that
 // no read or write on it waits longer either
+static char failed_because[TEXT_ROOM];
+
 static int dial(const char *host, const char *service) {
 	struct addrinfo hints;
 	struct addrinfo *found;
@@ -538,15 +540,21 @@ static int dial(const char *host, const char *service) {
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(host, service, &hints, &found) != 0)
+	error = getaddrinfo(host, service, &hints, &found);
+	if (error != 0) {
+		snprintf(failed_because, sizeof(failed_because), "%s not found: %s", host,
+			gai_strerror(error));
 		return NOT_OPEN;
+	}
 	fd = socket(found->ai_family, found->ai_socktype, found->ai_protocol);
 	if (fd < 0) {
+		snprintf(failed_because, sizeof(failed_because), "no socket: %s", strerror(errno));
 		freeaddrinfo(found);
 		return NOT_OPEN;
 	}
 	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
 	if (connect(fd, found->ai_addr, found->ai_addrlen) < 0 && errno != EINPROGRESS) {
+		snprintf(failed_because, sizeof(failed_because), "%s: %s", host, strerror(errno));
 		freeaddrinfo(found);
 		close(fd);
 		return NOT_OPEN;
@@ -556,6 +564,8 @@ static int dial(const char *host, const char *service) {
 	connected.events = POLLOUT;
 	if (poll(&connected, 1, STEP_WAIT_MS) <= 0
 			|| getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) < 0 || error != 0) {
+		snprintf(failed_because, sizeof(failed_because), "%s: %s", host,
+			error != 0 ? strerror(error) : "no answer in time");
 		close(fd);
 		return NOT_OPEN;
 	}
@@ -712,6 +722,11 @@ static void stretch_the_cookie(void) {
 	snprintf(stretched_for, sizeof(stretched_for), "%s", callsign);
 }
 
+static int no_answer(const char *because) {
+	snprintf(failed_because, sizeof(failed_because), "%s", because);
+	return AUTH_NO_ANSWER;
+}
+
 // the challenge is answered with the radio's cookie, and the service's own
 // proof that it has the cookie is checked; PROTOCOL.md has the handshake.
 // name is what the website calls this radio, vu2ese-home
@@ -728,28 +743,28 @@ static int authenticate(int fd, char *name) {
 	name[0] = 0;
 	stretch_the_cookie();
 	if (read_line_waiting(fd, line, sizeof(line)) < 0)
-		return AUTH_NO_ANSWER;
+		return no_answer("no CHALLENGE came");
 	if (sscanf(line, "CHALLENGE %64s", challenge) != 1)
-		return AUTH_NO_ANSWER;
+		return no_answer("not a CHALLENGE");
 	if (getrandom(random_bytes, sizeof(random_bytes), 0) != sizeof(random_bytes))
-		return AUTH_NO_ANSWER;
+		return no_answer("no random bytes for the nonce");
 	for (i = 0; i < NONCE_BYTES; i++)
 		snprintf(nonce + 2 * i, 3, "%02x", random_bytes[i]);
 	snprintf(text, sizeof(text), "zbitx-auth-1 radio %s %s %s", callsign, challenge, nonce);
 	hmac_sha256_hex(stretched, text, proof);
 	snprintf(line, sizeof(line), "AUTH radio %s %s %s\n", callsign, nonce, proof);
 	if (send_text(fd, line) < 0)
-		return AUTH_NO_ANSWER;
+		return no_answer("AUTH could not be sent");
 	if (read_line_waiting(fd, line, sizeof(line)) < 0)
-		return AUTH_NO_ANSWER;
+		return no_answer("no answer to AUTH");
 	if (!strncmp(line, "ERROR AUTH", strlen("ERROR AUTH")))
 		return AUTH_REFUSED;
 	if (sscanf(line, "WELCOME %39s %80s", name, theirs) != 2)
-		return AUTH_NO_ANSWER;
+		return no_answer("not a WELCOME");
 	snprintf(text, sizeof(text), "zbitx-auth-1 server %s %s %s", callsign, challenge, nonce);
 	hmac_sha256_hex(stretched, text, proof);
 	if (!is_same(proof, theirs))
-		return AUTH_NO_ANSWER;
+		return no_answer("the service's proof is wrong");
 	return AUTH_OK;
 }
 
@@ -1713,8 +1728,15 @@ static void line_open(long now) {
 		say_status(said);
 		return;
 	}
-	if (result != AUTH_OK || send_text(line_fd, "radio\n") < 0
-			|| read_line_waiting(line_fd, line, sizeof(line)) < 0 || strcmp(line, "OK")) {
+	if (result == AUTH_OK && (send_text(line_fd, "radio\n") < 0
+			|| read_line_waiting(line_fd, line, sizeof(line)) < 0 || strcmp(line, "OK"))) {
+		no_answer("no OK to radio");
+		result = AUTH_NO_ANSWER;
+	}
+	if (result != AUTH_OK) {
+		// the status has little room; the reason is in the program's output
+		printf("remote: no answer from %s port %s: %s\n", server, port, failed_because);
+		fflush(stdout);
 		line_close(now);
 		say_status("NO ANSWER FROM SERVER");
 		return;
