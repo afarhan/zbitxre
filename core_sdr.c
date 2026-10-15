@@ -317,6 +317,14 @@ int tr_wait_to_tx_ms(void){
 }
 #define TRANSMITTER_LEVEL 95
 
+// At power-up the radio program may be started before the system's sound
+// is ready, and the card does not open: the author found the zbitx failing
+// so at every boot, and had to start it by hand. He asked that it try again
+// until it succeeds, so it does, once a second, and says so every
+// AUDIO_RETRY_SAID_EVERY tries in case the card never comes.
+#define AUDIO_RETRY_US 1000000
+#define AUDIO_RETRY_SAID_EVERY 10
+
 #define TUNING_SHIFT (0)
 
 #define BFO_CLOCK 1
@@ -1305,10 +1313,14 @@ int setup(void){
 		return -1;
 	}
 	read_hw_ini();
-	if (board_open(board) < 0)
+	if (board_open(board) < 0){
+		printf("the radio's GPIO pins did not open\n");
 		return -1;
-	if (i2c_open_bus_of(SI5351_ADDRESS) < 0)
+	}
+	if (i2c_open_bus_of(SI5351_ADDRESS) < 0){
+		printf("the I2C bus of the Si5351 did not open\n");
 		return -1;
+	}
 
 	bfo_freq = board->bfo_hz;
 	center_bin = board->centre_bin;
@@ -1347,8 +1359,13 @@ int setup(void){
 	mute_count = 50;
 	is_set_up = 1;
 
-	if (audio_open(sound_block) < 0)
-		return -1;
+	for (int tries = 1; audio_open(sound_block) < 0; tries++){
+		if (tries % AUDIO_RETRY_SAID_EVERY == 1)
+			printf("the sound card did not open; trying again every second (%d s)\n",
+				tries - 1);
+		fflush(stdout);
+		usleep(AUDIO_RETRY_US);
+	}
 	audio_set_transmitter(TRANSMITTER_LEVEL);
 	return 0;
 }
