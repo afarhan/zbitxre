@@ -134,7 +134,9 @@ THE GLOBE, AND LISTENING TO ANY RADIO
 globe, after radio.garden's, with the radios that are on line now, each a
 dot at the middle of its grid square with its owner's callsign. The globe
 is turned by dragging it and brought nearer with the wheel, or on a
-touch screen by two fingers drawn apart. A dot that is
+touch screen by two fingers drawn apart. Radios in one grid square are all
+at its middle, so those that would cover each other are drawn one above
+another, each with its callsign. A dot that is
 touched is chosen, and Listen plays what that radio is hearing, with the
 frequency it is tuned to and its mode shown above the button, as the
 author asked, and kept up as the radio is tuned. The author
@@ -529,10 +531,13 @@ MAP_SCRIPT = """
     }
   }
 
-  function drawRadios() {
-    var i, at;
-    drawListeners();
-    pen.font = "13px sans-serif"; pen.textBaseline = "middle";
+  // radios in one grid square are all at its middle, and no zoom parts
+  // them: the author found three on one spot and could choose none. Those
+  // that would cover each other are stood one above another, ROW apart,
+  // each with its callsign, so that each can be touched
+  var STACKED = 16, ROW = 20;
+  function stackRadios() {
+    var i, j, k, at, spots = [], spot;
     for (i = 0; i < radios.length; i++) {
       // on the flat map a radio is drawn in the copy of the world nearest
       // the middle of the page
@@ -540,6 +545,29 @@ MAP_SCRIPT = """
       at = place(radios[i].lon, radios[i].lat);
       shift = 0;
       radios[i].at = at;
+      if (!at.seen) { continue; }
+      for (j = 0; j < spots.length; j++) {
+        if (Math.hypot(spots[j].x - at.x, spots[j].y - at.y) < STACKED) { break; }
+      }
+      if (j === spots.length) { spots.push({ x: at.x, y: at.y, on: [] }); }
+      spots[j].on.push(radios[i]);
+    }
+    for (j = 0; j < spots.length; j++) {
+      spot = spots[j];
+      spot.on.sort(function (a, b) { return a.callsign < b.callsign ? -1 : 1; });
+      for (k = 0; k < spot.on.length; k++) {
+        spot.on[k].at = { x: spot.x, y: spot.y + (k - (spot.on.length - 1) / 2) * ROW, seen: true };
+      }
+    }
+  }
+
+  function drawRadios() {
+    var i, at;
+    drawListeners();
+    stackRadios();
+    pen.font = "13px sans-serif"; pen.textBaseline = "middle";
+    for (i = 0; i < radios.length; i++) {
+      at = radios[i].at;
       if (!at.seen) { continue; }
       var isChosen = chosen && chosen.radio === radios[i].radio;
       // a radio whose owner has streaming switched off is there, grey, and
@@ -584,6 +612,23 @@ MAP_SCRIPT = """
     zoom = Math.max(0.5, Math.min(8, to));
     draw();
   }
+  // the radio nearest a point on the canvas, within a touch's reach
+  function radioAt(e) {
+    var box = canvas.getBoundingClientRect(), best = null, near = 18, i, d;
+    for (i = 0; i < radios.length; i++) {
+      if (!radios[i].at || !radios[i].at.seen) { continue; }
+      d = Math.hypot(radios[i].at.x - (e.clientX - box.left),
+        radios[i].at.y - (e.clientY - box.top));
+      if (d < near) { near = d; best = radios[i]; }
+    }
+    return best;
+  }
+  // a mouse over a radio shows the hand that points, as a link does
+  canvas.addEventListener("pointermove", function (e) {
+    if (e.pointerType === "mouse" && e.buttons === 0) {
+      canvas.style.cursor = radioAt(e) ? "pointer" : "grab";
+    }
+  });
   canvas.addEventListener("pointerdown", function (e) {
     if (Object.keys(fingers).length === 0) { moved = 0; }
     fingers[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -630,14 +675,9 @@ MAP_SCRIPT = """
   // and every touch after it taken for the second of two
   canvas.addEventListener("lostpointercapture", lifted);
   canvas.addEventListener("pointerup", function (e) {
-    var box = canvas.getBoundingClientRect(), best = null, near = 18, i, d;
+    var best;
     if (!lifted(e) || moved > 6) { return; }
-    for (i = 0; i < radios.length; i++) {
-      if (!radios[i].at || !radios[i].at.seen) { continue; }
-      d = Math.hypot(radios[i].at.x - (e.clientX - box.left),
-        radios[i].at.y - (e.clientY - box.top));
-      if (d < near) { near = d; best = radios[i]; }
-    }
+    best = radioAt(e);
     // a radio that is touched is listened to at once, with no button to
     // press for it, which the author asked for
     if (best) {
