@@ -263,6 +263,9 @@ $(BUILD)/opus_celt_%.o: modems/opus_dnn/celt/%.c | $(BUILD)
 # Nothing else in this subset of Opus uses CUSTOM_MODES, and only that file
 # is built with it. modems/rade_c/rade_acq.c says why
 $(BUILD)/opus_celt_kiss_fft.o: OPUS_CELT_FLAGS = -DCUSTOM_MODES
+# and it is made again when this file changes, so that one built before
+# this, without the flag, is not kept
+$(BUILD)/opus_celt_kiss_fft.o: Makefile
 
 $(BUILD)/opus_dnn_%.o: modems/opus_dnn/dnn/%.c | $(BUILD)
 	$(RADE_CC) -c -o $@ $<
