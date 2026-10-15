@@ -1419,9 +1419,9 @@ void sdr_request(char *request, char *response){
 			rx_wanted->mode = MODE_DIGITAL;
 		else if (!strcmp(value, "USB"))
 			rx_wanted->mode = MODE_USB;
-		//RADE2 is sent as speech is, on the sideband of the band; the
-		//modem, modems/modem_rade2.c, does the rest
-		else if (!strcmp(value, "RADE2"))
+		//RADE1 and RADE2 are sent as speech is, on the sideband of the
+		//band; the modem, modems/modem_rade.c, does the rest
+		else if (!strcmp(value, "RADE1") || !strcmp(value, "RADE2"))
 			rx_wanted->mode = freq_hdr < LOWER_SIDEBAND_BELOW_HZ ? MODE_LSB : MODE_USB;
 		else {
 			strcpy(response, "error");

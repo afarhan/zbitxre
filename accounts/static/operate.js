@@ -393,6 +393,8 @@
     var mode = values.MODE || "";
     if (mode === "CW" || mode === "CWR") { return "CW"; }
     if (mode === "USB" || mode === "LSB" || mode === "AM") { return "VOICE"; }
+    // RADE1 and RADE2 are one modem's, with one group of controls
+    if (mode === "RADE1" || mode === "RADE2") { return "RADE"; }
     return mode;
   }
   function isFt8() { return modeGroup() === "FT8"; }
@@ -501,7 +503,7 @@
     tiles.VOL.value.textContent = own.VOL;
     tiles.MODE.value.textContent = values.MODE || "";
     tiles.MIC.value.textContent = values.MIC || "";
-    tiles.MIC.box.className = "tile" + (group === "VOICE" || group === "RADE2" ? "" : " hidden");
+    tiles.MIC.box.className = "tile" + (group === "VOICE" || group === "RADE" ? "" : " hidden");
     BANDS.forEach(function (band) {
       var t = tiles["BAND " + band];
       t.value.textContent = band;
@@ -546,8 +548,8 @@
   }
 
   function footerLabel(place, group, macros) {
-    // RADE2 is laid out as the voice modes are
-    if (group === "VOICE" || group === "RADE2") { return ["", "TX", "RX", "", "", ""][place]; }
+    // RADE1 and RADE2 are laid out as the voice modes are
+    if (group === "VOICE" || group === "RADE") { return ["", "TX", "RX", "", "", ""][place]; }
     if (group === "2TONE") { return ["TX", "RX", "", "", "", ""][place]; }
     if (group === "CW") { return macros[place] || ""; }
     return "";
@@ -579,8 +581,8 @@
   }
 
   function startSending() {
-    // in RADE2 as in the voice modes, what is sent is what is said
-    if (modeGroup() !== "VOICE" && modeGroup() !== "RADE2") { set("TX", "ON"); return; }
+    // in RADE1 and RADE2 as in the voice modes, what is sent is what is said
+    if (modeGroup() !== "VOICE" && modeGroup() !== "RADE") { set("TX", "ON"); return; }
     if (!player) { return; }
     if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
     player.openMicrophone(sendSpeech).then(function () {
@@ -1054,8 +1056,8 @@
     var band = { tuned: 0, low: 300, high: 300 + bw };
     if (mode === "LSB") { band.low = -300 - bw; band.high = -300; }
     if (mode === "AM") { band.low = -bw; band.high = bw; }
-    // RADE2's passband is fixed, and on the band's sideband, the lower below 10 MHz
-    if (mode === "RADE2") {
+    // RADE1's and RADE2's passband is fixed, and on the band's sideband, the lower below 10 MHz
+    if (mode === "RADE1" || mode === "RADE2") {
       band.low = 250; band.high = 2750;
       if (Number(values.FREQ || 0) < 10000000) { band.low = -2750; band.high = -250; }
     }

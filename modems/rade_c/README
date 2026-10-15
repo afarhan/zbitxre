@@ -23,8 +23,9 @@ some 20 s into each over and came back with the next. A second term now
 follows the rate of the drift, so that a steady drift leaves no lag. The
 change is marked "zbitxre" in rade_rx_v2.c, which says more. Moving to a
 newer rade_c, see whether FreeDV has done this, and if not, carry it.
-Version 1's files are here because rade_api.c refers to both; the radio
-offers version 2 only, as the mode RADE2, and modems/modem_rade2.c says why.
+
+The radio offers both versions: version 1, which FreeDV has released, as
+the mode RADE1, and version 2 as RADE2; modems/modem_rade.c says why.
 
 It is built on Opus's neural network code, which is in modems/opus_dnn.
 

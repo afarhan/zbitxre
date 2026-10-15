@@ -1296,7 +1296,7 @@ static int is_ptt_mode(void) {
 	const char *mode = control_get("MODE");
 
 	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "2TONE")
-		|| !strcmp(mode, "RADE2");
+		|| !strcmp(mode, "RADE1") || !strcmp(mode, "RADE2");
 }
 
 // the PTT, or a modem with something to send, puts the radio in transmit

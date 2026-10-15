@@ -330,8 +330,8 @@ static const struct footer footers[] = {
 		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
 		{"TX", "OFF", "RX", COLOUR_BOX},
 	}},
-	//RADE2 is spoken into as the voice modes are
-	{"RADE2", {
+	//RADE1 and RADE2 are spoken into as the voice modes are
+	{"RADE", {
 		{"MIC", NULL, NULL, COLOUR_BOX},
 		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
 		{"TX", "OFF", "RX", COLOUR_BOX},
@@ -560,6 +560,9 @@ static void mode_group(char *group, int room){
 		snprintf(group, room, "CW");
 	if (!strcmp(group, "USB") || !strcmp(group, "LSB") || !strcmp(group, "AM"))
 		snprintf(group, room, "VOICE");
+	//RADE1 and RADE2 are one modem's, with one group of controls
+	if (!strcmp(group, "RADE1") || !strcmp(group, "RADE2"))
+		snprintf(group, room, "RADE");
 }
 
 //the button at a place on the bottom row, if the mode in use has one there
@@ -953,9 +956,9 @@ static void show_passband(){
 		low_hz = -bw_voice;
 		high_hz = bw_voice;
 	}
-	//RADE2's passband is fixed, and on the band's sideband, the lower
-	//below 10 MHz, as speech's is
-	if (!strcmp(mode, "RADE2")){
+	//RADE1's and RADE2's passband is fixed, and on the band's sideband,
+	//the lower below 10 MHz, as speech's is
+	if (!strcmp(mode, "RADE1") || !strcmp(mode, "RADE2")){
 		low_hz = 250;
 		high_hz = 2750;
 		if (controls_find("FREQ") != NULL) {

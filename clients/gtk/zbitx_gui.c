@@ -642,8 +642,8 @@ static const struct footer_button footer_buttons[] = {
 	{"VOICE", 2, "RX", "TX", "OFF"},
 	{"2TONE", 0, "TX", "TX", "ON"},
 	{"2TONE", 1, "RX", "TX", "OFF"},
-	{"RADE2", 1, "TX", "TX", "ON"},
-	{"RADE2", 2, "RX", "TX", "OFF"},
+	{"RADE", 1, "TX", "TX", "ON"},
+	{"RADE", 2, "RX", "TX", "OFF"},
 	{NULL, 0, NULL, NULL, NULL},
 };
 
@@ -923,6 +923,9 @@ static const char *mode_group(void) {
 		return "CW";
 	if (!strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "AM"))
 		return "VOICE";
+	// RADE1 and RADE2 are one modem's, with one group of controls
+	if (!strcmp(mode, "RADE1") || !strcmp(mode, "RADE2"))
+		return "RADE";
 	return mode;
 }
 
@@ -953,7 +956,7 @@ static int is_row_shown(const struct row *r) {
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0;
 	// the microphone's gain is for the modes that are spoken into
 	if (!strcmp(r->control, "MIC"))
-		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "RADE2");
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "RADE");
 	if (!strcmp(k->group, "RADIO") || r->place == ON_TOP)
 		return 1;
 	return !strcmp(k->group, mode_group());
@@ -2870,8 +2873,8 @@ static void open_knobs(void) {
 // is where the radio's oscillator puts the tuned frequency. In CW the
 // oscillator is set off by the pitch, so that a signal on the tuned
 // frequency lies the pitch away from the middle
-#define RADE2_LOW_HZ 250
-#define RADE2_HIGH_HZ 2750
+#define RADE_LOW_HZ 250
+#define RADE_HIGH_HZ 2750
 #define LOWER_SIDEBAND_BELOW_HZ 10000000
 
 static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
@@ -2891,14 +2894,14 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 		*low_hz = -bw_voice;
 		*high_hz = bw_voice;
 	}
-	// RADE2's passband is fixed, and on the band's sideband, the lower
-	// below 10 MHz, as speech's is; modems/modem_rade2.c says why
-	if (!strcmp(mode, "RADE2")) {
-		*low_hz = RADE2_LOW_HZ;
-		*high_hz = RADE2_HIGH_HZ;
+	// RADE1's and RADE2's passband is fixed, and on the band's sideband,
+	// the lower below 10 MHz, as speech's is; modems/modem_rade.c says why
+	if (!strcmp(mode, "RADE1") || !strcmp(mode, "RADE2")) {
+		*low_hz = RADE_LOW_HZ;
+		*high_hz = RADE_HIGH_HZ;
 		if (atoi(value_of("FREQ")) < LOWER_SIDEBAND_BELOW_HZ) {
-			*low_hz = -RADE2_HIGH_HZ;
-			*high_hz = -RADE2_LOW_HZ;
+			*low_hz = -RADE_HIGH_HZ;
+			*high_hz = -RADE_LOW_HZ;
 		}
 	}
 	if (!strcmp(mode, "FT8")) {

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// test_rade2.c — the mode RADE2, sent and received through the whole radio.
+// test_rade.c — the modes RADE1 and RADE2, sent and received through the
+// whole radio.
 //
 // It needs no radio: the hardware is stood in for, as in test_am.c, and the
 // radio is opened as the radio program opens it. Twelve seconds of FreeDV's
 // test speech, tests/rade_speech.wav, are spoken into the microphone with
-// the radio sending in RADE2, and what the radio gives its transmitter is
+// the radio sending in the mode, and what the radio gives its transmitter is
 // kept. That is then played into its receiver, as if a second radio had
 // sent it, and what comes out of the speaker is compared with what was
 // said.
@@ -18,14 +19,16 @@
 // What is asked: that the radio sends a signal, and goes on sending after
 // the PTT is let go until the over has been ended, and not for long; that
 // the receiver finds the signal within two seconds and says so in
-// RADE2_STATUS; that speech comes out of the speaker whose loudness rises
+// RADE_STATUS; that speech comes out of the speaker whose loudness rises
 // and falls as the speech that went in, which is how it is known to be that
 // speech and not noise, a vocoder not giving back the samples it was given
 // (what is played before the signal is found, the receiver's own audio of
 // it, a loud buzz, is left out of the comparing);
 // and that when the over ends the receiver lets go.
 //
-// What the speaker played is left in build/rade2_heard.wav, to be listened
+// It is done for RADE1 and then for RADE2, in the one radio, as an
+// operator would change from one to the other. What the speaker played is
+// left in build/rade1_heard.wav and build/rade2_heard.wav, to be listened
 // to.
 
 #include <math.h>
@@ -44,7 +47,7 @@
 #include "hw_stand_ins.h"
 
 #define SPEECH_FILE "tests/rade_speech.wav"
-#define HEARD_FILE "build/rade2_heard.wav"
+#define HEARD_ROOM 64
 #define BLOCK 1024
 #define SAMPLE_RATE 96000
 #define SPEECH_RATE 16000
@@ -224,20 +227,19 @@ static double alike(const double *a, long a_frames, const double *b, long b_fram
 	return best;
 }
 
-int main(void) {
+// the speech, through the radio in the mode, there and back
+static void test_mode(const char *mode, const int16_t *speech) {
 	static int32_t silence[BLOCK];
 	static int32_t microphone[BLOCK];
 	static int32_t to_speaker[BLOCK];
 	static int32_t to_transmitter[BLOCK];
 	static int32_t from_receiver[BLOCK];
 	const struct modem *modem;
-	int16_t *speech;
 	int32_t *transmitted;
 	int32_t *heard;
 	double *as_doubles;
 	double *said_envelope;
 	double *heard_envelope;
-	long speech_count = 0;
 	long spoken_blocks = (long)SPOKEN_S * SAMPLE_RATE / BLOCK;
 	long blocks_most = spoken_blocks + (long)(TAIL_MOST_S + QUIET_AFTER_S + 2) * SAMPLE_RATE / BLOCK;
 	long transmitted_blocks = 0;
@@ -254,25 +256,17 @@ int main(void) {
 	double scale;
 	double likeness;
 	char said[160];
+	char heard_file[HEARD_ROOM];
+	int c;
 
-	printf("test_rade2\n");
-	speech = read_speech(SPEECH_FILE, &speech_count);
-	if (speech == NULL || speech_count < (long)SPOKEN_S * SPEECH_RATE) {
-		printf("the test speech could not be read\n");
-		return EXIT_FAILURE;
-	}
-	hw_stand_in_radio(board_zbitx_1.radio);
-	if (setup() < 0) {
-		printf("could not set up\n");
-		return EXIT_FAILURE;
-	}
-	radio_open();
-	modem = modem_find("RADE2");
-	expect(modem != NULL, "there is a mode RADE2");
+	printf(" %s\n", mode);
+	modem = modem_find(mode);
+	snprintf(said, sizeof(said), "there is a mode %s", mode);
+	expect(modem != NULL, said);
 	if (modem == NULL)
-		return EXIT_FAILURE;
+		return;
 	control_set("FREQ", "14236000", ORIGIN_NONE, why, sizeof(why));
-	expect(control_set("MODE", "RADE2", ORIGIN_NONE, why, sizeof(why)) == 0, "the radio takes it");
+	expect(control_set("MODE", mode, ORIGIN_NONE, why, sizeof(why)) == 0, "the radio takes it");
 	clock_gettime(CLOCK_MONOTONIC, &next_block);
 	one_block(silence, silence, to_speaker, to_transmitter);
 	expect(rx_list->mode == MODE_USB, "it is on the upper sideband at 14 MHz");
@@ -332,16 +326,20 @@ int main(void) {
 				? (int32_t)(scale * transmitted[b * BLOCK + i]) : 0;
 		one_block(from_receiver, silence, heard + b * BLOCK, to_transmitter);
 		modem->wants_tx();
-		if (synced_at < 0 && !strncmp(control_get("RADE2_STATUS"), "SYNC", 4)) {
+		if (synced_at < 0 && !strncmp(control_get("RADE_STATUS"), "SYNC", 4)) {
 			synced_at = b;
 			printf("          found after %.2f s: %s\n", (double)b * BLOCK / SAMPLE_RATE,
-				control_get("RADE2_STATUS"));
+				control_get("RADE_STATUS"));
 		}
-		if (synced_at >= 0 && lost_at < 0 && strncmp(control_get("RADE2_STATUS"), "SYNC", 4))
+		if (synced_at >= 0 && lost_at < 0 && strncmp(control_get("RADE_STATUS"), "SYNC", 4))
 			lost_at = b;
 	}
 	heard_frames = b * BLOCK;
-	write_wav(HEARD_FILE, heard, heard_frames);
+	snprintf(heard_file, sizeof(heard_file), "build/");
+	for (c = 0; mode[c] != 0 && c < HEARD_ROOM - 20; c++)
+		heard_file[6 + c] = (char)(mode[c] >= 'A' && mode[c] <= 'Z' ? mode[c] - 'A' + 'a' : mode[c]);
+	snprintf(heard_file + 6 + c, sizeof(heard_file) - 6 - c, "_heard.wav");
+	write_wav(heard_file, heard, heard_frames);
 	expect(synced_at >= 0 && (double)synced_at * BLOCK / SAMPLE_RATE < SYNC_WITHIN_S,
 		"the receiver finds the signal within two seconds, and says so");
 	snprintf(said, sizeof(said), "it lets go when the over ends (%.2f s after the signal began)",
@@ -362,12 +360,36 @@ int main(void) {
 		"the speaker's loudness follows the speech that was said (alike %.2f, %.2f s late)",
 		likeness, lag * 0.02);
 	expect(likeness >= ALIKE_LEAST, said);
+	free(transmitted);
+	free(heard);
+	free(as_doubles);
+	free(said_envelope);
+	free(heard_envelope);
+}
 
-	teardown();
-	if (checks_failed) {
-		printf("test_rade2: %d FAILED\n", checks_failed);
+int main(void) {
+	int16_t *speech;
+	long speech_count = 0;
+
+	printf("test_rade\n");
+	speech = read_speech(SPEECH_FILE, &speech_count);
+	if (speech == NULL || speech_count < (long)SPOKEN_S * SPEECH_RATE) {
+		printf("the test speech could not be read\n");
 		return EXIT_FAILURE;
 	}
-	printf("test_rade2: all passed\n");
+	hw_stand_in_radio(board_zbitx_1.radio);
+	if (setup() < 0) {
+		printf("could not set up\n");
+		return EXIT_FAILURE;
+	}
+	radio_open();
+	test_mode("RADE1", speech);
+	test_mode("RADE2", speech);
+	teardown();
+	if (checks_failed) {
+		printf("test_rade: %d FAILED\n", checks_failed);
+		return EXIT_FAILURE;
+	}
+	printf("test_rade: all passed\n");
 	return EXIT_SUCCESS;
 }

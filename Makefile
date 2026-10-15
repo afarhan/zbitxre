@@ -32,7 +32,7 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h rtp_audio.h rtp_microphone.h modems/cw_keyer.h \
 	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
-	modems/ft8_callsign_hash.h dsp/rade2_codec.h
+	modems/ft8_callsign_hash.h dsp/rade_codec.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c hw/swr_bridge.c \
 	$(LINK)
@@ -51,8 +51,8 @@ FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard mode
 # of Opus in modems/opus_dnn; their READMEs say what they are. They are
 # built as they are, each file on its own with its warnings off, and with
 # include paths of their own: Opus has a kiss_fft.h that is not the
-# radio's. dsp/rade2_codec.c is the radio's one way in to them and is built
-# with them; the rest of the radio sees only dsp/rade2_codec.h. The weights
+# radio's. dsp/rade_codec.c is the radio's one way in to them and is built
+# with them; the rest of the radio sees only dsp/rade_codec.h. The weights
 # of the networks are not in the repository, and RADE_WEIGHTS says so.
 RADE_C_FILES = rade_api rade_enc rade_enc_data rade_dec rade_dec_data rade_dsp rade_ofdm \
 	rade_bpf rade_acq rade_tx rade_rx rade_enc_v2 rade_enc_v2_data rade_dec_v2 \
@@ -76,7 +76,7 @@ RADE_LIB    = $(patsubst %,$(BUILD)/rade_c_%.o,$(RADE_C_FILES)) \
 	$(patsubst %,$(BUILD)/opus_celt_%.o,$(OPUS_CELT_FILES)) \
 	$(patsubst %,$(BUILD)/opus_dnn_%.o,$(OPUS_DNN_FILES)) \
 	$(patsubst %,$(BUILD)/opus_top_%.o,$(OPUS_TOP_FILES)) \
-	$(BUILD)/rade2_codec.o
+	$(BUILD)/rade_codec.o
 DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c rtp_microphone.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
 	$(MODEMS) $(MODEM_LIST) $(FT8_LIB) $(RADE_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
@@ -89,7 +89,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
 	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
 	$(BUILD)/test_rtp_microphone $(BUILD)/test_telephone $(BUILD)/test_cat \
-	$(BUILD)/test_rade_codec $(BUILD)/test_rade2
+	$(BUILD)/test_rade_codec $(BUILD)/test_rade
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -134,7 +134,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_telephone
 	$(BUILD)/test_cat
 	$(BUILD)/test_rade_codec
-	$(BUILD)/test_rade2
+	$(BUILD)/test_rade
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -203,12 +203,12 @@ $(BUILD)/test_server: tests/test_server.c radio.c server.c settings.c logbook.c 
 	$(CC) $(CFLAGS) -o $@ tests/test_server.c radio.c server.c settings.c logbook.c $(DSP) \
 		$(STAND_INS) -lpthread -lm -lsqlite3
 
-# RADE2 through the whole radio, sent and received; it takes half a minute,
+# RADE1 and RADE2 through the whole radio, sent and received; it takes half a minute,
 # giving the radio its blocks at a sound card's pace
-$(BUILD)/test_rade2: tests/test_rade2.c radio.c server.c settings.c logbook.c radio.h \
+$(BUILD)/test_rade: tests/test_rade.c radio.c server.c settings.c logbook.c radio.h \
 		server.h settings.h control.h logbook.h $(DSP) $(STAND_INS) $(DSP_HEADERS) \
 		$(HW_HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_rade2.c radio.c server.c settings.c logbook.c $(DSP) \
+	$(CC) $(CFLAGS) -o $@ tests/test_rade.c radio.c server.c settings.c logbook.c $(DSP) \
 		$(STAND_INS) -lpthread -lm -lsqlite3
 
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
@@ -264,10 +264,10 @@ $(BUILD)/opus_dnn_%.o: modems/opus_dnn/dnn/%.c | $(BUILD)
 $(BUILD)/opus_top_%.o: modems/opus_dnn/%.c modems/opus_dnn/config.h | $(BUILD)
 	$(RADE_CC) -c -o $@ $<
 
-$(BUILD)/rade2_codec.o: dsp/rade2_codec.c dsp/rade2_codec.h | $(BUILD)
-	$(RADE_CC) -g -Wall -Wextra -Idsp -c -o $@ dsp/rade2_codec.c
+$(BUILD)/rade_codec.o: dsp/rade_codec.c dsp/rade_codec.h | $(BUILD)
+	$(RADE_CC) -g -Wall -Wextra -Idsp -c -o $@ dsp/rade_codec.c
 
-$(BUILD)/test_rade_codec: tests/test_rade_codec.c dsp/rade2_codec.h $(RADE_LIB) | $(BUILD)
+$(BUILD)/test_rade_codec: tests/test_rade_codec.c dsp/rade_codec.h $(RADE_LIB) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_rade_codec.c $(RADE_LIB) -lm
 
 $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUILD)

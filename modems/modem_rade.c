@@ -1,24 +1,39 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ashhar Farhan
 //
-// modem_rade2.c — RADE2: FreeDV's digital voice, RADE version 2.
+// modem_rade.c — RADE1 and RADE2: FreeDV's digital voice, RADE versions 1
+// and 2.
 //
 // WHAT IT IS
 //
 // RADE is David Rowe VK5DGR's radio autoencoder: speech goes out as an
 // OFDM signal between 300 and 2700 Hz of an SSB transmitter's audio, and
 // comes out of the far receiver as speech, at signal levels where SSB is
-// hard to copy. dsp/rade2_codec.c is the radio's way in to the code that
+// hard to copy. dsp/rade_codec.c is the radio's way in to the code that
 // does it, FreeDV's and Opus's, and says whose each part is.
 //
-// The author asked for version 2 alone, as the mode RADE2. Version 1
-// searches for a signal all the while it hears none, and that search took
-// a processor and a half of the zbitx's Pi Zero 2 W, measured 6 October
-// 2026; version 2 has no such search.
+// TWO MODES
 //
+// RADE1 is version 1, the one FreeDV has released, which operators use on
+// the air with freedv-gui 2: it is how the radio talks to them. RADE2 is
+// version 2, FreeDV's next, without the pilots of version 1 and narrower.
 // FreeDV says version 2's signal may still change, and asks that it not go
-// on the air until they release it. This is for the bench and for trying
-// between two of our own stations until then.
+// on the air until they release it; RADE2 is for the bench and for trying
+// between our own stations until then.
+//
+// The author asked first, on 6 October 2026, for version 2 alone: version
+// 1 searches for a signal all the while it hears none, and that search
+// took a processor and a half of the zbitx's Pi Zero 2 W. On 15 October he
+// asked for RADE1 on both radios too, for its pilots, which keep its
+// timing, and for the stations on the air.
+//
+// The two modes are one modem: the same thread, rings, filters and
+// controls, each mode with a codec of its own version, opened when the
+// radio starts. Choosing the mode chooses which codec the thread works
+// with. What differs between them is in struct version below: version 1's
+// codec works in frames of 120 ms, three times version 2's, so more of its
+// signal is held before it is sent and more of its speech before it is
+// played.
 //
 // IT HAS A THREAD OF ITS OWN
 //
@@ -83,10 +98,11 @@
 //
 // HOW LOUD
 //
-// Sending: the codec's signal has a level of about a half and peaks of
-// one. The peaks are put where 2TONE's are, which is the drive the
-// transmitter is known to take cleanly; the level is then 3 dB under
-// 2TONE's, the signal's peaks being 6 dB over its level. The
+// Sending: the peaks of the signal the transmitter is given are put where
+// 2TONE's are, which is the drive the transmitter is known to take
+// cleanly; TX_LEVEL_V1 says why the two versions differ in it. Version 2's
+// level is then 3 dB under 2TONE's, its peaks being 6 dB over its level,
+// and version 1's about the same. The
 // microphone's samples are brought to 16 bits for the codec, whose
 // training was on speech at ordinary levels.
 //
@@ -114,12 +130,13 @@
 // Receiving: the receiver's audio, levelled by its AGC, is divided by
 // HEARD_FULL_SCALE to come to the codec near the level it expects, which
 // its own levelling then corrects within 20 dB. The figure was set with
-// the test, tests/test_rade2.c, which puts a signal through the whole
+// the test, tests/test_rade.c, which puts a signal through the whole
 // receiver.
 //
 // WHAT THE OPERATOR IS TOLD
 //
-// RADE2_STATUS, in the group RADE2: "--" with no signal, and with one,
+// RADE_STATUS, in the group RADE that both modes share: "--" with no
+// signal, and with one,
 // its signal to noise ratio and how far off tune it is, "SYNC 12 dB +3
 // Hz". The thread only notes them; wants_tx(), which the thread that owns
 // the controls calls many times a second, puts them in the control.
@@ -136,14 +153,14 @@
 #include "sdr.h"
 #include "control.h"
 #include "modem.h"
-#include "rade2_codec.h"
+#include "rade_codec.h"
 
 #define AUDIO_RATE_HZ 96000
 #define BLOCK (MAX_BINS / 2)
 #define PASSBAND_LOW_HZ 250
 #define PASSBAND_HIGH_HZ 2750
-#define SIGNAL_STEP (AUDIO_RATE_HZ / RADE2_MODEM_RATE_HZ)
-#define SPEECH_STEP (AUDIO_RATE_HZ / RADE2_SPEECH_RATE_HZ)
+#define SIGNAL_STEP (AUDIO_RATE_HZ / RADE_CODEC_MODEM_RATE_HZ)
+#define SPEECH_STEP (AUDIO_RATE_HZ / RADE_CODEC_SPEECH_RATE_HZ)
 #define TAPS_A_PHASE 16
 #define SIGNAL_TAPS (SIGNAL_STEP * TAPS_A_PHASE)
 #define SPEECH_TAPS (SPEECH_STEP * TAPS_A_PHASE)
@@ -152,14 +169,21 @@
 #define HAMMING_A 0.54
 #define HAMMING_B 0.46
 #define RING_SAMPLES 32768
-#define SPOKEN_LEAST (RADE2_SPEECH_RATE_HZ / 10)
-// three frames of the signal, 120 ms. It was two, and on the first day two
-// radios spoke, the receiving one lost the signal every few seconds when
-// the zbitx was the sender: the signal was thought to be running out, the
-// zbitx's thread being late with a frame. What the terminal now says at
-// the end of each over is how that is known
-#define SENT_LEAST 960
-#define TAIL_SAMPLES (RADE2_MODEM_RATE_HZ / 5)
+// speech is played from when this much is waiting: a tenth of a second
+// for version 2, whose codec gives 40 ms of it at a time, and a fifth for
+// version 1, which gives 120 ms at a time
+#define SPOKEN_LEAST_V2 (RADE_CODEC_SPEECH_RATE_HZ / 10)
+#define SPOKEN_LEAST_V1 (RADE_CODEC_SPEECH_RATE_HZ / 5)
+// the signal is sent from when this much is waiting. Version 2: three of
+// its frames, 120 ms. It was two, and on the first day two radios spoke,
+// the receiving one lost the signal every few seconds when the zbitx was
+// the sender: the signal was thought to be running out, the zbitx's thread
+// being late with a frame. What the terminal now says at the end of each
+// over is how that is known. Version 1: two of its frames, 240 ms, for the
+// same reason, its frames coming three times as far apart
+#define SENT_LEAST_V2 960
+#define SENT_LEAST_V1 1920
+#define TAIL_SAMPLES (RADE_CODEC_MODEM_RATE_HZ / 5)
 // the radio still sending this long after an over's end has gone, the
 // PTT has been pressed again: another over
 #define NEW_OVER_AFTER_BLOCKS 30
@@ -186,8 +210,29 @@
 #define SPEECH_LOW_HZ 10.0
 #define BUTTERWORTH_Q 0.70710678
 #define SPEECH_BIQUADS 1
-// the codec's peaks, of one, put where 2TONE's are
-#define TX_LEVEL 0.042
+// the codec's peaks put where 2TONE's are, at the transmitter. Both
+// versions' samples peak at one, measured on FreeDV's test speech on 15
+// October 2026; but what the transmitter sends is the signal's envelope,
+// and version 1's, whose sender does not filter it, peaks 3 dB over its
+// samples: at version 2's level it reached the transmitter 3 dB over
+// 2TONE's peaks (tests/test_rade.c, 25 dB under full scale against 28). So
+// it is put 3 dB lower. Its level, 3.8 dB under its samples' peaks against
+// version 2's 6.3, then gives about as much power as version 2's
+#define TX_LEVEL_V2 0.042
+#define TX_LEVEL_V1 0.0297
+
+// what differs between the two modes
+struct version {
+	const char *mode;
+	// how the terminal is told of it
+	const char *said_as;
+	int codec_version;
+	unsigned sent_least;
+	unsigned spoken_least;
+	// the peaks of its signal put where 2TONE's are
+	double tx_level;
+	struct rade_codec *codec;
+};
 
 struct ring {
 	float samples[RING_SAMPLES];
@@ -227,9 +272,19 @@ static struct rate_filter speech_up;
 static struct rate_filter signal_up;
 static struct rate_filter mic_down;
 
-static pthread_t rade2_thread;
+static struct version versions[] = {
+	{ "RADE1", "rade1", RADE_CODEC_V1, SENT_LEAST_V1, SPOKEN_LEAST_V1, TX_LEVEL_V1, NULL },
+	{ "RADE2", "rade2", RADE_CODEC_V2, SENT_LEAST_V2, SPOKEN_LEAST_V2, TX_LEVEL_V2, NULL },
+};
+#define VERSION_1 0
+#define VERSION_2 1
+// which of versions[] is in use: set when a mode is chosen, by the thread
+// that owns the controls, and read by the audio thread and the modem's
+static atomic_int version_in_use = VERSION_2;
+
+static pthread_t rade_thread;
 static sem_t work;
-static int is_open;
+static int is_thread_started;
 
 // set by the audio thread, taken by the modem's
 static atomic_int tx_begin_wanted;
@@ -395,10 +450,10 @@ static void biquad_clear(struct biquad *b) {
 
 // what has been heard goes to the codec in the pieces it asks for, and the
 // speech it makes of them is queued for the speaker
-static void receive_heard(void) {
-	float signal[RADE2_MODEM_MOST];
-	float features[RADE2_FRAMES_MOST * RADE2_FEATURES];
-	int16_t speech[RADE2_SPEECH_FRAME];
+static void receive_heard(struct rade_codec *c) {
+	float signal[RADE_CODEC_MODEM_MOST];
+	float features[RADE_CODEC_FRAMES_MOST * RADE_CODEC_FEATURES];
+	int16_t speech[RADE_CODEC_SPEECH_FRAME];
 	int was_synced;
 	int is_end;
 	int frames;
@@ -409,37 +464,37 @@ static void receive_heard(void) {
 
 	if (atomic_exchange(&rx_begin_wanted, 0)) {
 		ring_empty(&heard);
-		rade2_rx_begin();
+		rade_codec_rx_begin(c);
 		atomic_store(&is_synced, 0);
 	}
-	for (wanted = rade2_rx_wanted(); (int)ring_count(&heard) >= wanted;
-			wanted = rade2_rx_wanted()) {
+	for (wanted = rade_codec_rx_wanted(c); (int)ring_count(&heard) >= wanted;
+			wanted = rade_codec_rx_wanted(c)) {
 		for (i = 0; i < wanted; i++)
 			signal[i] = ring_take(&heard);
 		was_synced = atomic_load(&is_synced);
-		frames = rade2_rx_demodulate(signal, features, &is_end);
+		frames = rade_codec_rx_demodulate(c, signal, features, &is_end);
 		for (f = 0; f < frames; f++) {
-			count = rade2_rx_synthesise(features + f * RADE2_FEATURES, speech);
+			count = rade_codec_rx_synthesise(c, features + f * RADE_CODEC_FEATURES, speech);
 			for (i = 0; i < count; i++)
 				ring_put(&spoken, speech[i]);
 		}
-		atomic_store(&snr_db, (int)lroundf(rade2_rx_snr_db()));
-		atomic_store(&offset_hz, (int)lroundf(rade2_rx_offset_hz()));
-		atomic_store(&is_synced, rade2_rx_is_synced());
+		atomic_store(&snr_db, (int)lroundf(rade_codec_rx_snr_db(c)));
+		atomic_store(&offset_hz, (int)lroundf(rade_codec_rx_offset_hz(c)));
+		atomic_store(&is_synced, rade_codec_rx_is_synced(c));
 		// the next signal is another voice, or the same after a silence:
 		// the vocoder begins again
-		if (is_end || (was_synced && !rade2_rx_is_synced()))
-			rade2_rx_synthesis_begin();
+		if (is_end || (was_synced && !rade_codec_rx_is_synced(c)))
+			rade_codec_rx_synthesis_begin(c);
 	}
 }
 
 // what has been said goes to the codec a frame at a time, and the signal
 // it makes is queued for the transmitter; at the end of an over, what ends
 // it
-static void send_said(void) {
-	float signal[RADE2_MODEM_MOST];
-	float features[RADE2_FEATURES];
-	int16_t speech[RADE2_SPEECH_FRAME];
+static void send_said(struct rade_codec *c) {
+	float signal[RADE_CODEC_MODEM_MOST];
+	float features[RADE_CODEC_FEATURES];
+	int16_t speech[RADE_CODEC_SPEECH_FRAME];
 	float sample;
 	int count;
 	int i;
@@ -449,7 +504,7 @@ static void send_said(void) {
 		ring_empty(&said);
 		for (i = 0; i < SPEECH_BIQUADS; i++)
 			biquad_clear(&speech_cut[i]);
-		rade2_tx_begin();
+		rade_codec_tx_begin(c);
 		atomic_store(&tx_end_wanted, 0);
 		atomic_store(&is_tail_made, 0);
 		over = OVER_SPEAKING;
@@ -458,8 +513,8 @@ static void send_said(void) {
 		ring_empty(&said);
 		return;
 	}
-	while (ring_count(&said) >= RADE2_SPEECH_FRAME) {
-		for (i = 0; i < RADE2_SPEECH_FRAME; i++) {
+	while (ring_count(&said) >= RADE_CODEC_SPEECH_FRAME) {
+		for (i = 0; i < RADE_CODEC_SPEECH_FRAME; i++) {
 			sample = ring_take(&said);
 			for (k = 0; k < SPEECH_BIQUADS; k++)
 				sample = biquad_filter(&speech_cut[k], sample);
@@ -469,14 +524,14 @@ static void send_said(void) {
 				sample = -SPEECH_MOST;
 			speech[i] = (int16_t)sample;
 		}
-		rade2_tx_analyse(speech, features);
-		count = rade2_tx_modulate(features, signal);
+		rade_codec_tx_analyse(c, speech, features);
+		count = rade_codec_tx_modulate(c, features, signal);
 		for (i = 0; i < count; i++)
 			ring_put(&sent, signal[i]);
 	}
 	if (!atomic_load(&tx_end_wanted))
 		return;
-	count = rade2_tx_end(signal);
+	count = rade_codec_tx_end(c, signal);
 	for (i = 0; i < count; i++)
 		ring_put(&sent, signal[i]);
 	for (i = 0; i < TAIL_SAMPLES; i++)
@@ -485,19 +540,35 @@ static void send_said(void) {
 	atomic_store(&is_tail_made, 1);
 }
 
-static void *rade2_thread_function(void *unused) {
+static void *rade_thread_function(void *unused) {
+	struct rade_codec *c;
+
 	(void)unused;
 	while (1) {
 		sem_wait(&work);
-		send_said();
-		receive_heard();
+		c = versions[atomic_load(&version_in_use)].codec;
+		if (c == NULL)
+			continue;
+		send_said(c);
+		receive_heard(c);
 	}
 	return NULL;
 }
 
+// the mode in use
+static const struct version *version(void) {
+	return &versions[atomic_load(&version_in_use)];
+}
+
+// whether the mode in use has its codec and the thread; if not, it is
+// plain SSB
+static int is_open(void) {
+	return is_thread_started && version()->codec != NULL;
+}
+
 /* the audio thread */
 
-static void rx_rade2(complex float *bins) {
+static void rx_rade(complex float *bins) {
 	int i;
 
 	// the first block after a transmission: the receiver begins afresh
@@ -509,7 +580,7 @@ static void rx_rade2(complex float *bins) {
 		atomic_store(&rx_begin_wanted, 1);
 	}
 	demod_ssb(bins, baseband_output);
-	if (!is_open) {
+	if (!is_open()) {
 		speaker_play(baseband_output, BLOCK);
 		return;
 	}
@@ -520,7 +591,7 @@ static void rx_rade2(complex float *bins) {
 	}
 	// speech is played from when enough of it is waiting until it runs
 	// out, and otherwise silence, or the SSB audio with SQUELCH OFF
-	if (!is_speaking && ring_count(&spoken) >= SPOKEN_LEAST) {
+	if (!is_speaking && ring_count(&spoken) >= version()->spoken_least) {
 		is_speaking = 1;
 		rate_filter_clear(&speech_up);
 	}
@@ -542,10 +613,11 @@ static void rx_rade2(complex float *bins) {
 	sem_post(&work);
 }
 
-static void tx_rade2(const int32_t *mic, double *samples) {
+static void tx_rade(const int32_t *mic, double *samples) {
+	double level = version()->tx_level;
 	int i;
 
-	if (!is_open) {
+	if (!is_open()) {
 		memset(samples, 0, BLOCK * sizeof(double));
 		return;
 	}
@@ -570,7 +642,7 @@ static void tx_rade2(const int32_t *mic, double *samples) {
 		rate_filter_down(&mic_down, mic[i] / MIC_A_SAMPLE, &said);
 	// the signal is sent from when enough of it is waiting; if it runs
 	// out, the thread being late, it waits for as much again
-	if (!is_sending && ring_count(&sent) >= SENT_LEAST)
+	if (!is_sending && ring_count(&sent) >= version()->sent_least)
 		is_sending = 1;
 	if (is_sending && ring_count(&sent) == 0) {
 		is_sending = 0;
@@ -581,7 +653,7 @@ static void tx_rade2(const int32_t *mic, double *samples) {
 	}
 	atomic_fetch_add(&over_blocks, 1);
 	for (i = 0; i < BLOCK; i++)
-		samples[i] = is_sending ? TX_LEVEL * rate_filter_up(&signal_up, &sent) : 0.0;
+		samples[i] = is_sending ? level * rate_filter_up(&signal_up, &sent) : 0.0;
 	sem_post(&work);
 }
 
@@ -596,13 +668,13 @@ static int apply_squelch(struct control *c, const char *value, char *why, int ro
 }
 
 static struct control squelch_control = {
-	.group = "RADE2", .name = "SQUELCH", .kind = CONTROL_CHOICE,
+	.group = "RADE", .name = "SQUELCH", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
 	.value = "ON", .apply = apply_squelch,
 };
 
-static struct control rade2_status = {
-	.group = "RADE2", .name = "RADE2_STATUS", .kind = CONTROL_TEXT,
+static struct control rade_status = {
+	.group = "RADE", .name = "RADE_STATUS", .kind = CONTROL_TEXT,
 	.value = STATUS_QUIET,
 };
 
@@ -616,9 +688,10 @@ static void say_what_happened(void) {
 	static int was_synced;
 	int is_on = atomic_load(&is_over_on);
 	int synced = atomic_load(&is_synced);
+	const char *said_as = version()->said_as;
 
 	if (was_over_on && !is_on) {
-		printf("rade2: sent for %.1f s; the signal ran out %d times\n",
+		printf("%s: sent for %.1f s; the signal ran out %d times\n", said_as,
 			atomic_exchange(&over_blocks, 0) * (double)BLOCK / AUDIO_RATE_HZ,
 			atomic_exchange(&sent_ran_out, 0));
 		fflush(stdout);
@@ -626,8 +699,9 @@ static void say_what_happened(void) {
 	if (!was_synced && synced)
 		atomic_store(&spoken_ran_out, 0);
 	if (was_synced && !synced) {
-		printf("rade2: a signal was held and lost, last %d dB %+d Hz; the speech ran out %d times\n",
-			atomic_load(&snr_db), atomic_load(&offset_hz), atomic_exchange(&spoken_ran_out, 0));
+		printf("%s: a signal was held and lost, last %d dB %+d Hz; the speech ran out %d times\n",
+			said_as, atomic_load(&snr_db), atomic_load(&offset_hz),
+			atomic_exchange(&spoken_ran_out, 0));
 		fflush(stdout);
 	}
 	was_over_on = is_on;
@@ -647,60 +721,108 @@ static void show_status(void) {
 	if (!strcmp(status, status_shown))
 		return;
 	snprintf(status_shown, sizeof(status_shown), "%s", status);
-	control_update("RADE2_STATUS", status);
+	control_update("RADE_STATUS", status);
 }
 
 // whether the radio is to go on sending: from when the PTT is let go until
 // what ends the over has gone
-static int rade2_wants_tx(void) {
+static int rade_wants_tx(void) {
 	show_status();
 	return atomic_load(&is_over_on) && atomic_load(&tx_end_wanted)
 		&& !atomic_load(&is_tail_sent);
 }
 
 // the PTT has been let go
-static void rade2_ptt_let_go(void) {
-	if (is_open && atomic_load(&is_over_on))
+static void rade_ptt_let_go(void) {
+	if (is_open() && atomic_load(&is_over_on))
 		atomic_store(&tx_end_wanted, 1);
 }
 
-static void rade2_select(void) {
-	set_passband(PASSBAND_LOW_HZ, PASSBAND_HIGH_HZ);
-}
-
-static void rade2_reset(void) {
+// the receiver begins afresh, with the codec of the mode chosen
+static void rade_begin(int which) {
+	atomic_store(&version_in_use, which);
+	atomic_store(&is_synced, 0);
 	atomic_store(&rx_begin_wanted, 1);
 	atomic_store(&tx_end_wanted, 0);
 }
 
-static void rade2_start(void) {
-	control_register(&rade2_status);
+static void rade1_select(void) {
+	set_passband(PASSBAND_LOW_HZ, PASSBAND_HIGH_HZ);
+	rade_begin(VERSION_1);
+}
+
+static void rade2_select(void) {
+	set_passband(PASSBAND_LOW_HZ, PASSBAND_HIGH_HZ);
+	rade_begin(VERSION_2);
+}
+
+static void rade1_reset(void) {
+	rade_begin(VERSION_1);
+}
+
+static void rade2_reset(void) {
+	rade_begin(VERSION_2);
+}
+
+// what both modes have, made once, when the first of them starts
+static void rade_start_shared(void) {
+	static int is_made;
+
+	if (is_made)
+		return;
+	is_made = 1;
+	control_register(&rade_status);
 	control_register(&squelch_control);
 	atomic_store(&is_squelched, !strcmp(squelch_control.value, "ON"));
 	rate_filter_make(&speech_up, SPEECH_STEP, SPEECH_CUTOFF_HZ, SPEECH_STEP);
 	rate_filter_make(&signal_up, SIGNAL_STEP, SIGNAL_CUTOFF_HZ, SIGNAL_STEP);
 	rate_filter_make(&mic_down, SPEECH_STEP, SPEECH_CUTOFF_HZ, 1.0);
-	biquad_make_high_pass(&speech_cut[0], SPEECH_LOW_HZ, RADE2_SPEECH_RATE_HZ, BUTTERWORTH_Q);
-	if (rade2_codec_open() < 0) {
-		printf("rade2: the codec would not open, and the mode will be plain SSB\n");
-		return;
-	}
+	biquad_make_high_pass(&speech_cut[0], SPEECH_LOW_HZ, RADE_CODEC_SPEECH_RATE_HZ, BUTTERWORTH_Q);
 	sem_init(&work, 0, 0);
-	if (pthread_create(&rade2_thread, NULL, rade2_thread_function, NULL) != 0) {
-		printf("rade2: no thread could be started, and the mode will be plain SSB\n");
+	if (pthread_create(&rade_thread, NULL, rade_thread_function, NULL) != 0) {
+		printf("rade: no thread could be started, and RADE1 and RADE2 will be plain SSB\n");
 		return;
 	}
-	is_open = 1;
+	is_thread_started = 1;
 }
+
+static void rade_start(int which) {
+	struct version *v = &versions[which];
+
+	rade_start_shared();
+	v->codec = rade_codec_open(v->codec_version);
+	if (v->codec == NULL)
+		printf("%s: the codec would not open, and the mode will be plain SSB\n", v->said_as);
+}
+
+static void rade1_start(void) {
+	rade_start(VERSION_1);
+}
+
+static void rade2_start(void) {
+	rade_start(VERSION_2);
+}
+
+const struct modem modem_rade1 = {
+	.name = "RADE1",
+	.order = 8,
+	.start = rade1_start,
+	.select = rade1_select,
+	.reset = rade1_reset,
+	.rx = rx_rade,
+	.tx = tx_rade,
+	.wants_tx = rade_wants_tx,
+	.tx_end = rade_ptt_let_go,
+};
 
 const struct modem modem_rade2 = {
 	.name = "RADE2",
-	.order = 8,
+	.order = 9,
 	.start = rade2_start,
 	.select = rade2_select,
 	.reset = rade2_reset,
-	.rx = rx_rade2,
-	.tx = tx_rade2,
-	.wants_tx = rade2_wants_tx,
-	.tx_end = rade2_ptt_let_go,
+	.rx = rx_rade,
+	.tx = tx_rade,
+	.wants_tx = rade_wants_tx,
+	.tx_end = rade_ptt_let_go,
 };
