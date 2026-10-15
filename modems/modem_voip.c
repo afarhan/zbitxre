@@ -28,10 +28,11 @@
 //
 // WHAT IS HEARD
 //
-// The receiver, as in USB or LSB, on the band's sideband, the lower below
-// 10 MHz, as RADE's modes are: the owner hears the band, and someone
-// speaking over VoIP takes its place in the speaker while they speak. Its
-// passband is the voice modes', BW_VOICE.
+// Not the band: the author, trying it on 2026-10-15, asked that a radio in
+// VOIP not play the receiver's static, PTT or not. The speaker is silent
+// but for another speaking over VoIP, which rtp_voip.c puts there. The
+// spectrum is still the band's, on its sideband, the lower below 10 MHz as
+// RADE's modes are, with the voice modes' passband, BW_VOICE.
 
 #include <stdint.h>
 
@@ -41,11 +42,11 @@
 
 #define VOICE_LOW_HZ 300
 
-static int32_t baseband_output[MAX_BINS/2];
+static int32_t silence[MAX_BINS/2];
 
 static void rx_voip(complex float *bins) {
-	demod_ssb(bins, baseband_output);
-	speaker_play(baseband_output, MAX_BINS/2);
+	(void)bins;
+	speaker_play(silence, MAX_BINS/2);
 }
 
 static void voip_select(void) {
