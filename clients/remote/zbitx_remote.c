@@ -74,8 +74,11 @@
 // keeps that connection. Nothing goes down it but PING a minute from here
 // and PONG back, the author's other rule being that nothing is sent that
 // nobody asked for. If it is lost it is made again, after five seconds,
-// then ten, up to a minute; while the website does not know the radio, it
-// is tried every quarter of a minute.
+// then ten, then every fifteen; while the website does not know the radio,
+// it is tried every quarter of a minute. The ceiling was a minute until
+// the zbitx, on a Wi-Fi that lost a packet in ten, failed a few tries
+// after a boot and then sat for minutes saying NO ANSWER FROM SERVER
+// between tries, while the author waited for it.
 //
 // When the service sends "SESSION <token>", somebody the service has
 // vouched for wants the radio. This program then makes two connections for
@@ -363,7 +366,7 @@
 #define PING_EVERY_MS 60000
 #define SILENCE_MOST_MS 150000
 #define RETRY_FIRST_MS 5000
-#define RETRY_MOST_MS 60000
+#define RETRY_MOST_MS 15000
 #define SESSIONS_MAX 4
 #define PIPE_ROOM 16384
 #define MS_PER_SECOND 1000
