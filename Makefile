@@ -256,7 +256,13 @@ $(BUILD)/rade_c_%.o: modems/rade_c/%.c $(wildcard modems/rade_c/*.h) | $(BUILD)
 	$(RADE_CC) -c -o $@ $<
 
 $(BUILD)/opus_celt_%.o: modems/opus_dnn/celt/%.c | $(BUILD)
-	$(RADE_CC) -c -o $@ $<
+	$(RADE_CC) $(OPUS_CELT_FLAGS) -c -o $@ $<
+
+# RADE version 1's pilot search is done by FFT, with Opus's, at a size Opus
+# has no table for; with CUSTOM_MODES its kiss_fft.c can make the plan.
+# Nothing else in this subset of Opus uses CUSTOM_MODES, and only that file
+# is built with it. modems/rade_c/rade_acq.c says why
+$(BUILD)/opus_celt_kiss_fft.o: OPUS_CELT_FLAGS = -DCUSTOM_MODES
 
 $(BUILD)/opus_dnn_%.o: modems/opus_dnn/dnn/%.c | $(BUILD)
 	$(RADE_CC) -c -o $@ $<

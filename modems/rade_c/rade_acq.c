@@ -34,9 +34,58 @@
 */
 
 #include "rade_acq.h"
+#include "kiss_fft.h"
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+
+/* zbitxre, 15 October 2026: the pilot search, rade_acq_detect_pilots(),
+   correlates the received signal with the pilot at every one of Nmf (960)
+   times and every one of the 40 frequency offsets, a sum of M (160)
+   products each, at both pilots: some 12 million complex products a
+   frame, 100 million a second. On a Raspberry Pi Zero 2 W that was more
+   than one processor could do, and the receiver could not keep up while
+   it heard no signal. Each frequency's correlation is now done by FFT:
+   the received samples are transformed once, multiplied by the spectrum
+   of the frequency-shifted pilot, made when the receiver is, and
+   transformed back, giving all Nmf times at once. The result is the same
+   sums, to the rounding of floats, for about a tenth of the work; the
+   threshold and everything after are as before. The FFT is Opus's, which
+   the library is built on, and one plan serves every receiver: it is made
+   when the first is, and kept. */
+static kiss_fft_state *acq_fft;
+
+static void acq_fft_make(void) {
+    if (acq_fft == NULL)
+        acq_fft = opus_fft_alloc(RADE_ACQ_NFFT, NULL, NULL, 0);
+    assert(acq_fft != NULL);
+}
+
+/* corr[t] = sum over n of x[t+n] * conj(h[n]), for t from 0 to Nmf - 1,
+   where X is x's spectrum and H h's, both as opus_fft_c() gives them,
+   divided by the FFT's size */
+static void acq_correlate(const kiss_fft_cpx *X, const RADE_COMP *H, kiss_fft_cpx *corr) {
+    kiss_fft_cpx Y[RADE_ACQ_NFFT];
+    float n = (float)RADE_ACQ_NFFT;
+
+    for (int i = 0; i < RADE_ACQ_NFFT; i++) {
+        Y[i].r = n * (X[i].r * H[i].real + X[i].i * H[i].imag);
+        Y[i].i = n * (X[i].i * H[i].real - X[i].r * H[i].imag);
+    }
+    opus_ifft_c(acq_fft, Y, corr);
+}
+
+/* the spectrum of Nmf + M received samples from rx, as opus_fft_c() gives it */
+static void acq_spectrum(const RADE_COMP *rx, kiss_fft_cpx *X) {
+    kiss_fft_cpx x[RADE_ACQ_NFFT];
+
+    memset(x, 0, sizeof(x));
+    for (int n = 0; n < RADE_NMF + RADE_M; n++) {
+        x[n].r = rx[n].real;
+        x[n].i = rx[n].imag;
+    }
+    opus_fft_c(acq_fft, x, X);
+}
 
 /*---------------------------------------------------------------------------*\
                            INITIALIZATION
@@ -78,6 +127,24 @@ void rade_acq_init(rade_acq *acq, const rade_ofdm *ofdm, float frange, float fst
             acq->p_w[f_idx][n] = rade_cmul(w_vec, acq->p[n]);
         }
     }
+
+    /* zbitxre: the shifted pilots' spectra, for the search by FFT */
+    acq_fft_make();
+    for (int f_idx = 0; f_idx < acq->n_fcoarse; f_idx++) {
+        kiss_fft_cpx h[RADE_ACQ_NFFT];
+        kiss_fft_cpx H[RADE_ACQ_NFFT];
+
+        memset(h, 0, sizeof(h));
+        for (int n = 0; n < RADE_M; n++) {
+            h[n].r = acq->p_w[f_idx][n].real;
+            h[n].i = acq->p_w[f_idx][n].imag;
+        }
+        opus_fft_c(acq_fft, h, H);
+        for (int i = 0; i < RADE_ACQ_NFFT; i++) {
+            acq->P_w[f_idx][i].real = H[i].r;
+            acq->P_w[f_idx][i].imag = H[i].i;
+        }
+    }
 }
 
 /*---------------------------------------------------------------------------*\
@@ -101,26 +168,35 @@ int rade_acq_detect_pilots(rade_acq *acq, const RADE_COMP *rx, int *tmax, float 
     memset(acq->Dt1, 0, sizeof(acq->Dt1));
     memset(acq->Dt2, 0, sizeof(acq->Dt2));
 
-    /* Search over time and frequency */
+    /* Correlate with each frequency-shifted pilot at every time:
+       Dt1[t] = sum(conj(rx[t:t+M]) * p_w[:][f_idx]), and Dt2 the same a
+       frame later. zbitxre: by FFT, which gives the conjugate of the sum,
+       sum(rx[t:t+M] * conj(p_w)), for every t at once */
+    kiss_fft_cpx X1[RADE_ACQ_NFFT];
+    kiss_fft_cpx X2[RADE_ACQ_NFFT];
+    kiss_fft_cpx c1[RADE_ACQ_NFFT];
+    kiss_fft_cpx c2[RADE_ACQ_NFFT];
+
+    (void)M;
+    acq_spectrum(rx, X1);
+    acq_spectrum(rx + Nmf, X2);
+    for (int f_idx = 0; f_idx < n_fcoarse; f_idx++) {
+        acq_correlate(X1, acq->P_w[f_idx], c1);
+        acq_correlate(X2, acq->P_w[f_idx], c2);
+        for (int t = 0; t < Nmf; t++) {
+            acq->Dt1[t][f_idx].real = c1[t].r;
+            acq->Dt1[t][f_idx].imag = -c1[t].i;
+            acq->Dt2[t][f_idx].real = c2[t].r;
+            acq->Dt2[t][f_idx].imag = -c2[t].i;
+        }
+    }
+
+    /* Search over time and frequency, in the order the sums were made
+       before, so that a tie goes as it did */
     for (int t = 0; t < Nmf; t++) {
         for (int f_idx = 0; f_idx < n_fcoarse; f_idx++) {
-            /* Correlate with frequency-shifted pilot at time t
-               Dt1 = sum(conj(rx[t:t+M]) * p_w[:][f_idx]) */
-            RADE_COMP Dt1 = rade_czero();
-            RADE_COMP Dt2 = rade_czero();
-
-            for (int n = 0; n < M; n++) {
-                /* Note: Python uses np.conj(rx) first, then matmul
-                   So Dt1[t] = conj(rx[t:t+M]) . p_w */
-                Dt1 = rade_cadd(Dt1, rade_cmul(rade_cconj(rx[t + n]), acq->p_w[f_idx][n]));
-                Dt2 = rade_cadd(Dt2, rade_cmul(rade_cconj(rx[t + Nmf + n]), acq->p_w[f_idx][n]));
-            }
-
-            acq->Dt1[t][f_idx] = Dt1;
-            acq->Dt2[t][f_idx] = Dt2;
-
             /* Combined metric: |Dt1| + |Dt2| */
-            float Dt12 = rade_cabs(Dt1) + rade_cabs(Dt2);
+            float Dt12 = rade_cabs(acq->Dt1[t][f_idx]) + rade_cabs(acq->Dt2[t][f_idx]);
 
             if (Dt12 > Dtmax12) {
                 Dtmax12 = Dt12;

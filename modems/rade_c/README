@@ -9,10 +9,12 @@ an SSB passband, and a neural decoder takes it off again.
 
 These are the files of the library, rade_c's src/ as its CMakeLists builds
 the "rade" library of them, at its commit c8a3dc1 of 7 October 2026. Its
-tools, tests and CMake files are not carried. One change is made here, and
-is to be offered to FreeDV:
+tools, tests and CMake files are not carried. Two changes are made here,
+both to be offered to FreeDV:
 
-    rade_rx_v2.c, rade_rx_v2.h   the receiver follows a drift in timing
+    rade_rx_v2.c, rade_rx_v2.h   version 2's receiver follows a drift in
+                                 timing
+    rade_acq.c, rade_acq.h       version 1's pilot search is done by FFT
 
 Once in sync, version 2's receiver followed the timing with a one-term
 IIR of 1000 symbols, 20 s, which falls behind a steady drift by the drift
@@ -23,6 +25,18 @@ some 20 s into each over and came back with the next. A second term now
 follows the rate of the drift, so that a steady drift leaves no lag. The
 change is marked "zbitxre" in rade_rx_v2.c, which says more. Moving to a
 newer rade_c, see whether FreeDV has done this, and if not, carry it.
+
+Version 1's search for a signal correlated the received signal with the
+pilot at each of 960 times and 40 frequency offsets, a sum of 160 products
+each, at two pilots: some 100 million complex products a second, more than
+one processor of the zbitx's Pi Zero 2 W, which could not keep up in RADE1
+while it heard no signal (122% of a core for the radio program, 15 October
+2026). Each frequency's correlation is now done by Opus's FFT, giving all
+960 times at once for about a tenth of the work. On 180 frames of a signal
+at 10 to -6 dB SNR and of noise alone it found the same timing, frequency
+and decision as the original every time, its sums within a millionth.
+Opus's kiss_fft.c is built with CUSTOM_MODES, so that it can make a plan of
+the size needed; the Makefile says so. Marked "zbitxre" in rade_acq.c.
 
 The radio offers both versions: version 1, which FreeDV has released, as
 the mode RADE1, and version 2 as RADE2; modems/modem_rade.c says why.

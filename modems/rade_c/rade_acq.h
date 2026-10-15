@@ -47,6 +47,10 @@ extern "C" {
                            ACQUISITION STATE
 \*---------------------------------------------------------------------------*/
 
+/* zbitxre: the size of the FFT the search is done with, at least
+   RADE_NMF + RADE_M so that the correlation it gives is not circular */
+#define RADE_ACQ_NFFT 2048
+
 typedef struct {
     /* Configuration */
     int fs;                                     /* Sample rate */
@@ -60,6 +64,9 @@ typedef struct {
 
     /* Pre-computed frequency-shifted pilots: p_w[M][n_freq] */
     RADE_COMP p_w[RADE_ACQ_NFREQ][RADE_M];
+
+    /* zbitxre: their spectra, for the search by FFT; rade_acq.c says why */
+    RADE_COMP P_w[RADE_ACQ_NFREQ][RADE_ACQ_NFFT];
 
     /* Pilot power for normalization */
     float sigma_p;
