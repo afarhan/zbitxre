@@ -110,7 +110,7 @@ PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL) -DPANEL_FIRMWARE=\"
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
-.PHONY: all check radio clean panel panel-flash gui remote FORCE
+.PHONY: all check radio clean panel panel-release panel-flash gui remote FORCE
 
 all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) $(REMOTE) data/cw.mc
 
@@ -385,6 +385,16 @@ panel_update: tools/panel_update.c tools/md5.c tools/md5.h hw/i2c.c hw/i2c.h $(L
 # loader takes it so
 $(PANEL_BUILD)/$(PANEL).ino.bin.gz: FORCE
 	gzip -9 -k -f -n $(PANEL_BUILD)/$(PANEL).ino.bin
+
+# what a release carries for the zbitx's panel, which owners cannot build:
+# the firmware gzipped for I2C (setup/panel_firmware.sh), the same as a .uf2
+# for the USB cable, and the version the panel will say it has. Out of the
+# panel's folder, so that committing it does not change that version
+panel-release: panel $(PANEL_BUILD)/$(PANEL).ino.bin.gz
+	mkdir -p release/panel
+	cp $(PANEL_BUILD)/$(PANEL).ino.bin.gz release/panel/front_panel.bin.gz
+	cp $(PANEL_UF2) release/panel/front_panel.uf2
+	echo $(PANEL_VERSION) > release/panel/VERSION
 
 panel-flash: panel
 	test -d $(PANEL_DRIVE)

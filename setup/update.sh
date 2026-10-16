@@ -128,6 +128,10 @@ fi
 pkill -x zbitx_gui
 pkill -x zbitx_remote
 
+# a zbitx's front panel, brought to the firmware of this release over I2C,
+# while the radio program is stopped
+setup/panel_firmware.sh
+
 export DISPLAY=${DISPLAY:-:0}
 export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
 if command -v x-terminal-emulator > /dev/null && xset q > /dev/null 2>&1; then
