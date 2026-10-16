@@ -1400,6 +1400,13 @@ int sdr_open_audio(void){
 	if (audio_open(sound_block) < 0)
 		return 0;
 	audio_set_transmitter(TRANSMITTER_LEVEL);
+	// the levels the radio was given while the card was closed, its
+	// settings among them, go to the card now: opening it sets them to its
+	// own, and a card that came late left the speaker so quiet that the
+	// author, on a production zbitx, heard nothing until he moved VOL
+	audio_set_receiver(rx_gain);
+	audio_set_speaker(rx_vol);
+	audio_set_microphone(tx_gain);
 	is_audio_open = 1;
 	return 1;
 }
