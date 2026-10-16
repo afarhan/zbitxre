@@ -103,15 +103,19 @@ Every radio made from the same system image is called `sbitx`. Two of them
 on one network will not both be `sbitx.local`: avahi renames the second
 `sbitx-2.local`, and says so only in its log.
 
-### The radio's own access point
+### No access point of its own
 
-The radio can be an access point itself, called `zbitx`, at 192.168.4.1.
-It was there for the front panel when the panel was on WiFi. The panel is
-on I2C now, and on the test radio the three services that make the access
-point are disabled. To have it back:
+A zbitx is a WiFi client only, the author's ruling of 16 October 2026. Many
+were shipped as an access point too, called `zbitx`, at 192.168.4.1, made by
+three services, `hostapd`, `uap0` and `dnsmasq`, for the front panel when the
+panel was on WiFi. The panel is on I2C now. The access point was on another
+channel from the client's, and the one WiFi chip hopped between the two: on
+the test radio more than half of what it sent out was lost, and VoIP and its
+sound to my.sbitx.net came through broken. With the three turned off, none
+was lost. `install.sh` turns them off, and `undo_install.sh` turns them back
+on for the old program, whose panel may want them. By hand:
 
-    sudo systemctl enable hostapd uap0.service dnsmasq
-    sudo reboot
+    sudo systemctl disable --now hostapd uap0.service dnsmasq
 
 ## Kernel modules
 

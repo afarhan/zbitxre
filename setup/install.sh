@@ -34,7 +34,15 @@
 #         passbands' settings; the rest belonged to the old screen;
 #       sbitx.db, the logbook, which is the same in both.
 #  6. On a zbitx, adds the line to the boot configuration that gives the
-#     clock chip's I2C pins to the kernel (add-overlay.sh, setup/README.md).
+#     clock chip's I2C pins to the kernel (add-overlay.sh, setup/README.md),
+#     and turns off the radio's own WiFi access point, hostapd, uap0 and
+#     dnsmasq, which many zbitxes were shipped with for the panel of the
+#     time: a zbitx is to be a WiFi client only, the author's ruling of 16
+#     October 2026. The access point on another channel from the client's
+#     had the one WiFi chip hopping between the two, and more than half of
+#     what the radio sent out was lost: VoIP and its sound to my.sbitx.net
+#     came through broken. Which were turned off is kept, for
+#     undo_install.sh to turn back on for the old program's panel.
 #  7. Starts zbitxre with the desktop in place of the old program, whose
 #     start file is renamed and kept.
 #  8. Asks whether to put the radio on my.sbitx.net. If so, it asks for the
@@ -73,7 +81,8 @@ is_yes() { case "$1" in [yY]*) return 0 ;; *) return 1 ;; esac }
 if [ -n "$ZBITXRE_SKIP_SUDO" ]; then
 	sudo() { stop "sudo $* is needed here, and ZBITXRE_SKIP_SUDO is set."; }
 else
-	sudo -v || stop "this needs sudo, for apt and the boot configuration."
+	# sudo -v asks for a password even where the user may sudo without one
+	sudo -n true 2>/dev/null || sudo -v || stop "this needs sudo, for apt and the boot configuration."
 fi
 
 # 1. which radio
@@ -193,6 +202,16 @@ if [ "$radio" = zbitx ]; then
 		sudo setup/add-overlay.sh "$config" || stop "the boot configuration could not be changed."
 		restart=yes
 	fi
+	for service in hostapd uap0.service dnsmasq; do
+		if systemctl is-enabled --quiet "$service" 2>/dev/null \
+				|| systemctl is-active --quiet "$service" 2>/dev/null; then
+			sudo systemctl disable --now "$service" > /dev/null 2>&1 \
+				|| stop "the access point's $service could not be turned off."
+			echo "$service" >> data/turned_off_by_install
+			say "turned off $service: the radio is a WiFi client only"
+			restart=yes
+		fi
+	done
 fi
 
 # 7. started with the desktop in place of the old program

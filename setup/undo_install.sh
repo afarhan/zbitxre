@@ -9,7 +9,8 @@
 # The old program in ~/sbitx was never changed. This starts it with the
 # desktop again in place of zbitxre, and on a zbitx puts back the boot
 # configuration as it was, since the old program drives the clock chip's
-# I2C pins itself and the kernel must not have them. ~/zbitxre and its
+# I2C pins itself and the kernel must not have them, and turns back on the
+# WiFi access point install.sh turned off, which the old panel may use. ~/zbitxre and its
 # data/ are left, so install.sh can put zbitxre back.
 
 say() { echo "zbitxre: $*"; }
@@ -27,6 +28,14 @@ for config in /boot/config.txt /boot/firmware/config.txt; do
 		sudo cp "$config.before-zbitxre" "$config" && say "$config is as it was"
 	fi
 done
+
+turned_off="$(dirname "$0")/../data/turned_off_by_install"
+if [ -f "$turned_off" ]; then
+	for service in $(sort -u "$turned_off"); do
+		sudo systemctl enable "$service" > /dev/null 2>&1 && say "$service is on again"
+	done
+	rm -f "$turned_off"
+fi
 
 pgrep -x sdr > /dev/null && echo quit > /tmp/sdr.in
 pkill -x zbitx_gui
