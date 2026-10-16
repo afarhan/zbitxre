@@ -85,6 +85,25 @@ if said:
 EOF
 }
 
+# the clock first, as install.sh does: a radio just started may have the
+# clock chip's time, which on a zbitx whose chip was never set is 1 January
+# 2000, until the network sets it some minutes later; and to such a clock
+# GitHub's certificate is not valid. The author's first UPDATE on a
+# production zbitx, on 16 October 2026, failed so. A date before EARLIEST,
+# in UTC, is waited on, three minutes at most
+EARLIEST=20261001
+if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
+	say "waiting for the clock to be set from the network"
+	for _ in $(seq 36); do
+		[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] && break
+		sleep 5
+	done
+	if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
+		say "the clock is not set; try again in a while"
+		exit 1
+	fi
+fi
+
 before=$(git rev-parse --short HEAD)
 say "this radio is at $before; asking GitHub for main"
 if ! git pull --ff-only --quiet origin main; then
