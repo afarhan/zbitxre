@@ -85,6 +85,24 @@ else
 	sudo -n true 2>/dev/null || sudo -v || stop "this needs sudo, for apt and the boot configuration."
 fi
 
+# the clock first: a zbitx whose clock chip the kernel does not have yet
+# starts with the time it had when it was last switched off, and sets it
+# from the network some minutes later. Until then every certificate on the
+# internet looks not yet valid to it, and fetching zbitxre from GitHub
+# fails. Seen on a production zbitx on 16 October 2026, which started at
+# 30 April. A year before this script was written is taken to be wrong,
+# and the radio's time service is waited for, three minutes at most
+if [ "$(date +%Y)" -lt 2026 ] || [ "$(date +%Y%m%d)" -lt 20261016 ]; then
+	say "the radio's clock says $(date -u '+%d %B %Y'); waiting for it to be set from the network"
+	for _ in $(seq 36); do
+		[ "$(date +%Y%m%d)" -ge 20261016 ] && break
+		sleep 5
+	done
+	[ "$(date +%Y%m%d)" -ge 20261016 ] \
+		|| stop "the radio's clock is still wrong. Set it, sudo date -s \"2026-10-16 12:00\" with today's date and time, and run this again."
+	say "the clock is right: $(date -u '+%d %B %Y %H:%M') UTC"
+fi
+
 # 1. which radio
 model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
 case "$model" in
