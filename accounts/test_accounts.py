@@ -300,7 +300,7 @@ class AccountsTest(unittest.TestCase):
 
     def test_every_page_has_the_bar_saying_who_is_signed_in(self):
         browser = self.make_account()
-        for path in ("/", "/map", "/signin", "/register", "/no-such-page"):
+        for path in ("/", "/map", "/help", "/signin", "/register", "/no-such-page"):
             _, text = browser.get(path)
             self.assertIn("<nav class=\"bar\">", text, path)
             self.assertIn("Signed in as <strong>VU2ESE</strong>", text, path)
@@ -343,10 +343,17 @@ class AccountsTest(unittest.TestCase):
         # in with the account's password, which the Keys page says
         self.assertEqual(radio["client_password"], "")
         self.assertIn("class=\"card\"", text)
-        _, keys = browser.get("/radios/keys?radio=%d" % radio["id"])
-        self.assertIn("zbitx_gui remote vu2ese-home", keys)
-        self.assertNotIn("client password", keys.lower())
-        self.assertNotIn("/radios/password", keys)
+        # its Manage page has the new cookie and Remove, and nothing of
+        # passwords; the old Keys address still reaches it
+        _, keys = browser.get("/radios/manage?radio=%d" % radio["id"])
+        self.assertIn("Manage vu2ese-home", keys)
+        self.assertIn("action=\"/radios/cookie\"", keys)
+        self.assertIn("action=\"/radios/remove\"", keys)
+        self.assertNotIn("password", keys.split("</nav>")[1].lower())
+        self.assertIn("Manage vu2ese-home", browser.get("/radios/keys?radio=%d" % radio["id"])[1])
+        # how the window on another computer signs in is on Help
+        _, helped = Browser(self.port).get("/help")
+        self.assertIn("zbitx_gui remote vu2ese-home", helped)
         # keys are shown in small letters, as the radio shows them
         self.assertNotIn("uppercase", accounts.STYLE)
         # and a cookie typed in small letters, as the radio shows it, is taken
@@ -357,8 +364,8 @@ class AccountsTest(unittest.TestCase):
     def test_a_new_owner_is_asked_to_add_a_radio_and_shown_how(self):
         browser = self.make_account()
         _, text = browser.get("/")
-        self.assertIn("You have not added your radio", text)
-        self.assertIn("href=\"/radios/add\"", text)
+        self.assertIn("Three steps to operate your radio", text)
+        self.assertIn("<a class=\"action\" href=\"/radios/add\">Add Radio</a>", text)
         _, text = browser.get("/radios/add")
         self.assertIn("MYCALLSIGN</strong> is <strong>VU2ESE", text)
         self.assertIn("action=\"/radios/add\"", text)
@@ -374,9 +381,9 @@ class AccountsTest(unittest.TestCase):
         second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         status, text = second.get("/radios/keys?radio=%d" % radio["id"])
         self.assertEqual(status, 404)
-        self.assertNotIn("Keys of", text)
+        self.assertNotIn("Manage vu2ese-home", text)
         status, text = Browser(self.port).get("/radios/keys?radio=%d" % radio["id"])
-        self.assertNotIn("Keys of", text)
+        self.assertNotIn("Manage vu2ese-home", text)
 
     def test_a_sign_in_is_remembered_only_when_asked(self):
         self.make_account()
