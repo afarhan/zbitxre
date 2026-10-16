@@ -222,7 +222,7 @@ int main(void) {
 	gathered_count = 0;
 	run(40, 1, 0);
 	expect(count_of(0, gathered_count, RECEIVER) == gathered_count,
-		"nor where hearing it is not allowed: a mode that is not a voice mode");
+		"nor where hearing it is not allowed: transmitting, or the sound card in use");
 	rtp_voip_heard_callsign(callsign, sizeof(callsign));
 	expect(callsign[0] == 0, "and then nobody is said to be speaking");
 	rtp_voip_set_hearing(1);

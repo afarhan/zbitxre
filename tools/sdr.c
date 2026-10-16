@@ -557,7 +557,7 @@ static struct control cat_status = {
 
 // VOIP is the sixth: whether the radio is on VoIP at my.sbitx.net, where
 // the dial is the room. ONLINE, another's speech on the radio's frequency
-// is heard in any voice mode; and in the mode VOIP, the PTT sends the
+// is heard in any mode; and in the mode VOIP, the PTT sends the
 // owner's speech there and not to the transmitter. modems/modem_voip.c
 // says what the author asked for. It is kept from one start to the next,
 // his ruling: it is how a radio is reached when its owner is not at it.
@@ -1365,16 +1365,14 @@ static int is_modem_wanting_tx(void) {
 	return m != NULL && m->wants_tx != NULL && m->wants_tx();
 }
 
-static int is_voice_mode(void) {
-	const char *mode = control_get("MODE");
-
-	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "AM")
-		|| !strcmp(mode, "VOIP");
-}
-
 // VoIP: in the mode VOIP the PTT is VOIP_TX and not TX; another's speech
-// is heard while VOIP is ONLINE, in a voice mode, while the radio
-// receives; NEW_COOKIE's first tap is let go if the second does not come
+// is heard while VOIP is ONLINE and the radio receives, in any mode: the
+// author ruled on 16 October 2026 that break-in is not for the voice modes
+// alone. But not while SOUND_CARD is ON: then a program such as WSJT-X or
+// fldigi is decoding what the speaker is given, and speech in its place
+// would spoil that; until there is a mixer, which the author has put off,
+// the two cannot share it. NEW_COOKIE's first tap is let go if the second
+// does not come
 static void follow_voip(long now) {
 	static int was_held;
 	char heard[CONTROL_VALUE_MAX];
@@ -1400,7 +1398,8 @@ static void follow_voip(long now) {
 		is_speaking = 0;
 	}
 	rtp_voip_set_speaking(is_speaking);
-	rtp_voip_set_hearing(is_online && is_voice_mode() && strcmp(control_get("TX"), "ON"));
+	rtp_voip_set_hearing(is_online && strcmp(control_get("TX"), "ON")
+		&& strcmp(control_get("SOUND_CARD"), "ON"));
 	rtp_voip_heard_callsign(heard, sizeof(heard));
 	if (strcmp(heard, control_get("VOIP_SPEAKER")))
 		set_setting("VOIP_SPEAKER", heard, ORIGIN_NONE);

@@ -580,8 +580,9 @@ message of any other length is dropped.
 The author's design: the dial is the room. A radio whose owner has `VOIP`
 `ONLINE`, among its `CONNECTIONS`, is in the channel of its dial, the
 frequency rounded to the nearest kilohertz. Whoever speaks there is heard in
-every other radio in the channel, in place of its receiver, in any voice mode,
-while it receives. The owner speaks by putting the radio in the mode `VOIP`
+every other radio in the channel, in place of its receiver, in any mode, while
+it receives and its `SOUND_CARD` is off: a program decoding the radio's sound
+would have the speech in place of the signal. The owner speaks by putting the radio in the mode `VOIP`
 and pressing the PTT, which in that mode sets `VOIP_TX` and not `TX`: the mode
 has no transmitter, and the radio program refuses `TX ON` in it. The first to
 speak holds the channel, for a minute at most. `VOIP` is kept from one start

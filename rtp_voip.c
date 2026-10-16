@@ -8,8 +8,8 @@
 //
 // The dial is the room. With VOIP online, whoever speaks over the internet
 // on the frequency the radio is tuned to, rounded to the kilohertz, is
-// heard in the radio's speaker in place of the receiver, in any voice mode,
-// while the radio is receiving; half a second after the speech stops, the
+// heard in the radio's speaker in place of the receiver, in any mode, while
+// the radio is receiving and SOUND_CARD is off (tools/sdr.c says why); half a second after the speech stops, the
 // receiver is heard again. The owner speaks by putting the radio in the
 // mode VOIP and pressing PTT: the microphone then goes to the internet, and
 // the transmitter is not keyed. my.sbitx.net does the repeating;
@@ -34,8 +34,8 @@
 // says it is to be heard and whose it is, and that file passes it here,
 // rtp_voip_take_heard(). It is put in a ring, and the audio thread puts it
 // in the speaker's place, brought up to 96000 a second, while
-// rtp_voip_set_hearing() allows: the tools say when, a voice mode and the
-// radio receiving. Speech begins when LEAST, a hundred and twenty
+// rtp_voip_set_hearing() allows: the tools say when, the radio receiving
+// and its sound card not in use. Speech begins when LEAST, a hundred and twenty
 // milliseconds, is waiting, as speech to transmit does in rtp_microphone.c,
 // to ride over the internet's unevenness; a gap is silence, and the
 // receiver comes back HANG_MS after the speech stops. Who is speaking is
