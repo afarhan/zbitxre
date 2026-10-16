@@ -293,5 +293,6 @@ void knob_slice(){
 
 void ui_slice(){
   knob_slice();
+  main_set_aside_slice();
   lv_timer_handler(); /* let the GUI do its work */
 }

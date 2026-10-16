@@ -21,6 +21,10 @@ struct panel_control {
 	int32_t value;
 	char text[CONTROL_TEXT_ROOM];
 	unsigned long last_user_change;
+	// a value the radio said while the operator's change still won, taken
+	// once it no longer does; main.cpp says why
+	bool has_set_aside;
+	int32_t set_aside;
 };
 
 void controls_forget_staged();

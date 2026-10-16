@@ -1471,9 +1471,17 @@ void main_radio_says(int number, int32_t value){
 		show();
 		return;
 	}
+	//a value said while the operator's own change still wins is set aside
+	//and taken when it no longer does, not thrown away: the radio puts
+	//UPDATE back to - a moment after RUNNING, and NEW_COOKIE after MAKING,
+	//and the panel went on showing RUNNING, as the author found
 	if (c->last_user_change != 0
-			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS)
+			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS){
+		c->has_set_aside = true;
+		c->set_aside = value;
 		return;
+	}
+	c->has_set_aside = false;
 	c->value = value;
 	if (!strcmp(c->d.name, "MODE"))
 		lay_out();
@@ -1491,6 +1499,21 @@ void main_radio_says(int number, int32_t value){
 			send_frequency();
 	}
 	show();
+}
+
+//from loop(): a value set aside while the operator's change won is taken
+//now that it does not
+void main_set_aside_slice(){
+	struct panel_control *c;
+
+	for (int i = 0; i < controls_count(); i++){
+		c = controls_at(i);
+		if (!c->has_set_aside || millis() - c->last_user_change < OPERATOR_WINS_FOR_MS)
+			continue;
+		c->has_set_aside = false;
+		main_radio_says(c->d.number, c->set_aside);
+		screens_radio_said();
+	}
 }
 
 //a text control's value from the radio; the panel has it to show in the

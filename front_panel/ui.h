@@ -46,6 +46,7 @@ void i2c_link_slice();
 void i2c_link_changed(int control, int32_t value);
 void i2c_link_report();
 void main_radio_says(int control, int32_t value);
+void main_set_aside_slice();
 
 // the SWR bridge and the battery
 void meter_init();

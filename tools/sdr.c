@@ -1243,8 +1243,15 @@ static void set_setting(const char *name, const char *value, int origin) {
 
 	if (control_set(name, value, origin, why, sizeof(why)) < 0) {
 		printf("ERROR %s %s\n", name, why);
-		if (origin == ORIGIN_PANEL)
+		if (origin == ORIGIN_PANEL) {
 			panel_say(why);
+			// the panel has shown the change it asked for: it is told
+			// the value the radio kept, or it goes on showing the other
+			for (int i = 0; i < control_count(); i++) {
+				if (!strcmp(control_at(i)->name, name))
+					panel_controls_changed(control_at(i));
+			}
+		}
 	}
 }
 
