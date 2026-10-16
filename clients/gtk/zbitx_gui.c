@@ -1376,19 +1376,31 @@ static void choose_vfo(int vfo) {
 	}
 }
 
+// the VFO changed here: the radio is told it, with both dials, and the
+// dial of the one now in use is tuned to
+static void vfo_chosen_here(void) {
+	struct known *vfo = find_known("VFO");
+
+	if (vfo == NULL)
+		return;
+	choose_vfo(!strcmp(vfo->value, "B") ? VFO_B : VFO_A);
+	send_line("VFO", vfo->value);
+	send_frequency();
+}
+
 // one of the window's own controls has changed
 static void apply_own(struct known *k) {
 	struct known *vfo = find_known("VFO");
 	struct known *delta = find_known("RIT_DELTA");
 
-	if (!strcmp(k->name, "OFFSET") && is_offset("SPLIT") && vfo != NULL)
+	// SPLIT works from VFO A, sending on B
+	if (!strcmp(k->name, "OFFSET") && is_offset("SPLIT") && vfo != NULL
+			&& strcmp(vfo->value, "A")) {
 		snprintf(vfo->value, CONTROL_VALUE_MAX, "A");
+		vfo_chosen_here();
+	}
 	if (!is_offset("RIT") && delta != NULL)
 		snprintf(delta->value, CONTROL_VALUE_MAX, "0");
-	if (vfo != NULL && !strcmp(vfo->value, "B"))
-		choose_vfo(VFO_B);
-	else
-		choose_vfo(VFO_A);
 	send_frequency();
 }
 
@@ -1407,11 +1419,13 @@ static void add_own_control(const char *name, const char *choices, const char *v
 	snprintf(k->choices, CHOICES_MAX, "%s", choices);
 }
 
+// STEP and VFO were the window's own until the author ruled on 16 October
+// 2026 that they be the radio's, common to every client: "the VFO cannot
+// be different for different clients". They are the radio's controls now,
+// which the panel and the web page use too
 static void add_own_controls(void) {
-	add_own_control("STEP", "10H/100H/500H/1K/10K", "1K");
 	add_own_control("OFFSET", "NORM/RIT/SPLIT", "NORM");
 	add_own_control("RIT_DELTA", NULL, "0");
-	add_own_control("VFO", "A/B", "A");
 }
 
 // the choice a step away from the present one, in a list such as
@@ -1486,6 +1500,8 @@ static void step_row(int row, int steps) {
 		return;
 	if (k->is_own)
 		apply_own(k);
+	else if (!strcmp(k->name, "VFO"))
+		vfo_chosen_here();
 	else
 		send_line(k->name, k->value);
 	show_values();
@@ -1871,6 +1887,10 @@ static void handle_line(const char *name, char *value) {
 		show_voip_speaker(value);
 	if (!strcmp(name, "FREQ"))
 		take_radio_frequency(atoi(value));
+	// another client changed the VFO: the window follows, and its
+	// frequency comes after
+	if (!strcmp(name, "VFO"))
+		vfo_in_use = !strcmp(value, "B") ? VFO_B : VFO_A;
 	take_kept_dial(name, atoi(value));
 	show_values();
 	if ((is_page_shown(PAGE_SETTINGS) || is_page_shown(PAGE_CONNECTIONS))
@@ -2377,6 +2397,8 @@ static void on_row_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x, g
 		next_choice_round(k);
 		if (k->is_own)
 			apply_own(k);
+		else if (!strcmp(k->name, "VFO"))
+			vfo_chosen_here();
 		else
 			send_line(k->name, k->value);
 	}

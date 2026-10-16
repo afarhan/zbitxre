@@ -57,8 +57,11 @@
 //
 // TUNING
 //
-// The radio knows only FREQ. STEP, VFO and OFFSET are this page's own, as
-// they are the window's, and work as the window's do. VFO and OFFSET are
+// STEP and VFO are the radio's, common to every client: the author ruled
+// on 16 October 2026 that "the VFO cannot be different for different
+// clients", where they had been each client's own. This page keeps them in
+// `own` as the radio tells them, and tells the radio when they change here.
+// OFFSET is still this page's own, as it is the window's. VFO and OFFSET are
 // beside the frequency on the top row, being what its box shows: the
 // author made one control, OFFSET, of what were two switches, RIT and
 // SPLIT, which are never wanted together, a split being a RIT of very
@@ -132,7 +135,7 @@
   var values = {};        // every control's value, as the radio tells them
   var schema = {};        // name -> { group, kind, min, max, step, choices }
   var order = [];         // the controls' names in the radio's order
-  var own = { STEP: stored("step", "1K"), OFFSET: "NORM", VFO: "A",
+  var own = { STEP: "100H", OFFSET: "NORM", VFO: "A",
     VOL: stored("vol", "60") };
   var dialHz = 0, ritHz = 0;
   var vfoHz = { A: 0, B: 0 };  // each VFO's dial; the one in use is dialHz
@@ -354,6 +357,10 @@
     if (name === "LOG") { logRow(value); return; }
     if (name === "TIME") { return; }
     values[name] = value;
+    // the radio's STEP and VFO, as another client or its panel set them;
+    // the frequency that goes with a VFO changed elsewhere comes after
+    if (name === "STEP" && STEPS[value]) { own.STEP = value; }
+    if (name === "VFO" && (value === "A" || value === "B")) { own.VFO = value; }
     if (name === "FREQ") { takeRadioFrequency(Number(value)); }
     if (name === "VFO_" + vfoInWaiting() && Number(value) > 0) {
       vfoHz[vfoInWaiting()] = Number(value);
@@ -461,6 +468,7 @@
     dialHz = vfoHz[vfo];
     send("VFO_A " + vfoHz.A);
     send("VFO_B " + vfoHz.B);
+    send("VFO " + vfo);
     retune();
   }
 
@@ -997,7 +1005,8 @@
   function chooseOwn(name, choices) {
     choose(name, choices, own[name], function (choice) {
       own[name] = choice;
-      store(name.toLowerCase(), choice);
+      // STEP is the radio's, common to every client
+      if (name === "STEP") { send("STEP " + choice); }
       show();
     });
   }

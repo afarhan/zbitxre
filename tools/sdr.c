@@ -445,20 +445,24 @@ static int apply_span(struct control *c, const char *value, char *why, int room)
 	return 0;
 }
 
-// STEP is the panel's tuning step. The panel does its own tuning, as every
-// client does, and the step is its own to use; it is a control of the
-// radio's only so that the radio remembers it for the panel, which would
-// otherwise start at 100H each time it is switched on. The author asked
-// for that. It applies nothing here.
+// STEP is the tuning step, the same for every client, the panel, the
+// window and the web page: the author ruled on 16 October 2026 that STEP
+// and VFO be common, where they had been each client's own. Each client
+// still does its own tuning, by the step; the radio keeps it, and remembers
+// it from one start to the next. It applies nothing here. Its group is
+// still PANEL, where the panel looks for it.
 static struct control step = {
 	.group = "PANEL", .name = "STEP", .kind = CONTROL_CHOICE,
 	.choices = "10H/100H/500H/1K/10K",
 	.value = "100H",
 };
 
-// the VFO the panel has in use, and each VFO's dial, kept for the panel in
-// the same way. 0 is a VFO that has not been used yet. The radio's own
-// frequency is the dial of the VFO in use.
+// the VFO in use, and each VFO's dial, kept for every client in the same
+// way: "the VFO cannot be different for different clients", the author's
+// words. A client that changes it tells the radio both dials and the VFO,
+// and tunes to the new one's dial; the others follow. 0 is a VFO that has
+// not been used yet. The radio's own frequency is the dial of the VFO in
+// use.
 static struct control vfo = {
 	.group = "PANEL", .name = "VFO", .kind = CONTROL_CHOICE,
 	.choices = "A/B",
