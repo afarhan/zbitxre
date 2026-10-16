@@ -116,7 +116,7 @@ struct link_wifi_point {
 #define LINK_KIND_CHOICE 1
 #define LINK_KIND_ACTION 2
 #define LINK_KIND_TEXT 3
-#define LINK_NAME_MAX 16
+#define LINK_NAME_MAX 24
 #define LINK_GROUP_MAX 12
 #define LINK_CHOICES_MAX 64
 #define LINK_NO_MORE_CONTROLS 0
