@@ -14,3 +14,4 @@ modems/rade_c/rade_dec_data.c
 modems/rade_c/rade_enc_v2_data.c
 modems/rade_c/rade_dec_v2_data.c
 modems/opus_dnn/dnn/fargan_data.c
+panel_update

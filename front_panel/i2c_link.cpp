@@ -40,6 +40,7 @@
 #include "waterfall.h"
 #include "controls.h"
 #include "ui.h"
+#include "updater.h"
 
 #define LINK_SDA 6
 #define LINK_SCL 7
@@ -185,7 +186,15 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 }
 
 static void on_request(){
+	uint8_t answer[LINK_UPDATE_ANSWER];
+
 	times_read = times_read + 1;
+	// while the radio is giving the panel new firmware, it reads the
+	// update's answer and not a frame's; updater.cpp says why
+	if (updater_is_answering()){
+		Wire1.write(answer, updater_answer(answer));
+		return;
+	}
 	Wire1.write(ready, ready_count);
 }
 
@@ -200,6 +209,10 @@ static void on_receive(int count){
 		if (kept < LINK_FRAME_MAX)
 			frame[kept++] = (uint8_t)b;
 		count--;
+	}
+	if (updater_is_message(frame, kept)){
+		updater_take(frame, kept);
+		return;
 	}
 	link_take_frame(&panel_end, frame, kept, on_took, on_took_bytes);
 	make_the_answer_ready();

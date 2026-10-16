@@ -87,6 +87,7 @@
 #include "ili9488.h"
 #include "waterfall.h"
 #include "ui.h"
+#include "updater.h"
 
 //the panel waits this long for someone to open its serial port, so that
 //its first lines are not lost, and then starts anyway
@@ -244,6 +245,7 @@ void loop() {
   messages_slice();
   waterfall_slice();
   meter_slice();
+  updater_slice();
   if (Serial.available())
     on_serial(Serial.read());
 }

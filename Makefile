@@ -100,8 +100,13 @@ REMOTE      = zbitx_remote
 # arduino-cli, which needs the rp2040 core and the lvgl library, version 9.3.0.
 PANEL        = front_panel
 PANEL_BUILD  = $(CURDIR)/$(BUILD)/$(PANEL)
-PANEL_BOARD  = rp2040:rp2040:rpipico
-PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL)
+# 1 MB for the sketch and 1 MB of filesystem, which updater.cpp keeps a new
+# image in while the radio sends it; the touch calibration is past both
+PANEL_BOARD  = rp2040:rp2040:rpipico:flash=2097152_1048576
+# the firmware's version, which the panel tells the radio: the last commit
+# that changed the panel
+PANEL_VERSION := $(shell git log -1 --format=%h -- $(PANEL) 2>/dev/null)
+PANEL_FLAGS  = -DLV_CONF_INCLUDE_SIMPLE -I$(CURDIR)/$(PANEL) -DPANEL_FIRMWARE=\"$(PANEL_VERSION)\"
 PANEL_UF2    = $(PANEL_BUILD)/$(PANEL).ino.uf2
 PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
@@ -372,10 +377,19 @@ panel:
 		--build-property "compiler.S.extra_flags=$(PANEL_FLAGS)" \
 		$(PANEL)
 
+# gives the panel new firmware over I2C, from the radio: tools/panel_update.c
+panel_update: tools/panel_update.c tools/md5.c tools/md5.h hw/i2c.c hw/i2c.h $(LINK) $(LINK_HEADERS)
+	$(CC) $(CFLAGS) -Itools -o $@ tools/panel_update.c tools/md5.c hw/i2c.c $(LINK)
+
+# the firmware as the radio gives it to the panel, compressed; the panel's
+# loader takes it so
+$(PANEL_BUILD)/$(PANEL).ino.bin.gz: FORCE
+	gzip -9 -k -f -n $(PANEL_BUILD)/$(PANEL).ino.bin
+
 panel-flash: panel
 	test -d $(PANEL_DRIVE)
 	cp $(PANEL_UF2) $(PANEL_DRIVE)/
 	sync
 
 clean:
-	rm -rf $(BUILD) $(TOOLS) $(GUI)
+	rm -rf $(BUILD) $(TOOLS) $(GUI) panel_update

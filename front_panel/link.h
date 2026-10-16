@@ -170,6 +170,49 @@ void link_offer_kept_bytes(struct link_end *end, int control,
 	const uint8_t *bytes, int count);
 int link_is_waiting(const struct link_end *end, int control);
 int link_has_something_to_say(const struct link_end *end);
+// UPDATING THE PANEL OVER I2C
+//
+// The radio can give the panel new firmware over the same bus, the author's
+// way from the release of 16 October 2026 on: the first firmware that can
+// take it goes on with the USB cable, as owners are used to, and every one
+// after it over I2C. These are messages apart from the frames above. Each
+// begins with LINK_UPDATE_MARK, four bytes, then its kind, what the kind
+// carries, and a CRC-16 of all before it; a frame cannot be taken for one.
+//
+//     BEGIN    size (4 bytes), then the MD5 of the image, 32 hex digits
+//     DATA     offset (4), count (1), that many bytes of the image
+//     END      the image is whole: the panel checks it and starts it
+//     ABORT    the image is forgotten; the panel goes on as it was
+//     BOOTSEL  the panel restarts as a USB drive, to be given a .uf2
+//     ASK      nothing: only so that the next read is an update answer
+//
+// Numbers are low byte first. After any of these the panel's answer to a
+// read is LINK_UPDATE_ANSWER bytes: the count of those after it, the first
+// mark byte, the state, the offset it wants next (4), and its firmware's
+// version (LINK_VERSION_ROOM). It answers so until it has heard nothing of
+// an update for LINK_UPDATE_QUIET_MS, and then as before.
+#define LINK_UPDATE_MARK "\xA5\x5A\xC3\x3C"
+#define LINK_UPDATE_MARK_SIZE 4
+#define LINK_UPDATE_BEGIN 'B'
+#define LINK_UPDATE_DATA 'D'
+#define LINK_UPDATE_END 'E'
+#define LINK_UPDATE_ABORT 'A'
+#define LINK_UPDATE_BOOTSEL 'R'
+#define LINK_UPDATE_ASK 'Q'
+#define LINK_UPDATE_DATA_MAX 192
+#define LINK_UPDATE_MD5_HEX 32
+#define LINK_VERSION_ROOM 8
+#define LINK_UPDATE_ANSWER (7 + LINK_VERSION_ROOM)
+#define LINK_UPDATE_QUIET_MS 10000
+// the states the answer says
+#define LINK_UPDATE_IDLE 0
+#define LINK_UPDATE_READY 1
+#define LINK_UPDATE_BUSY 2
+#define LINK_UPDATE_DONE 3
+#define LINK_UPDATE_FAILED 4
+
+uint16_t link_crc16(const uint8_t *bytes, int count);
+
 int link_make_frame(struct link_end *end, uint8_t *frame);
 int link_make_answer(struct link_end *end, uint8_t *answer);
 int link_take_frame(struct link_end *end, const uint8_t *frame, int count,

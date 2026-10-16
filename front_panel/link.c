@@ -729,3 +729,17 @@ int link_get_wifi_point(const uint8_t *at, int left, struct link_wifi_point *poi
 		return -1;
 	return WIFI_POINT_FIXED_BYTES + taken;
 }
+
+// CRC-16/CCITT-FALSE, for the messages that update the panel
+uint16_t link_crc16(const uint8_t *bytes, int count) {
+	uint16_t crc = 0xFFFF;
+	int i;
+	int bit;
+
+	for (i = 0; i < count; i++) {
+		crc ^= (uint16_t)(bytes[i] << 8);
+		for (bit = 0; bit < 8; bit++)
+			crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+	}
+	return crc;
+}
