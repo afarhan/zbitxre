@@ -1461,19 +1461,37 @@
     document.querySelectorAll("script[src*='/static/'], link[rel=stylesheet][href*='/static/']"),
     function (tag) { return tag.getAttribute("src") || tag.getAttribute("href"); }));
 
+  // then(true) if my.sbitx.net has a newer page, then(false) if not, and
+  // then(null) if it could not be asked
+  function askIfNewer(then) {
+    var request = new XMLHttpRequest();
+    request.onload = function () {
+      then(request.status === 200 ? marksOf(JSON.parse(request.responseText)) !== OWN_MARKS
+        : null);
+    };
+    request.onerror = function () { then(null); };
+    request.open("GET", "/operate.json");
+    request.send();
+  }
+
+  // and once a day the page asks by itself, and when there is a newer one
+  // says so on the status line, as the author asked, for UPDATE to load it
+  var DAY_MS = 24 * 60 * 60 * 1000;
+  setInterval(function () {
+    askIfNewer(function (isNewer) {
+      if (isNewer) { say("a new version of this page is ready: SET, then UPDATE"); }
+    });
+  }, DAY_MS);
+
   function updateRow(inside) {
     var row = make("div", "row", null, inside), isNewer = false;
     make("div", "title", "UPDATE", row);
     var value = make("div", "value", "checking", row);
-    var request = new XMLHttpRequest();
-    request.onload = function () {
-      if (request.status !== 200) { value.textContent = "cannot check"; return; }
-      isNewer = marksOf(JSON.parse(request.responseText)) !== OWN_MARKS;
-      value.textContent = isNewer ? "new version: tap to load" : "up to date";
-    };
-    request.onerror = function () { value.textContent = "cannot check"; };
-    request.open("GET", "/operate.json");
-    request.send();
+    askIfNewer(function (newer) {
+      isNewer = newer === true;
+      value.textContent = newer === null ? "cannot check"
+        : isNewer ? "new version: tap to load" : "up to date";
+    });
     row.addEventListener("click", function () {
       if (!isNewer) { return; }
       if (isSending() || isVoipSending()) { value.textContent = "after TX"; return; }
