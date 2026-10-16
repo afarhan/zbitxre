@@ -41,6 +41,12 @@ cd "$(dirname "$0")/.." || exit 1
 
 RADIO_PORT=8081
 TX_POLL_SECONDS=5
+# the commit the programs were last built from, written when sdr has
+# built. --if-new goes by it and not by what git has: on 16 October 2026 a
+# production zbitx said "up to date" at the newest commit, which an
+# earlier update had pulled and not built, and was left on its old
+# programs
+BUILT_FROM=data/built_from
 
 build_only=0
 if_new=0
@@ -108,7 +114,8 @@ else
 	say "fetched $after"
 	git log --oneline "$before..$after" | sed 's/^/    /'
 fi
-if [ "$if_new" = 1 ] && [ "$before" = "$after" ]; then
+built=$(cat "$BUILT_FROM" 2>/dev/null)
+if [ "$if_new" = 1 ] && [ "$built" = "$after" ]; then
 	say "up to date, at $after"
 	exit 0
 fi
@@ -123,6 +130,7 @@ if ! make --quiet sdr; then
 	say "the build failed; the radio is as it was"
 	exit 1
 fi
+mkdir -p data && echo "$after" > "$BUILT_FROM"
 if pkg-config --exists gtk+-3.0 2>/dev/null; then
 	say "building the window"
 	make --quiet gui || say "window build failed; old window kept"

@@ -192,6 +192,8 @@ say "building; on a zbitx this takes a while"
 make --quiet sdr || stop "the radio program did not build."
 make --quiet gui || stop "the window did not build."
 make --quiet remote || stop "the gateway to my.sbitx.net did not build."
+# what update.sh --if-new compares GitHub with
+mkdir -p data && git rev-parse --short HEAD > data/built_from
 
 # a zbitx's front panel: over I2C when its firmware can take it, or how to
 # put this release's on it with the USB cable, once
