@@ -1899,8 +1899,10 @@ static bool is_up(lv_obj_t *screen){
    as it goes, and whether it succeeded. A view over every screen opens
    with the first step the radio says in UPDATE_STATUS, shows the latest
    steps under one another, and at the end says whether the update
-   succeeded or failed, by the radio's "DONE: " or "FAILED: ", with CLOSE,
-   which a touch or a click of the knob presses. The panel is given new
+   succeeded or failed, by the radio's "DONE: ", "FAILED: " or
+   "CANCELLED: ", with CLOSE. Until then CANCEL stops the update, and the
+   radio is put back as it was, as the author asked the same day. The one
+   that can be pressed is marked, and a click of the knob presses it. The panel is given new
    firmware in the middle of an update, and restarts; the radio tells it
    the end when it starts again. */
 
@@ -1908,11 +1910,16 @@ static bool is_up(lv_obj_t *screen){
 #define UPDATE_STEP_ROOM 64
 #define UPDATE_DONE_MARK "DONE: "
 #define UPDATE_FAILED_MARK "FAILED: "
+#define UPDATE_CANCELLED_MARK "CANCELLED: "
+#define UPDATE_BUTTON_LEFT (SCREEN_WIDTH / 2 - CONFIRM_BUTTON_WIDTH - PAD)
+#define UPDATE_BUTTON_RIGHT (SCREEN_WIDTH / 2 + PAD)
 
 static lv_obj_t *update_layer;
 static lv_obj_t *update_steps_label;
 static lv_obj_t *update_outcome_label;
 static lv_obj_t *update_close_button;
+static lv_obj_t *update_cancel_button;
+static bool update_is_cancelling;
 static char update_steps[UPDATE_STEPS_SHOWN][UPDATE_STEP_ROOM];
 static int update_steps_count;
 static char update_last[UPDATE_STEP_ROOM];
@@ -1929,6 +1936,7 @@ static void update_close(){
 	update_steps_count = 0;
 	update_last[0] = 0;
 	update_has_ended = false;
+	update_is_cancelling = false;
 	if (!screens_is_open())
 		main_ui();
 }
@@ -1937,6 +1945,25 @@ static void on_update_close(lv_event_t *e){
 	(void)e;
 	if (update_has_ended)
 		update_close();
+}
+
+static void update_show();
+
+// CANCEL is the third of UPDATE's choices, "-/UPDATING/CANCEL"
+static void update_cancel(){
+	struct panel_control *c = controls_find("UPDATE");
+
+	if (update_has_ended || update_is_cancelling || c == NULL)
+		return;
+	update_is_cancelling = true;
+	Serial.printf("UPDATE CANCEL\n");
+	i2c_link_changed(c->d.number, 2);
+	update_show();
+}
+
+static void on_update_cancel(lv_event_t *e){
+	(void)e;
+	update_cancel();
 }
 
 static void update_create(){
@@ -1961,7 +1988,10 @@ static void update_create(){
 	update_outcome_label = text_create(box, "", &lv_font_montserrat_20, COLOUR_VALUE);
 	lv_obj_align(update_outcome_label, LV_ALIGN_BOTTOM_MID, 0,
 		-(CONFIRM_BUTTON_HEIGHT + 4 * PAD));
-	update_close_button = button_create(box, (SCREEN_WIDTH - CONFIRM_BUTTON_WIDTH) / 2,
+	update_cancel_button = button_create(box, UPDATE_BUTTON_LEFT,
+		SCREEN_HEIGHT - CONFIRM_BUTTON_HEIGHT - 2 * PAD, CONFIRM_BUTTON_WIDTH,
+		CONFIRM_BUTTON_HEIGHT, "CANCEL", on_update_cancel);
+	update_close_button = button_create(box, UPDATE_BUTTON_RIGHT,
 		SCREEN_HEIGHT - CONFIRM_BUTTON_HEIGHT - 2 * PAD, CONFIRM_BUTTON_WIDTH,
 		CONFIRM_BUTTON_HEIGHT, "CLOSE", on_update_close);
 }
@@ -1974,13 +2004,18 @@ static void update_show(){
 		strcat(text, "\n");
 	}
 	lv_label_set_text(update_steps_label, text);
+	bool can_cancel = !update_has_ended && !update_is_cancelling;
+
 	lv_obj_set_style_opa(update_close_button, update_has_ended ? LV_OPA_COVER : LV_OPA_30, 0);
 	show_mark(update_close_button, update_has_ended);
+	lv_obj_set_style_opa(update_cancel_button, can_cancel ? LV_OPA_COVER : LV_OPA_30, 0);
+	show_mark(update_cancel_button, can_cancel);
 }
 
 void screens_update_status(const char *text){
 	bool is_done = !strncmp(text, UPDATE_DONE_MARK, strlen(UPDATE_DONE_MARK));
 	bool is_failed = !strncmp(text, UPDATE_FAILED_MARK, strlen(UPDATE_FAILED_MARK));
+	bool is_cancelled = !strncmp(text, UPDATE_CANCELLED_MARK, strlen(UPDATE_CANCELLED_MARK));
 	const char *step = text;
 
 	//the radio tells its controls again when the panel starts: the same
@@ -1993,6 +2028,7 @@ void screens_update_status(const char *text){
 	if (!update_is_up()){
 		update_steps_count = 0;
 		update_has_ended = false;
+		update_is_cancelling = false;
 		lv_label_set_text(update_outcome_label, "");
 		waterfall_set_painting(false);
 		lv_obj_remove_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
@@ -2001,16 +2037,19 @@ void screens_update_status(const char *text){
 		step += strlen(UPDATE_DONE_MARK);
 	if (is_failed)
 		step += strlen(UPDATE_FAILED_MARK);
+	if (is_cancelled)
+		step += strlen(UPDATE_CANCELLED_MARK);
 	if (update_steps_count == UPDATE_STEPS_SHOWN){
 		memmove(update_steps[0], update_steps[1], sizeof(update_steps[0]) * (UPDATE_STEPS_SHOWN - 1));
 		update_steps_count--;
 	}
 	snprintf(update_steps[update_steps_count++], UPDATE_STEP_ROOM, "%s", step);
-	if (is_done || is_failed){
+	if (is_done || is_failed || is_cancelled){
 		update_has_ended = true;
-		lv_label_set_text(update_outcome_label, is_done ? "UPDATE SUCCEEDED" : "UPDATE FAILED");
+		lv_label_set_text(update_outcome_label, is_done ? "UPDATE SUCCEEDED"
+			: is_cancelled ? "UPDATE CANCELLED" : "UPDATE FAILED");
 		lv_obj_set_style_text_color(update_outcome_label,
-			lv_color_hex(is_done ? 0x00E060 : 0xFF4040), 0);
+			lv_color_hex(is_done ? 0x00E060 : is_cancelled ? 0xFFC000 : 0xFF4040), 0);
 	}
 	update_show();
 }
@@ -2069,6 +2108,8 @@ void screens_knob_clicked(){
 	if (update_is_up()){
 		if (update_has_ended)
 			update_close();
+		else
+			update_cancel();
 	}
 	else if (confirm_is_up())
 		confirm_answered(confirm_is_on_yes);

@@ -635,12 +635,17 @@ static struct control radio_key = {
 // 16 October 2026 to see the update happening, and whether it succeeded,
 // when there had been only the status line. update.sh sets it through the
 // terminal's "update_status". Its last says how it ended, beginning
-// "DONE: " or "FAILED: ". An update that restarts the radio stops this
-// program on the way, so update.sh leaves the last in UPDATE_RESULT and
+// "DONE: ", "FAILED: " or "CANCELLED: ". An update that restarts the
+// radio stops this program on the way, so update.sh leaves the last in
+// UPDATE_RESULT and
 // the radio says it when it starts again, and lets it go after
 // UPDATE_RESULT_FOR_MS, so that a client that connects later is not shown
 // an old update's end
 #define UPDATE_RESULT "data/update_result"
+// CANCEL, from the view's CANCEL button, stops update.sh, which leaves its
+// process's number here while it can still be stopped and puts the radio
+// back as it was; the author asked for it on 16 October 2026
+#define UPDATE_PID_FILE "/tmp/update.pid"
 #define UPDATE_RESULT_FOR_MS (5 * 60 * 1000L)
 
 static struct control update_status = {
@@ -649,7 +654,7 @@ static struct control update_status = {
 
 static struct control update = {
 	.group = "STATION", .name = "UPDATE", .kind = CONTROL_CHOICE,
-	.choices = "-/UPDATING",
+	.choices = "-/UPDATING/CANCEL",
 	.value = "-",
 };
 
@@ -696,10 +701,33 @@ static void update_result_take(long now) {
 	unlink(UPDATE_RESULT);
 }
 
+// the update is sent TERM, its process group and so the build with it:
+// update.sh is started in a session of its own, so its group is its number
+static void update_cancel(void) {
+	FILE *file = fopen(UPDATE_PID_FILE, "r");
+	int pid = 0;
+
+	if (file == NULL)
+		return;
+	if (fscanf(file, "%d", &pid) != 1)
+		pid = 0;
+	fclose(file);
+	if (pid <= 1)
+		return;
+	if (kill(-pid, SIGTERM) < 0)
+		kill(pid, SIGTERM);
+	set_setting("UPDATE_STATUS", "cancelling", ORIGIN_NONE);
+}
+
 static void follow_update(long now) {
 	if (update_result_until_ms != 0 && now > update_result_until_ms) {
 		update_result_until_ms = 0;
 		set_setting("UPDATE_STATUS", "", ORIGIN_NONE);
+	}
+	if (!strcmp(control_get("UPDATE"), "CANCEL")) {
+		set_setting("UPDATE", "-", ORIGIN_NONE);
+		update_cancel();
+		return;
 	}
 	if (strcmp(control_get("UPDATE"), "UPDATING"))
 		return;

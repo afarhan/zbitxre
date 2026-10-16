@@ -523,7 +523,7 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 480
 #define PLACED_MAX 128
-#define CSS_MAX 2048
+#define CSS_MAX 4096
 #define MESSAGES_SHOWN_MAX 200
 #define MESSAGE_FIELDS 4
 #define MESSAGE_SIZE 8
@@ -2691,18 +2691,23 @@ static void ask_for_a_new_key(void) {
    opens with the first step the radio says, in its UPDATE_STATUS, lists
    each step under the last, and at the end says in large letters whether
    the update succeeded or failed, which the radio says by beginning its
-   last "DONE: " or "FAILED: ". It is closed then, by CLOSE. An update that
+   last "DONE: ", "FAILED: " or "CANCELLED: ". It is closed then, by
+   CLOSE. Until then CANCEL stops the update, and the radio is put back as
+   it was, as the author asked the same day; once the radio is stopped to
+   be restarted it is too late, and the radio does not answer it. An update that
    restarts the radio closes this window with it; the window that starts
    after is told the end by the radio, and shows it. */
 
 #define DONE_MARK "DONE: "
 #define FAILED_MARK "FAILED: "
+#define CANCELLED_MARK "CANCELLED: "
 
 static GtkWidget *update_view;
 static GtkWidget *update_steps;
 static GtkWidget *update_steps_scroller;
 static GtkWidget *update_outcome;
 static GtkWidget *update_close;
+static GtkWidget *update_cancel;
 static char update_last[CONTROL_VALUE_MAX];
 
 static void on_update_view_closed(GtkWidget *widget, gpointer unused) {
@@ -2718,9 +2723,17 @@ static void on_update_close(GtkButton *button, gpointer unused) {
 	gtk_widget_destroy(update_view);
 }
 
+static void on_update_cancel(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	send_line(UPDATE_CONTROL, "CANCEL");
+	gtk_widget_set_sensitive(update_cancel, FALSE);
+}
+
 static void update_view_open(void) {
 	GtkWidget *inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, px(8));
 	GtkWidget *title = gtk_label_new("Updating the radio");
+	GtkWidget *buttons;
 
 	update_view = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title(GTK_WINDOW(update_view), "Update");
@@ -2744,11 +2757,17 @@ static void update_view_open(void) {
 	add_label_class(update_outcome, "status");
 	gtk_box_pack_start(GTK_BOX(inside), update_outcome, FALSE, FALSE, 0);
 
+	buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, px(8));
+	gtk_box_set_homogeneous(GTK_BOX(buttons), TRUE);
+	update_cancel = key_new("CANCEL", G_CALLBACK(on_update_cancel), NULL);
 	update_close = key_new("CLOSE", G_CALLBACK(on_update_close), NULL);
-	gtk_widget_set_vexpand(update_close, FALSE);
-	gtk_widget_set_size_request(update_close, -1, px_down(ROW_HEIGHT));
 	gtk_widget_set_sensitive(update_close, FALSE);
-	gtk_box_pack_start(GTK_BOX(inside), update_close, FALSE, FALSE, 0);
+	gtk_widget_set_vexpand(update_cancel, FALSE);
+	gtk_widget_set_vexpand(update_close, FALSE);
+	gtk_box_pack_start(GTK_BOX(buttons), update_cancel, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(buttons), update_close, TRUE, TRUE, 0);
+	gtk_widget_set_size_request(buttons, -1, px_down(ROW_HEIGHT));
+	gtk_box_pack_start(GTK_BOX(inside), buttons, FALSE, FALSE, 0);
 
 	gtk_container_add(GTK_CONTAINER(update_view), inside);
 	g_signal_connect(update_view, "destroy", G_CALLBACK(on_update_view_closed), NULL);
@@ -2770,6 +2789,7 @@ static gboolean update_steps_to_end(gpointer unused) {
 static void update_view_take(const char *status) {
 	int is_done = !strncmp(status, DONE_MARK, strlen(DONE_MARK));
 	int is_failed = !strncmp(status, FAILED_MARK, strlen(FAILED_MARK));
+	int is_cancelled = !strncmp(status, CANCELLED_MARK, strlen(CANCELLED_MARK));
 	const char *step = status;
 	GtkWidget *line;
 
@@ -2785,6 +2805,8 @@ static void update_view_take(const char *status) {
 		step += strlen(DONE_MARK);
 	if (is_failed)
 		step += strlen(FAILED_MARK);
+	if (is_cancelled)
+		step += strlen(CANCELLED_MARK);
 	line = gtk_label_new(step);
 	gtk_label_set_xalign(GTK_LABEL(line), 0);
 	gtk_label_set_line_wrap(GTK_LABEL(line), TRUE);
@@ -2792,12 +2814,14 @@ static void update_view_take(const char *status) {
 	gtk_box_pack_start(GTK_BOX(update_steps), line, FALSE, FALSE, 0);
 	gtk_widget_show(line);
 	g_idle_add(update_steps_to_end, NULL);
-	if (!is_done && !is_failed)
+	if (!is_done && !is_failed && !is_cancelled)
 		return;
-	gtk_label_set_text(GTK_LABEL(update_outcome),
-		is_done ? "Update succeeded" : "Update failed");
+	gtk_label_set_text(GTK_LABEL(update_outcome), is_done ? "Update succeeded"
+		: is_cancelled ? "Update cancelled" : "Update failed");
 	set_class(update_outcome, "status", 0);
-	set_class(update_outcome, is_done ? "update-done" : "update-failed", 1);
+	set_class(update_outcome, is_done ? "update-done"
+		: is_cancelled ? "update-cancelled" : "update-failed", 1);
+	gtk_widget_set_sensitive(update_cancel, FALSE);
 	gtk_widget_set_sensitive(update_close, TRUE);
 }
 
@@ -4048,6 +4072,7 @@ static void load_style(void) {
 		".tile.focused.editing { box-shadow: inset 0 0 0 %dpx #00E060; }"
 		".update-done { font-size: %dpx; font-weight: bold; color: #00E060; }"
 		".update-failed { font-size: %dpx; font-weight: bold; color: #FF4040; }"
+		".update-cancelled { font-size: %dpx; font-weight: bold; color: #FFC000; }"
 		"scrollbar slider { min-width: %dpx; min-height: %dpx; border-radius: 0;"
 		" background-color: #607080; }"
 		"scrollbar { background-color: #101820; }"
@@ -4079,7 +4104,7 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(2), px(3), px(VALUE_SIZE), px(VALUE_SIZE), px(SCROLL_BAR_WIDTH),
+		px(2), px(3), px(VALUE_SIZE), px(VALUE_SIZE), px(VALUE_SIZE), px(SCROLL_BAR_WIDTH),
 		px(SCROLL_BAR_WIDTH),
 		px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
 		frequency_px(FREQUENCY_SIZE),

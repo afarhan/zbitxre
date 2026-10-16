@@ -47,6 +47,17 @@ TX_POLL_SECONDS=5
 # earlier update had pulled and not built, and was left on its old
 # programs
 BUILT_FROM=data/built_from
+# the update can be cancelled, from the view of it in the window and on
+# the panel, as the author asked on 16 October 2026, until it stops the
+# radio to restart it: the radio sends this script's process group TERM,
+# by the number left in PID_FILE. A build stopped part way leaves no
+# program, make taking away the one it was writing, so the programs are
+# kept in KEPT before the build and put back. git is left where the pull
+# took it: BUILT_FROM, put back too, says that it was not built, and the
+# next update builds it
+PID_FILE=/tmp/update.pid
+KEPT=/tmp/update_kept
+PROGRAMS="sdr zbitx_gui zbitx_remote"
 
 build_only=0
 if_new=0
@@ -90,6 +101,35 @@ note() {
 	notes="$notes; $1"
 }
 
+cancelled() {
+	trap '' TERM INT
+	wait 2>/dev/null
+	for program in $PROGRAMS; do
+		[ -f "$KEPT/$program" ] && cp -p "$KEPT/$program" "$program"
+	done
+	if [ -f "$KEPT/built_from" ]; then
+		cp -p "$KEPT/built_from" "$BUILT_FROM"
+	else
+		rm -f "$BUILT_FROM"
+	fi
+	# a git stopped in the middle leaves its lock
+	pgrep -x git > /dev/null || rm -f .git/index.lock
+	rm -f "$PID_FILE"
+	say "CANCELLED: the radio is as it was"
+	exit 1
+}
+
+echo $$ > "$PID_FILE"
+# gone however the script ends, so that no later cancel reaches another
+# process that has come to have its number
+trap 'rm -f "$PID_FILE"' EXIT
+trap cancelled TERM INT
+rm -rf "$KEPT" && mkdir -p "$KEPT"
+for program in $PROGRAMS; do
+	[ -f "$program" ] && cp -p "$program" "$KEPT/"
+done
+[ -f "$BUILT_FROM" ] && cp -p "$BUILT_FROM" "$KEPT/"
+
 # the last TX line the radio program tells a client that connects: ON or
 # OFF, or nothing if it does not answer
 radio_tx() {
@@ -123,7 +163,7 @@ fi
 before=$(git rev-parse --short HEAD)
 say "at $before; asking GitHub for news"
 if ! git pull --ff-only --quiet origin main; then
-	failed "could not reach GitHub; nothing changed"
+	failed "the pull failed; nothing changed"
 fi
 after=$(git rev-parse --short HEAD)
 if [ "$before" = "$after" ]; then
@@ -162,6 +202,9 @@ if pgrep -x sdr > /dev/null; then
 		say "waiting for TX OFF to restart"
 		sleep "$TX_POLL_SECONDS"
 	done
+	# from here the radio is stopped and started: too late to cancel
+	trap '' TERM INT
+	rm -f "$PID_FILE"
 	say "restarting the radio"
 	[ -p /tmp/sdr.in ] && echo quit > /tmp/sdr.in
 	for _ in $(seq 20); do
