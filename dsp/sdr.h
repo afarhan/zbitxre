@@ -191,6 +191,8 @@ extern int bfo_freq;
 
 int setup(void);
 void teardown(void);
+int sdr_open_audio(void);
+int sdr_is_audio_open(void);
 
 void sdr_request(char *request, char *response);
 uint32_t oscillator_frequency(void);

@@ -830,7 +830,8 @@ static void start_check_report(const int32_t *samples) {
 }
 
 static void start_check_poll(long now) {
-	if (!is_start_check_due || now < start_check_at_ms)
+	// the check is of the sound card's first blocks: it waits for the card
+	if (!is_start_check_due || now < start_check_at_ms || !sdr_is_audio_open())
 		return;
 	is_start_check_due = 0;
 	is_start_check_waiting = 1;
@@ -1517,6 +1518,37 @@ static void answer_message(const char *line) {
 	ft8_qso_answer(line);
 }
 
+// the sound card, tried again each AUDIO_RETRY_MS until it opens: until
+// then the panel's status line and every client say so, again each
+// AUDIO_SAID_EVERY_MS, and when it opens they are told that too.
+// core_sdr.c says why the radio starts without it
+#define AUDIO_RETRY_MS 1000
+#define AUDIO_SAID_EVERY_MS 10000
+static void follow_sound_card(long now) {
+	static long tried_ms;
+	static long said_ms;
+	static int was_missing;
+
+	if (sdr_is_audio_open() || now - tried_ms < AUDIO_RETRY_MS)
+		return;
+	tried_ms = now;
+	if (sdr_open_audio()) {
+		printf("the sound card is open\n");
+		fflush(stdout);
+		if (was_missing)
+			panel_say("The sound card is open");
+		start_check_at_ms = now + START_CHECK_AFTER_MS;
+		return;
+	}
+	was_missing = 1;
+	if (said_ms == 0 || now - said_ms >= AUDIO_SAID_EVERY_MS) {
+		said_ms = now;
+		printf("the sound card did not open; trying again every second\n");
+		fflush(stdout);
+		panel_warn("Sound card not found; trying again");
+	}
+}
+
 static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
@@ -1525,6 +1557,7 @@ static void main_loop(void) {
 		spectrum_send(now_ms());
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
+		follow_sound_card(now_ms());
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();

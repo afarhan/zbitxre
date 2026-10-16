@@ -320,10 +320,13 @@ int tr_wait_to_tx_ms(void){
 // At power-up the radio program may be started before the system's sound
 // is ready, and the card does not open: the author found the zbitx failing
 // so at every boot, and had to start it by hand. He asked that it try again
-// until it succeeds, so it does, once a second, and says so every
-// AUDIO_RETRY_SAID_EVERY tries in case the card never comes.
-#define AUDIO_RETRY_US 1000000
-#define AUDIO_RETRY_SAID_EVERY 10
+// until it succeeds. setup() tries once and goes on without it, so that the
+// radio is up and its panel and clients are told; sdr_open_audio() is
+// tried again from the radio's loop, tools/sdr.c, which says so on the
+// panel's status line, the author's ruling that a missing sound card is
+// to be seen there. Until the card is open nothing is sent: TX ON is
+// refused.
+static int is_audio_open;
 
 #define TUNING_SHIFT (0)
 
@@ -1386,15 +1389,23 @@ int setup(void){
 	mute_count = 50;
 	is_set_up = 1;
 
-	for (int tries = 1; audio_open(sound_block) < 0; tries++){
-		if (tries % AUDIO_RETRY_SAID_EVERY == 1)
-			printf("the sound card did not open; trying again every second (%d s)\n",
-				tries - 1);
-		fflush(stdout);
-		usleep(AUDIO_RETRY_US);
-	}
-	audio_set_transmitter(TRANSMITTER_LEVEL);
+	sdr_open_audio();
 	return 0;
+}
+
+// the sound card, opened if it is not: 1 when it is open
+int sdr_open_audio(void){
+	if (is_audio_open)
+		return 1;
+	if (audio_open(sound_block) < 0)
+		return 0;
+	audio_set_transmitter(TRANSMITTER_LEVEL);
+	is_audio_open = 1;
+	return 1;
+}
+
+int sdr_is_audio_open(void){
+	return is_audio_open;
 }
 
 void teardown(void){
@@ -1404,6 +1415,7 @@ void teardown(void){
 		tr_switch(0);
 	is_set_up = 0;
 	audio_close();
+	is_audio_open = 0;
 	si5351_clock_off(OSCILLATOR_CLOCK);
 	si5351_clock_off(BFO_CLOCK);
 	i2c_close();
@@ -1545,8 +1557,10 @@ void sdr_request(char *request, char *response){
 	}
 	else if (!strcmp(cmd, "tx")){
 		if (!strcmp(value, "on")){
-			//a mode whose modem sends nothing does not transmit
-			if (modem_wanted == NULL || modem_wanted->tx == NULL || freq_hdr <= 0){
+			//a mode whose modem sends nothing does not transmit, nor
+			//does a radio whose sound card has not opened
+			if (modem_wanted == NULL || modem_wanted->tx == NULL || freq_hdr <= 0
+					|| !is_audio_open){
 				strcpy(response, "error");
 				return;
 			}
