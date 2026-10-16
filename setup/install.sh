@@ -65,6 +65,9 @@ DEST=$HOME/zbitxre
 OLD=$HOME/sbitx/data
 SITE=https://my.sbitx.net
 COOKIE_LETTERS=abcdefghjkmnpqrstuvwxyz
+# whether the radio has to restart at the end, for the boot configuration
+# or the access point turned off
+restart=no
 
 say() { echo "zbitxre: $*"; }
 stop() { echo "zbitxre: $*"; echo "zbitxre: nothing more was changed."; exit 1; }
@@ -114,6 +117,25 @@ case "$model" in
 *) stop "this is a $model; zbitxre runs on a zbitx or an sbitx v3." ;;
 esac
 say "this is a $model, so a $radio."
+
+# a zbitx's own WiFi access point, turned off before anything is fetched:
+# beside the WiFi client, on another channel, it loses more than half of
+# what the radio sends and takes, and the downloads below would crawl or
+# fail. Which were turned off is kept, for undo_install.sh, in a file put
+# in ~/zbitxre/data once that is made
+turned_off=""
+if [ "$radio" = zbitx ]; then
+	for service in hostapd uap0.service dnsmasq; do
+		if systemctl is-enabled --quiet "$service" 2>/dev/null \
+				|| systemctl is-active --quiet "$service" 2>/dev/null; then
+			sudo systemctl disable --now "$service" > /dev/null 2>&1 \
+				|| stop "the access point's $service could not be turned off."
+			turned_off="$turned_off $service"
+			say "turned off $service: the radio is a WiFi client only"
+		fi
+	done
+	[ -n "$turned_off" ] && sleep 5
+fi
 
 # 2. the old program, closed
 if pgrep -x sbitx > /dev/null; then
@@ -180,6 +202,10 @@ make --quiet remote || stop "the gateway to my.sbitx.net did not build."
 
 # 5. the radio's own files
 mkdir -p data
+for service in $turned_off; do
+	echo "$service" >> data/turned_off_by_install
+	restart=yes
+done
 if [ ! -f data/hw_settings.ini ]; then
 	[ -f "$OLD/hw_settings.ini" ] || stop "there is no $OLD/hw_settings.ini, the radio's calibration."
 	if grep -q '^radio=' "$OLD/hw_settings.ini" || grep -q '^hw *= *4' "$OLD/hw_settings.ini"; then
@@ -215,7 +241,6 @@ fi
 [ -f data/cw.mc ] || cp setup/cw.mc data/cw.mc
 
 # 6. the boot configuration of a zbitx
-restart=no
 if [ "$radio" = zbitx ]; then
 	config=/boot/config.txt
 	[ -f /boot/firmware/config.txt ] && config=/boot/firmware/config.txt
@@ -223,16 +248,6 @@ if [ "$radio" = zbitx ]; then
 		sudo setup/add-overlay.sh "$config" || stop "the boot configuration could not be changed."
 		restart=yes
 	fi
-	for service in hostapd uap0.service dnsmasq; do
-		if systemctl is-enabled --quiet "$service" 2>/dev/null \
-				|| systemctl is-active --quiet "$service" 2>/dev/null; then
-			sudo systemctl disable --now "$service" > /dev/null 2>&1 \
-				|| stop "the access point's $service could not be turned off."
-			echo "$service" >> data/turned_off_by_install
-			say "turned off $service: the radio is a WiFi client only"
-			restart=yes
-		fi
-	done
 fi
 
 # 7. started with the desktop in place of the old program
