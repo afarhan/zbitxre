@@ -363,12 +363,8 @@
 // The sbitx has two knobs on its front, wired to the Pi it runs this window
 // on, and the window reads them, as zbitxv2's window did. One tunes and
 // does nothing else: a notch is a turn of the wheel on the frequency,
-// whatever is selected. The other changes the value of the control that is
-// selected, the row that has the focus, a notch for a step; with no row
-// selected it works VOL. A press of its button answers the FT8 message
-// that is marked, if one is; with none marked it selects the next control
-// down the list, so the radio can be worked with no touch of the screen.
-// The tuning knob's button does nothing yet.
+// whatever is selected. The other works the lists, as SELECTING, TURNING
+// AND PRESSING below says. The tuning knob's button does nothing yet.
 //
 // The knobs are the window's alone. The radio program, which runs with no
 // screen, knows nothing of them and has none of this in it. All the window
@@ -395,6 +391,25 @@
 // are lost when it is spun, so a thread of its own looks at both, twice a
 // millisecond, and counts; the window takes the counts up to act on them
 // every few milliseconds. knob.c says how a knob is read.
+//
+// SELECTING, TURNING AND PRESSING
+//
+// The author's rule of 16 October 2026, for every list in the window, the
+// controls of the main screen, SET and CONNECTIONS, as the panel has it:
+// a tap selects a row and does nothing else; turning steps the selection
+// through the rows, so that a row that is off the screen can be reached;
+// and a press acts on the row that is selected. They had been mixed: a
+// tap acted on what it selected, and the wheel changed the value of
+// whatever row it was over, so that trying to scroll a list changed it.
+//
+// Turning is the control knob on an sbitx, the mouse's wheel, or the
+// arrow keys; pressing is the knob's button, the mouse's middle button,
+// Enter, or a second tap on the row, a double tap. A press on a choice
+// takes it to its next; on a number it starts changing it, the row edged
+// in green, turning then changing the value until a press or a tap ends
+// it; on a text it opens the keyboard; and on UPDATE and RADIO_KEY it asks
+// first, in a box. SET and CONNECTIONS open with their first row selected.
+// The scroll bars are wide, for a finger to take hold of.
 //
 // THE RADIO
 //
@@ -454,6 +469,8 @@
 #define PANEL_WIDTH 480
 #define PANEL_HEIGHT 336
 #define ROW_HEIGHT 48
+// wide enough for a finger to take hold of
+#define SCROLL_BAR_WIDTH 24
 #define TILE_WIDTH 48
 #define DIAL_LEFT 48
 #define FREQ_LEFT 96
@@ -577,7 +594,6 @@
 #define KNOBS_LOOKED_AT_EVERY_US 500
 #define KNOBS_TAKEN_UP_EVERY_MS 10
 #define BUTTON_DOWN_LOOKS 40
-#define VOLUME_CONTROL "AUDIO"
 
 #define LOWEST_HZ 500000
 #define HIGHEST_HZ 30000000
@@ -779,6 +795,8 @@ static int known_count;
 static struct row rows[KNOWN_MAX];
 static int row_count;
 static int focus = ON_FREQUENCY;
+// the selected number is being changed: turning changes it
+static int is_editing;
 
 static int dial_hz;
 static int vfo_dial_hz[VFOS];
@@ -1282,11 +1300,14 @@ static void show_values(void) {
 
 	if (focus != ON_FREQUENCY && !is_row_shown(&rows[focus]))
 		focus = ON_FREQUENCY;
+	if (focus == ON_FREQUENCY)
+		is_editing = 0;
 	for (i = 0; i < row_count; i++) {
 		gtk_label_set_text(GTK_LABEL(rows[i].value_label),
 			value_of(row_control(&rows[i])));
 		gtk_widget_set_visible(rows[i].box, is_row_shown(&rows[i]));
 		set_class(rows[i].box, "focused", i == focus);
+		set_class(rows[i].box, "editing", i == focus && is_editing);
 		set_class(rows[i].box, "on", !strcmp(rows[i].control, "OFFSET")
 			&& !is_offset("NORM"));
 	}
@@ -1505,13 +1526,6 @@ static void step_row(int row, int steps) {
 	else
 		send_line(k->name, k->value);
 	show_values();
-}
-
-static void step_focused(int steps) {
-	if (focus == ON_FREQUENCY)
-		tune(steps);
-	else
-		step_row(focus, steps);
 }
 
 // CONTROL <group> <name> number <min> <max> <step>, or
@@ -2379,45 +2393,101 @@ static gboolean on_frequency_click(GtkWidget *widget, GdkEventButton *event, gpo
 	return TRUE;
 }
 
+static void turn_selected(int up, int down);
+static void act_on_row(int index);
+
+// the wheel over a control turns, as the knob does; a wheel that scrolls
+// smoothly, a touchpad's, is left to scroll the list
 static gboolean on_row_wheel(GtkWidget *widget, GdkEventScroll *event, gpointer row) {
+	int up = wheel_steps(event);
+
 	(void)widget;
-	step_row(GPOINTER_TO_INT(row), wheel_steps(event));
+	(void)row;
+	if (up == 0)
+		return FALSE;
+	turn_selected(up, -up);
 	return TRUE;
 }
 
-// a tap on a row selects it; on a choice that is selected, moves it on
+// a tap on a row selects it, and ends the changing of a number; a second
+// tap, a double tap, acts on it as a press does
 static void on_row_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x, gdouble y,
 		gpointer row) {
 	int tapped = GPOINTER_TO_INT(row);
-	struct known *k = find_known(row_control(&rows[tapped]));
 
 	(void)gesture;
-	(void)presses;
 	(void)x;
 	(void)y;
-	if (focus == tapped && k != NULL && k->is_choice) {
-		next_choice_round(k);
-		if (k->is_own)
-			apply_own(k);
-		else if (!strcmp(k->name, "VFO"))
-			vfo_chosen_here();
-		else
-			send_line(k->name, k->value);
-	}
+	if (focus != tapped)
+		is_editing = 0;
 	focus = tapped;
 	show_values();
+	if (presses == 2)
+		act_on_row(tapped);
 }
 
 // a widget is made to tell a tap: a press and a release in one place, by
-// the mouse or a finger. In a list that scrolls, a finger that moves is
-// taken by the list for scrolling, and no tap is told
+// the mouse or a finger. A finger that moves, or a list that scrolls
+// between the press and the release, is scrolling and not a tap: the
+// author found on 16 October 2026 that a drag through the list ended by
+// acting on whichever row it was let go over
+#define TAP_MOVES_AT_MOST 12
+
+typedef void (*tap_fn)(GtkGestureMultiPress *gesture, gint presses, gdouble x, gdouble y,
+	gpointer data);
+
+struct tap {
+	tap_fn tapped;
+	gpointer data;
+	double x;
+	double y;
+	double scrolled;
+};
+
+// how far the list a widget is in has scrolled, or 0 if it is in none
+static double scrolled_of(GtkWidget *widget) {
+	GtkWidget *scroller = gtk_widget_get_ancestor(widget, GTK_TYPE_SCROLLED_WINDOW);
+
+	if (scroller == NULL)
+		return 0;
+	return gtk_adjustment_get_value(
+		gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller)));
+}
+
+static void on_tap_pressed(GtkGestureMultiPress *gesture, gint presses, gdouble x, gdouble y,
+		gpointer data) {
+	struct tap *tap = data;
+
+	(void)presses;
+	tap->x = x;
+	tap->y = y;
+	tap->scrolled = scrolled_of(gtk_event_controller_get_widget(
+		GTK_EVENT_CONTROLLER(gesture)));
+}
+
+static void on_tap_released(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer data) {
+	struct tap *tap = data;
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+
+	if (fabs(x - tap->x) > TAP_MOVES_AT_MOST || fabs(y - tap->y) > TAP_MOVES_AT_MOST
+			|| fabs(scrolled_of(widget) - tap->scrolled) > 1)
+		return;
+	tap->tapped(gesture, presses, x, y, tap->data);
+}
+
 static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data) {
 	GtkGesture *gesture = gtk_gesture_multi_press_new(widget);
+	struct tap *tap = g_new0(struct tap, 1);
 
+	tap->tapped = (tap_fn)tapped;
+	tap->data = data;
 	gtk_widget_add_events(widget, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK
 		| GDK_TOUCH_MASK);
-	g_signal_connect(gesture, "released", tapped, data);
+	g_signal_connect(gesture, "pressed", G_CALLBACK(on_tap_pressed), tap);
+	g_signal_connect(gesture, "released", G_CALLBACK(on_tap_released), tap);
 	g_object_set_data_full(G_OBJECT(widget), "tap", gesture, g_object_unref);
+	g_object_set_data_full(G_OBJECT(widget), "tap-kept", tap, g_free);
 }
 
 // the control is put at the value, here and on the radio
@@ -2628,16 +2698,11 @@ static void ask_to_update(void) {
 	gtk_widget_destroy(dialog);
 }
 
-// a tap on a setting: a text is typed, a choice goes to its next, and the
+// a press on a setting: a text is typed, a choice goes to its next, and the
 // radio's key and UPDATE ask first
-static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
-		gdouble y, gpointer setting) {
+static void act_on_setting(gpointer setting) {
 	struct known *k = setting;
 
-	(void)gesture;
-	(void)presses;
-	(void)x;
-	(void)y;
 	if (!strcmp(k->name, RADIO_KEY_CONTROL)) {
 		ask_for_a_new_key();
 		return;
@@ -2655,6 +2720,120 @@ static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble 
 	fill_settings();
 }
 
+static void act_on_connections_row(gpointer unused);
+
+/* SET and CONNECTIONS as lists to select in: which row is selected is kept
+   on the list, and what a press on a row does, on the row */
+
+typedef void (*row_act_fn)(gpointer data);
+
+static GtkWidget *shown_page_list(void) {
+	if (is_page_shown(PAGE_SETTINGS))
+		return settings_list;
+	if (is_page_shown(PAGE_CONNECTIONS))
+		return connections_list;
+	return NULL;
+}
+
+static int page_list_selected(GtkWidget *list) {
+	return GPOINTER_TO_INT(g_object_get_data(G_OBJECT(list), "selected"));
+}
+
+// the selected row is edged, and brought into view
+static void page_list_show(GtkWidget *list) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
+	GtkWidget *scroller = gtk_widget_get_ancestor(list, GTK_TYPE_SCROLLED_WINDOW);
+	int selected = page_list_selected(list);
+	GtkAdjustment *scroll;
+	GtkAllocation where;
+	GList *child;
+	int i = 0;
+
+	for (child = children; child != NULL; child = child->next, i++) {
+		set_class(GTK_WIDGET(child->data), "focused", i == selected);
+		if (i != selected || scroller == NULL)
+			continue;
+		scroll = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+		gtk_widget_get_allocation(GTK_WIDGET(child->data), &where);
+		if (where.y < gtk_adjustment_get_value(scroll))
+			gtk_adjustment_set_value(scroll, where.y);
+		else if (where.y + where.height > gtk_adjustment_get_value(scroll)
+				+ gtk_adjustment_get_page_size(scroll))
+			gtk_adjustment_set_value(scroll, where.y + where.height
+				- gtk_adjustment_get_page_size(scroll));
+	}
+	g_list_free(children);
+}
+
+static void page_list_select(GtkWidget *list, int row) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
+	int count = (int)g_list_length(children);
+
+	g_list_free(children);
+	if (row > count - 1)
+		row = count - 1;
+	if (row < 0)
+		row = 0;
+	g_object_set_data(G_OBJECT(list), "selected", GINT_TO_POINTER(row));
+	page_list_show(list);
+}
+
+static void page_list_act(GtkWidget *list) {
+	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
+	GtkWidget *row = g_list_nth_data(children, (guint)page_list_selected(list));
+	row_act_fn act;
+
+	g_list_free(children);
+	if (row == NULL)
+		return;
+	act = (row_act_fn)g_object_get_data(G_OBJECT(row), "act");
+	if (act != NULL)
+		act(g_object_get_data(G_OBJECT(row), "act-data"));
+}
+
+// a page is opened with its first row selected, so that the knob or the
+// wheel works it at once
+static void open_page_list(const char *page, GtkWidget *list) {
+	show_page(page);
+	page_list_select(list, 0);
+}
+
+static void on_page_row_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer unused) {
+	GtkWidget *row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+	GtkWidget *list = gtk_widget_get_parent(row);
+	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
+	int index = g_list_index(children, row);
+
+	(void)x;
+	(void)y;
+	(void)unused;
+	g_list_free(children);
+	page_list_select(list, index);
+	if (presses == 2)
+		page_list_act(list);
+}
+
+static gboolean on_page_wheel(GtkWidget *widget, GdkEventScroll *event, gpointer list) {
+	int up = wheel_steps(event);
+
+	(void)widget;
+	if (up == 0)
+		return FALSE;
+	page_list_select(list, page_list_selected(list) - up);
+	return TRUE;
+}
+
+// a row of a page: tapped to select it, and what a press on it does, if
+// anything
+static void page_row_add(GtkWidget *list, GtkWidget *row, row_act_fn act, gpointer data) {
+	gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
+	g_object_set_data(G_OBJECT(row), "act", (gpointer)act);
+	g_object_set_data(G_OBJECT(row), "act-data", data);
+	tell_taps(row, G_CALLBACK(on_page_row_tap), NULL);
+	gtk_box_pack_start(GTK_BOX(list), row, FALSE, FALSE, 0);
+}
+
 // a list's rows are taken away, for it to be made afresh
 static void empty_list(GtkWidget *list) {
 	GList *children = gtk_container_get_children(GTK_CONTAINER(list));
@@ -2665,7 +2844,7 @@ static void empty_list(GtkWidget *list) {
 	g_list_free(children);
 }
 
-// a row to each of the radio's texts and choices in a group, to be tapped
+// a row to each of the radio's texts and choices in a group, to be pressed
 static void fill_with_group(GtkWidget *list, const char *group) {
 	GtkWidget *row;
 	GtkWidget *value;
@@ -2676,20 +2855,13 @@ static void fill_with_group(GtkWidget *list, const char *group) {
 			continue;
 		row = list_row_new(known[i].name, &value);
 		gtk_label_set_text(GTK_LABEL(value), known[i].value);
-		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
-		tell_taps(row, G_CALLBACK(on_setting_tap), &known[i]);
-		gtk_box_pack_start(GTK_BOX(list), row, FALSE, FALSE, 0);
+		page_row_add(list, row, act_on_setting, &known[i]);
 	}
 }
 
-static void on_connections_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
-		gdouble y, gpointer unused) {
-	(void)gesture;
-	(void)presses;
-	(void)x;
-	(void)y;
+static void act_on_connections_row(gpointer unused) {
 	(void)unused;
-	show_page(PAGE_CONNECTIONS);
+	open_page_list(PAGE_CONNECTIONS, connections_list);
 }
 
 // the two screens' rows, made afresh each time they are shown. The
@@ -2708,16 +2880,14 @@ static void fill_settings(void) {
 	if (!is_remote) {
 		row = list_row_new("CONNECTIONS", &value);
 		gtk_label_set_text(GTK_LABEL(value), "\u203a");
-		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
-		tell_taps(row, G_CALLBACK(on_connections_tap), NULL);
-		gtk_box_pack_start(GTK_BOX(settings_list), row, FALSE, FALSE, 0);
+		page_row_add(settings_list, row, act_on_connections_row, NULL);
 	}
 	gtk_widget_show_all(settings_list);
 
 	empty_list(connections_list);
 	fill_with_group(connections_list, CONNECTIONS_GROUP);
 	// what the radio says of being reached from afar, and of VoIP: shown,
-	// not tapped
+	// and selected only to bring it into view
 	for (i = 0; i < known_count; i++) {
 		if ((strcmp(known[i].group, REMOTE_GROUP) && strcmp(known[i].name, "VOIP_STATUS"))
 				|| !known[i].is_text)
@@ -2725,10 +2895,11 @@ static void fill_settings(void) {
 		row = list_row_new(known[i].name, &value);
 		snprintf(said, sizeof(said), "%s", known[i].value);
 		gtk_label_set_text(GTK_LABEL(value), said);
-		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
-		gtk_box_pack_start(GTK_BOX(connections_list), row, FALSE, FALSE, 0);
+		page_row_add(connections_list, row, NULL, NULL);
 	}
 	gtk_widget_show_all(connections_list);
+	page_list_select(settings_list, page_list_selected(settings_list));
+	page_list_select(connections_list, page_list_selected(connections_list));
 }
 
 // the column's buttons: SET, and in FT8 its two; the others do nothing yet
@@ -2739,7 +2910,7 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 	(void)event;
 	if (clicked == SET_ROW) {
 		fill_settings();
-		show_page(PAGE_SETTINGS);
+		open_page_list(PAGE_SETTINGS, settings_list);
 		return TRUE;
 	}
 	if (clicked == LOG_ROW) {
@@ -2840,6 +3011,76 @@ static void move_focus(int direction) {
 	scroll_to_focus();
 }
 
+// a press on a row of the main screen: a choice goes to its next, and a
+// number starts or stops being changed by turning
+static void act_on_row(int index) {
+	struct known *k = find_known(row_control(&rows[index]));
+
+	if (k == NULL)
+		return;
+	if (k->is_choice) {
+		is_editing = 0;
+		next_choice_round(k);
+		if (k->is_own)
+			apply_own(k);
+		else if (!strcmp(k->name, "VFO"))
+			vfo_chosen_here();
+		else
+			send_line(k->name, k->value);
+	} else if (!k->is_text)
+		is_editing = !is_editing;
+	show_values();
+}
+
+// a turn, of the knob, the wheel or the arrow keys, by as many notches up
+// in value or down the list: on a list page the selection moves; on the
+// main screen it moves too, unless a number is being changed
+static void turn_selected(int up, int down) {
+	GtkWidget *list = shown_page_list();
+
+	if (list != NULL) {
+		page_list_select(list, page_list_selected(list) + down);
+		return;
+	}
+	if (!is_page_shown(PAGE_MAIN))
+		return;
+	if (is_editing && focus != ON_FREQUENCY) {
+		step_row(focus, up);
+		return;
+	}
+	for (; down > 0; down--)
+		move_focus(1);
+	for (; down < 0; down++)
+		move_focus(-1);
+}
+
+// a press, of the knob's button, Enter or the middle button: on a list page
+// the selected row is acted on; on the main screen an FT8 message that is
+// marked is answered, or else the selected control is acted on
+static void press_selected(void) {
+	GtkWidget *list = shown_page_list();
+
+	if (list != NULL) {
+		page_list_act(list);
+		return;
+	}
+	if (!is_page_shown(PAGE_MAIN))
+		return;
+	if (marked_message != NULL)
+		answer_marked();
+	else if (focus != ON_FREQUENCY)
+		act_on_row(focus);
+}
+
+static gboolean on_middle_button(GtkWidget *widget, GdkEventButton *event, gpointer unused) {
+	(void)widget;
+	(void)unused;
+	if (event->type != GDK_BUTTON_PRESS || event->button != 2)
+		return FALSE;
+	press_selected();
+	return TRUE;
+}
+
 // a key of a keyboard plugged into the radio, while a text is being typed
 static gboolean on_key_while_typing(const GdkEventKey *event) {
 	// a password's letters keep their case; everything else is in capitals
@@ -2886,16 +3127,22 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	(void)unused;
 	if (is_page_shown(PAGE_TEXT))
 		return on_key_while_typing(event);
-	if (!is_page_shown(PAGE_MAIN))
-		return FALSE;
 	if (event->keyval == GDK_KEY_Up) {
-		step_focused(1);
+		turn_selected(1, -1);
 		return TRUE;
 	}
 	if (event->keyval == GDK_KEY_Down) {
-		step_focused(-1);
+		turn_selected(-1, 1);
 		return TRUE;
 	}
+	// Enter is a press, except in CW, where it sends a space
+	if ((event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
+			&& (!is_page_shown(PAGE_MAIN) || strcmp(mode_group(), MACRO_GROUP))) {
+		press_selected();
+		return TRUE;
+	}
+	if (!is_page_shown(PAGE_MAIN))
+		return FALSE;
 	if (event->keyval == GDK_KEY_Tab) {
 		move_focus(1);
 		return TRUE;
@@ -2908,22 +3155,13 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 		if (!strcmp(mode_group(), MACRO_GROUP))
 			send_line(CW_DO_CONTROL, "ESC");
 		focus = ON_FREQUENCY;
+		is_editing = 0;
 		show_values();
 		return TRUE;
 	}
 	if (!strcmp(mode_group(), MACRO_GROUP))
 		return on_key_in_cw(event);
 	return FALSE;
-}
-
-static int row_of(const char *control) {
-	int i;
-
-	for (i = 0; i < row_count; i++) {
-		if (!strcmp(rows[i].control, control))
-			return i;
-	}
-	return NOT_FOUND;
 }
 
 // the knobs' thread: both knobs looked at, and the button, which counts as
@@ -2951,7 +3189,6 @@ static gboolean take_up_knobs(gpointer unused) {
 	int tuned = atomic_exchange(&tuning_notches, 0);
 	int turned = atomic_exchange(&control_notches, 0);
 	int pressed = atomic_exchange(&control_presses, 0);
-	int row = focus;
 
 	(void)unused;
 	if (tuned != 0)
@@ -2965,17 +3202,10 @@ static gboolean take_up_knobs(gpointer unused) {
 		}
 		return G_SOURCE_CONTINUE;
 	}
-	if (row == ON_FREQUENCY)
-		row = row_of(VOLUME_CONTROL);
-	if (turned != 0 && row != NOT_FOUND)
-		step_row(row, turned);
-	while (pressed > 0) {
-		if (marked_message != NULL)
-			answer_marked();
-		else
-			move_focus(1);
-		pressed--;
-	}
+	if (turned != 0)
+		turn_selected(turned, turned);
+	for (; pressed > 0; pressed--)
+		press_selected();
 	return G_SOURCE_CONTINUE;
 }
 
@@ -3693,6 +3923,10 @@ static void load_style(void) {
 		".tile.on { background-color: #B02020; }"
 		".tile.voip-on { background-color: #2050C0; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
+		".tile.focused.editing { box-shadow: inset 0 0 0 %dpx #00E060; }"
+		"scrollbar slider { min-width: %dpx; min-height: %dpx; border-radius: 0;"
+		" background-color: #607080; }"
+		"scrollbar { background-color: #101820; }"
 		".tile-title { font-size: %dpx; color: #00FFFF; }"
 		".dial-waiting { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #00FFFF; }"
@@ -3720,7 +3954,8 @@ static void load_style(void) {
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(1), px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
+		px(2), px(3), px(SCROLL_BAR_WIDTH), px(SCROLL_BAR_WIDTH),
+		px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
 		frequency_px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
 		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
@@ -3937,6 +4172,7 @@ static GtkWidget *create_list_page(const char *name, const char *back_to, GtkWid
 		GTK_POLICY_AUTOMATIC);
 	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(scroller), FALSE);
 	gtk_container_add(GTK_CONTAINER(scroller), *list);
+	g_signal_connect(scroller, "scroll-event", G_CALLBACK(on_page_wheel), *list);
 	gtk_box_pack_start(GTK_BOX(page), scroller, TRUE, TRUE, 0);
 	return page;
 }
@@ -4030,6 +4266,8 @@ static GtkWidget *create_window(void) {
 
 	g_signal_connect(screen, "size-allocate", G_CALLBACK(on_screen_sized), NULL);
 	g_signal_connect(window, "key-press-event", G_CALLBACK(on_key), NULL);
+	gtk_widget_add_events(window, GDK_BUTTON_PRESS_MASK);
+	g_signal_connect(window, "button-press-event", G_CALLBACK(on_middle_button), NULL);
 	g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 	return window;
 }

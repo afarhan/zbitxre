@@ -755,7 +755,18 @@ static void bootsel_open(){
 		"USB DRIVE", bootsel_go);
 }
 
+// a touch selects a row and does nothing else; a double touch, or a click
+// of the knob, acts on it, and the knob's turns step through the rows: the
+// author's rule of 16 October 2026, the window's too, after a touch that
+// both selected and acted made the lists hard to work
 static void on_setting_touched(lv_event_t *e){
+	struct setting *s = (struct setting *)lv_event_get_user_data(e);
+
+	settings_mark = (int)(s - settings);
+	settings_show();
+}
+
+static void on_setting_double_touched(lv_event_t *e){
 	struct setting *s = (struct setting *)lv_event_get_user_data(e);
 
 	settings_mark = (int)(s - settings);
@@ -795,6 +806,8 @@ static void settings_create(){
 		row = box_create(list, 0, i * ROW_HEIGHT, SCREEN_WIDTH, ROW_HEIGHT);
 		settings[i].box = row;
 		lv_obj_add_event_cb(row, on_setting_touched, LV_EVENT_CLICKED, &settings[i]);
+		lv_obj_add_event_cb(row, on_setting_double_touched, LV_EVENT_DOUBLE_CLICKED,
+			&settings[i]);
 		//what is not written yet is dim
 		colour = COLOUR_VALUE;
 		if (settings[i].open == NULL)
@@ -1506,10 +1519,10 @@ static void date_open(){
    my.sbitx.net from the panel. Built from what the radio describes, as the
    window builds it from the radio's schema, so a switch the radio gains is
    here without the panel knowing of it: every control of the group
-   CONNECTIONS, in the radio's order, a touch or a click of the knob taking
-   it to its next choice (RADIO_KEY asks first, in a box, whether to make
-   a new key), and under them what the radio says of each, which is only
-   read. */
+   CONNECTIONS, in the radio's order, a touch selecting one and a double
+   touch or a click of the knob taking it to its next choice (RADIO_KEY
+   asks first, in a box, whether to make a new key), and under them what
+   the radio says of each, which is only read. */
 
 #define CONNECTIONS_MOST 16
 static const char *connection_statuses[] = {
@@ -1587,7 +1600,13 @@ static void connection_next(int i){
 	connections_show();
 }
 
+// a touch selects, a double touch acts, as in the settings
 static void on_connection_touched(lv_event_t *e){
+	connections_mark = (int)(intptr_t)lv_event_get_user_data(e);
+	connections_show();
+}
+
+static void on_connection_double_touched(lv_event_t *e){
 	int i = (int)(intptr_t)lv_event_get_user_data(e);
 
 	connections_mark = i;
@@ -1622,6 +1641,8 @@ static void connection_add(struct panel_control *c, bool is_switch, bool is_key)
 	lv_obj_align(r->value, LV_ALIGN_RIGHT_MID, -PAD, 0);
 	if (is_switch || is_key)
 		lv_obj_add_event_cb(r->box, on_connection_touched, LV_EVENT_CLICKED,
+			(void *)(intptr_t)connections_count);
+		lv_obj_add_event_cb(r->box, on_connection_double_touched, LV_EVENT_DOUBLE_CLICKED,
 			(void *)(intptr_t)connections_count);
 	connections_count++;
 }
