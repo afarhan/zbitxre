@@ -85,23 +85,12 @@ if said:
 EOF
 }
 
-# the clock first, as install.sh does: a radio just started may have the
-# clock chip's time, which on a zbitx whose chip was never set is 1 January
-# 2000, until the network sets it some minutes later; and to such a clock
-# GitHub's certificate is not valid. The author's first UPDATE on a
-# production zbitx, on 16 October 2026, failed so. A date before EARLIEST,
-# in UTC, is waited on, three minutes at most
-EARLIEST=20261001
-if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
-	say "waiting for the clock to be set from the network"
-	for _ in $(seq 36); do
-		[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] && break
-		sleep 5
-	done
-	if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
-		say "the clock is not set; try again in a while"
-		exit 1
-	fi
+# the clock first: a radio whose clock says 2000, as a zbitx's can after
+# install.sh gives the kernel its clock chip, finds GitHub's certificate
+# not yet valid. set_clock.sh says why and sets it from my.sbitx.net
+if ! setup/set_clock.sh > /dev/null; then
+	say "the radio's clock is wrong and could not be set; the update stops"
+	exit 1
 fi
 
 before=$(git rev-parse --short HEAD)

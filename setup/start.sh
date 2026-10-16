@@ -21,6 +21,10 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
+# a clock that is plainly wrong is set from my.sbitx.net, apart from the
+# rest, which does not wait for it; set_clock.sh says why
+[ -x setup/set_clock.sh ] && setsid setup/set_clock.sh < /dev/null > /tmp/set_clock.out 2>&1 &
+
 if [ -x ./zbitx_gui ] && ! pgrep -x zbitx_gui > /dev/null; then
 	setsid ./zbitx_gui localhost < /dev/null > /tmp/zbitx_gui.out 2>&1 &
 fi

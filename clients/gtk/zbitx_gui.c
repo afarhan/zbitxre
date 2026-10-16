@@ -1537,7 +1537,9 @@ static void take_schema_line(char *rest) {
 		k->max = max;
 		k->step = step;
 	}
-	if (!strcmp(kind, "choice") && sscanf(rest, "%*s %*s %*s %127s", choices) == 1) {
+	// a choice may have a space in it, TAP AGAIN: the choices are the
+	// rest of the line, not its next word, which made UPDATE's -/TAP
+	if (!strcmp(kind, "choice") && sscanf(rest, "%*s %*s %*s %127[^\n]", choices) == 1) {
 		k->is_choice = 1;
 		snprintf(k->choices, CHOICES_MAX, "%s", choices);
 	}

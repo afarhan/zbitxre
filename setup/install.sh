@@ -88,22 +88,19 @@ else
 	sudo -n true 2>/dev/null || sudo -v || stop "this needs sudo, for apt and the boot configuration."
 fi
 
-# the clock first: a zbitx whose clock chip the kernel does not have yet
-# starts with the time it had when it was last switched off, and sets it
-# from the network some minutes later. Until then every certificate on the
-# internet looks not yet valid to it, and fetching zbitxre from GitHub
-# fails. Seen on a production zbitx on 16 October 2026, which started at
-# 30 April. A date before EARLIEST, in UTC, is taken to be wrong, and the
-# radio's time service is waited for, three minutes at most. (The first
-# form of this compared the local date with the day it was written, and a
-# radio west of Greenwich, still on the day before, waited for nothing.)
+# the clock first: a zbitx whose clock chip the kernel does not have, or
+# has but never set, may say a date long past, and its time service can be
+# slow to put it right; every certificate on the internet, GitHub's among
+# them, is then not yet valid to it. Seen on a production zbitx on 16
+# October 2026, at 30 April 2026 and at 1 January 2000. A date before
+# EARLIEST, in UTC, is set from the Date of a plain HTTP answer from
+# my.sbitx.net, which needs no certificate (setup/set_clock.sh, which this
+# copies, says more)
 EARLIEST=20261001
 if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
-	say "the radio's clock says $(date -u '+%d %B %Y'); waiting for it to be set from the network"
-	for _ in $(seq 36); do
-		[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] && break
-		sleep 5
-	done
+	say "the radio's clock says $(date -u '+%d %B %Y'); setting it from my.sbitx.net"
+	said=$(curl -sI --max-time 10 http://my.sbitx.net/ | tr -d '\r' | sed -n 's/^[Dd]ate: //p')
+	[ -n "$said" ] && sudo date -u -s "$said" > /dev/null
 	[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] \
 		|| stop "the radio's clock is still wrong. Set it, sudo date -s \"2026-10-16 12:00\" with today's date and time, and run this again."
 	say "the clock is right: $(date -u '+%d %B %Y %H:%M') UTC"
