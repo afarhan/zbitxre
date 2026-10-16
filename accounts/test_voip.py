@@ -309,7 +309,7 @@ class ServiceTest(unittest.TestCase):
         challenge = file.readline().split()[1]
         nonce = "0" * 32
         file.write("AUTH radio %s %s %s\n" % (callsign, nonce, self.remote_module.proof(
-            cookie, callsign, "radio", callsign, challenge, nonce)))
+            self.accounts.stretch(cookie, callsign), "radio", callsign, challenge, nonce)))
         file.write("radio\n")
         file.flush()
         self.assertTrue(file.readline().startswith("WELCOME"))

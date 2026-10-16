@@ -99,6 +99,8 @@ AHEAD_MOST = 3000
 # told a radio of its speech being dropped no oftener than this
 BUSY_EVERY_S = 1.0
 HZ_A_CHANNEL = 1000
+# a packet that comes this long after the one before it is counted late
+LATE_S = 0.1
 
 
 def channel_of(hz):
@@ -153,6 +155,14 @@ class Floor:
         self.stream = stream
         self.began = now
         self.heard_by = 0
+        # how the speaker's packets came: how many, and the gaps between
+        # them, which the log says at the end of the over. The author heard
+        # the zbitx's speech pumping at the sbitx on 16 October 2026, and
+        # the other way not; this says whether the packets came late
+        self.packets = 0
+        self.last_at = now
+        self.longest_gap = 0.0
+        self.late = 0
 
 
 class Voip:
@@ -287,6 +297,13 @@ class Voip:
             self.end_over(channel, now)
             self.drop(stream, "one minute", now)
             return
+        gap = now - floor.last_at
+        floor.last_at = now
+        floor.packets += 1
+        if floor.packets > 1:
+            floor.longest_gap = max(floor.longest_gap, gap)
+            if gap > LATE_S:
+                floor.late += 1
         listeners = [member for member in self.channels[channel]
                      if member is not stream and member.address is not None]
         floor.heard_by = max(floor.heard_by, len(listeners))
@@ -329,8 +346,12 @@ class Voip:
             return
         floor.stream.over_ended = ended
         self.usage["overs"] += 1
-        self.say("voip: %s spoke on %d kHz for %d s, heard by %d" % (
-            floor.stream.callsign, channel, round(ended - floor.began), floor.heard_by))
+        seconds = ended - floor.began
+        self.say("voip: %s spoke on %d kHz for %d s, heard by %d; %d packets of %d, "
+                 "%d more than %d ms after the one before, the longest gap %d ms" % (
+                     floor.stream.callsign, channel, round(seconds), floor.heard_by,
+                     floor.packets, round(seconds * PACKETS_A_SECOND) + 1, floor.late,
+                     round(LATE_S * 1000), round(floor.longest_gap * 1000)))
 
     def sweep(self, now):
         """each second or so: overs that have ended are ended, and radios
