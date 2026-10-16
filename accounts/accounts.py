@@ -1071,6 +1071,9 @@ td button { margin: 0; padding: 0.2em 0.8em; }
 .wrong { background: #fbeeee; border-left: 4px solid #c33; padding: 0.6em 0.8em; }
 .code { font-family: monospace; letter-spacing: 0.1em; text-transform: uppercase; }
 .foot { margin-top: 3em; color: #777; font-size: 0.9em; }
+.signed { margin: 1em 0; }
+.signed form { display: inline; margin-left: 1em; }
+.signed button { margin: 0; padding: 0.2em 0.8em; }
 """
 
 
@@ -1633,10 +1636,18 @@ class Service:
                 (radio, account["id"])).fetchone()
 
 
-def page(title, body, account=None):
+def page(title, body, account=None, guard=None):
+    # signed in, the top of every page says as whom, with Sign out beside
+    # it: the author, with two accounts, wanted to go from one to the other
+    # and found Sign out only at the foot of his own page
     signed = ""
     if account is not None:
-        signed = "<p>Signed in as <strong>%s</strong>.</p>" % html.escape(account["callsign"])
+        signed = "<div class=\"signed\">Signed in as <strong>%s</strong>" % html.escape(account["callsign"])
+        if guard is not None:
+            signed += ("<form method=\"post\" action=\"/signout\">"
+                       "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                       "<button>Sign out</button></form>" % guard)
+        signed += "</div>"
     return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             "<title>%s - my.sbitx.net</title><link rel=\"stylesheet\" href=\"/style.css\">"
@@ -1791,11 +1802,8 @@ class Handler(BaseHTTPRequestHandler):
                 "<label>The radio's cookie <input type=\"text\" name=\"cookie\" "
                 "class=\"code\" maxlength=\"20\" autocomplete=\"off\" required></label>"
                 "<button>Add the radio</button></form>"
-                "<form method=\"post\" action=\"/signout\">"
-                "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                "<button>Sign out</button></form>"
-                % (html.escape(account["email"]), radios, guard, guard))
-        self.send(200, page(account["callsign"], body, account))
+                % (html.escape(account["email"]), radios, guard))
+        self.send(200, page(account["callsign"], body, account, guard))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
@@ -1873,7 +1881,8 @@ class Handler(BaseHTTPRequestHandler):
         mine = [radio for radio in self.service.radios(account["id"])
                 if str(radio["id"]) == number]
         if not mine:
-            self.send(404, page("Not found", "<p>You have no such radio.</p>", account))
+            self.send(404, page("Not found", "<p>You have no such radio.</p>", account,
+                                     self.form_guard(self.session_secret())))
             return
         name = radio_id(account["callsign"], mine[0]["suffix"])
         sockets = self.service.settings.sockets
@@ -1891,7 +1900,8 @@ class Handler(BaseHTTPRequestHandler):
         if number.isdigit():
             kept = self.service.snapshot(account, int(number))
         if kept is None:
-            self.send(404, page("Not found", "<p>Nothing is kept for that radio.</p>", account))
+            self.send(404, page("Not found", "<p>Nothing is kept for that radio.</p>", account,
+                                     self.form_guard(self.session_secret())))
             return
         rows = ""
         if what == "settings":
