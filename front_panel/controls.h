@@ -9,10 +9,10 @@
 #include <stdint.h>
 #include "link.h"
 
-#define CONTROLS_MAX 72
+#define CONTROLS_MAX 96
 #define CONTROL_TEXT_MAX 16
 //a text control's value, as the panel keeps it: a callsign, a grid
-#define CONTROL_TEXT_ROOM 24
+#define CONTROL_TEXT_ROOM 48
 #define OWN_GROUP "PANEL"
 #define NOT_ON_THE_LINK 0
 

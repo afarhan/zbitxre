@@ -194,6 +194,7 @@ static bool is_up(lv_obj_t *screen);
 static void callsign_open();
 static void grid_open();
 static void bootsel_open();
+static void connections_open();
 // a row that only shows something; a row with no open is drawn dim, as
 // not done yet
 static void nothing_open(){}
@@ -211,6 +212,7 @@ static struct setting settings[] = {
 	{"Grid", "MYGRID", NULL, grid_open, NULL, NULL},
 	{"Date/Time", "CLOCK", NULL, date_open, NULL, NULL},
 	{"WiFi", NULL, NULL, wifi_open, NULL, NULL},
+	{"Connections", NULL, NULL, connections_open, NULL, NULL},
 	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
 	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},
 	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, NULL, NULL},
@@ -1396,6 +1398,154 @@ static void date_open(){
 	lv_obj_remove_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* the connections
+
+   The radio's CONNECTIONS, as the window has them on a screen of their
+   own under SET: the author asked on 16 October 2026 for the panel and the
+   window to be the same, and a zbitx owner had no way to put the radio on
+   my.sbitx.net from the panel. Built from what the radio describes, as the
+   window builds it from the radio's schema, so a switch the radio gains is
+   here without the panel knowing of it: every control of the group
+   CONNECTIONS, in the radio's order, a touch or a click of the knob taking
+   it to its next choice (NEW_COOKIE so wants two, within five seconds, as
+   the radio has it), and under them what the radio says of each, which is
+   only read. */
+
+#define CONNECTIONS_MOST 16
+static const char *connection_statuses[] = {
+	"REMOTE_STATUS", "VOIP_STATUS", "BLUETOOTH_STATUS", "SOUND_CARD_STATUS", "CAT_STATUS",
+};
+#define CONNECTION_STATUSES ((int)(sizeof(connection_statuses) / sizeof(connection_statuses[0])))
+
+struct connection_row {
+	struct panel_control *c;
+	lv_obj_t *box;
+	lv_obj_t *value;
+	bool is_switch;
+};
+
+static lv_obj_t *connections_screen;
+static lv_obj_t *connections_list;
+static struct connection_row connection_rows[CONNECTIONS_MOST];
+static int connections_count;
+static int connections_switches;
+static int connections_mark;
+
+static void connections_show(){
+	char text[CONTROL_TEXT_ROOM];
+
+	for (int i = 0; i < connections_count; i++){
+		struct connection_row *r = &connection_rows[i];
+
+		if (r->c->d.kind == LINK_KIND_TEXT)
+			snprintf(text, sizeof(text), "%s", r->c->text);
+		else
+			controls_value_text(r->c, text, sizeof(text));
+		lv_label_set_text(r->value, text);
+		if (r->is_switch)
+			show_mark(r->box, i == connections_mark);
+	}
+	if (connections_mark < connections_count)
+		lv_obj_scroll_to_view(connection_rows[connections_mark].box, LV_ANIM_OFF);
+}
+
+static void connection_next(int i){
+	struct panel_control *c = connection_rows[i].c;
+	int next;
+
+	if (!connection_rows[i].is_switch || controls_choices(c) < 1)
+		return;
+	next = ((int)c->value + 1) % controls_choices(c);
+	c->value = next;
+	c->last_user_change = millis();
+	Serial.printf("%s %d\n", c->d.name, next);
+	i2c_link_changed(c->d.number, next);
+	connections_show();
+}
+
+static void on_connection_touched(lv_event_t *e){
+	int i = (int)(intptr_t)lv_event_get_user_data(e);
+
+	connections_mark = i;
+	connection_next(i);
+}
+
+static void on_connections_back(lv_event_t *e){
+	(void)e;
+	lv_obj_add_flag(connections_screen, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_remove_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void connection_add(struct panel_control *c, bool is_switch){
+	struct connection_row *r;
+	lv_obj_t *label;
+
+	if (c == NULL || connections_count >= CONNECTIONS_MOST)
+		return;
+	r = &connection_rows[connections_count];
+	r->c = c;
+	r->is_switch = is_switch;
+	r->box = box_create(connections_list, 0, connections_count * ROW_HEIGHT, SCREEN_WIDTH,
+		ROW_HEIGHT);
+	label = text_create(r->box, c->d.name, &lv_font_montserrat_16,
+		is_switch ? COLOUR_VALUE : COLOUR_TITLE);
+	lv_obj_align(label, LV_ALIGN_LEFT_MID, PAD, 0);
+	r->value = text_create(r->box, "", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_label_set_long_mode(r->value, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(r->value, SCREEN_WIDTH / 2);
+	lv_obj_set_style_text_align(r->value, LV_TEXT_ALIGN_RIGHT, 0);
+	lv_obj_align(r->value, LV_ALIGN_RIGHT_MID, -PAD, 0);
+	if (is_switch)
+		lv_obj_add_event_cb(r->box, on_connection_touched, LV_EVENT_CLICKED,
+			(void *)(intptr_t)connections_count);
+	connections_count++;
+}
+
+// the rows are made afresh each time the screen is opened, from what the
+// radio has described by then
+static void connections_rows_make(){
+	struct panel_control *c;
+
+	lv_obj_clean(connections_list);
+	connections_count = 0;
+	for (int i = 0; i < controls_count(); i++){
+		c = controls_at(i);
+		if (!strcmp(c->d.group, "CONNECTIONS") && c->d.kind == LINK_KIND_CHOICE)
+			connection_add(c, true);
+	}
+	connections_switches = connections_count;
+	for (int i = 0; i < CONNECTION_STATUSES; i++)
+		connection_add(controls_find(connection_statuses[i]), false);
+	if (connections_mark >= connections_switches)
+		connections_mark = 0;
+}
+
+static void connections_create(){
+	lv_obj_t *label;
+
+	connections_screen = screen_create();
+	label = text_create(connections_screen, "CONNECTIONS", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
+	back_button_create(connections_screen, on_connections_back);
+	connections_list = lv_obj_create(connections_screen);
+	lv_obj_set_size(connections_list, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
+	lv_obj_align(connections_list, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
+	lv_obj_set_style_bg_color(connections_list, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_border_width(connections_list, 0, 0);
+	lv_obj_set_style_radius(connections_list, 0, 0);
+	lv_obj_set_style_pad_all(connections_list, 0, 0);
+	lv_obj_set_scroll_dir(connections_list, LV_DIR_VER);
+}
+
+static void connections_open(){
+	if (connections_screen == NULL)
+		connections_create();
+	connections_rows_make();
+	connections_show();
+	lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_remove_flag(connections_screen, LV_OBJ_FLAG_HIDDEN);
+}
+
 /* the access points */
 
 //the radio is asked to scan; its list comes some seconds later
@@ -1620,6 +1770,14 @@ void screens_knob_turned(int steps){
 		roller_set(roller_marked, roller_value(roller_marked) + steps);
 		date_show();
 	}
+	if (is_up(connections_screen) && connections_switches > 0){
+		connections_mark += steps;
+		if (connections_mark < 0)
+			connections_mark = 0;
+		if (connections_mark > connections_switches - 1)
+			connections_mark = connections_switches - 1;
+		connections_show();
+	}
 	if (is_up(settings_screen)){
 		settings_mark += steps;
 		if (settings_mark < 0)
@@ -1641,6 +1799,8 @@ void screens_knob_clicked(){
 	}
 	else if (is_up(wifi_screen))
 		wifi_choose(wifi_mark);
+	else if (is_up(connections_screen))
+		connection_next(connections_mark);
 	else if (is_up(settings_screen) && settings[settings_mark].open != NULL)
 		settings[settings_mark].open();
 }
@@ -1722,6 +1882,8 @@ bool screens_is_open(){
 		return true;
 	if (date_screen != NULL && !lv_obj_has_flag(date_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
+	if (connections_screen != NULL && !lv_obj_has_flag(connections_screen, LV_OBJ_FLAG_HIDDEN))
+		return true;
 	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
 	return input_screen != NULL && !lv_obj_has_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
@@ -1746,6 +1908,8 @@ void screens_close(){
 		lv_obj_add_flag(wifi_screen, LV_OBJ_FLAG_HIDDEN);
 	if (date_screen != NULL)
 		lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
+	if (connections_screen != NULL)
+		lv_obj_add_flag(connections_screen, LV_OBJ_FLAG_HIDDEN);
 	if (log_screen != NULL){
 		log_editing_end();
 		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
@@ -1766,4 +1930,6 @@ void screens_radio_said(){
 		date_show();
 	if (settings_screen != NULL && !lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))
 		settings_show();
+	if (connections_screen != NULL && !lv_obj_has_flag(connections_screen, LV_OBJ_FLAG_HIDDEN))
+		connections_show();
 }
