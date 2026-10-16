@@ -689,6 +689,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define CONNECTIONS_GROUP "CONNECTIONS"
 #define PAGE_CONNECTIONS "connections"
 #define RADIO_KEY_CONTROL "RADIO_KEY"
+#define UPDATE_CONTROL "UPDATE"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
 #define WINDOW_NAME "zbitx"
 #define TITLE_MAX 160
@@ -1537,8 +1538,8 @@ static void take_schema_line(char *rest) {
 		k->max = max;
 		k->step = step;
 	}
-	// a choice may have a space in it, TAP AGAIN: the choices are the
-	// rest of the line, not its next word, which made UPDATE's -/TAP
+	// a choice may have a space in it: the choices are the rest of the
+	// line, not its next word, which once made UPDATE's -/TAP AGAIN -/TAP
 	if (!strcmp(kind, "choice") && sscanf(rest, "%*s %*s %*s %127[^\n]", choices) == 1) {
 		k->is_choice = 1;
 		snprintf(k->choices, CHOICES_MAX, "%s", choices);
@@ -2608,8 +2609,27 @@ static void ask_for_a_new_key(void) {
 	gtk_widget_destroy(dialog);
 }
 
+// UPDATE, tapped: a box that says what an update does and asks whether to
+// go ahead, as the author asked on 16 October 2026; a yes starts it
+static void ask_to_update(void) {
+	GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window), GTK_DIALOG_MODAL,
+		GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Update the radio?");
+
+	gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+		"The radio fetches the newest software from GitHub. If there is "
+		"anything new, it builds it, waits until it is not transmitting, "
+		"gives the front panel its new firmware and restarts with it all. "
+		"On a zbitx this takes about ten minutes, and the radio works "
+		"meanwhile. The status line says how it goes.");
+	gtk_dialog_add_buttons(GTK_DIALOG(dialog), "CANCEL", GTK_RESPONSE_CANCEL,
+		"UPDATE", GTK_RESPONSE_ACCEPT, NULL);
+	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT)
+		send_line(UPDATE_CONTROL, "UPDATING");
+	gtk_widget_destroy(dialog);
+}
+
 // a tap on a setting: a text is typed, a choice goes to its next, and the
-// radio's key asks first whether to make a new one
+// radio's key and UPDATE ask first
 static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
 		gdouble y, gpointer setting) {
 	struct known *k = setting;
@@ -2620,6 +2640,10 @@ static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble 
 	(void)y;
 	if (!strcmp(k->name, RADIO_KEY_CONTROL)) {
 		ask_for_a_new_key();
+		return;
+	}
+	if (!strcmp(k->name, UPDATE_CONTROL)) {
+		ask_to_update();
 		return;
 	}
 	if (k->is_text) {

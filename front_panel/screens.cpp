@@ -201,6 +201,7 @@ static void nothing_open(){}
 static void date_open();
 static void wifi_open();
 static void next_choice_open();
+static void update_open();
 static void settings_show_values();
 
 #ifndef PANEL_FIRMWARE
@@ -215,7 +216,7 @@ static struct setting settings[] = {
 	{"Connections", NULL, NULL, connections_open, NULL, NULL},
 	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
 	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},
-	{"Update", "UPDATE", NULL, next_choice_open, NULL, NULL},
+	{"Update", "UPDATE", NULL, update_open, NULL, NULL},
 	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, NULL, NULL},
 	{"BOOTSEL", NULL, "-", bootsel_open, NULL, NULL},
 };
@@ -426,6 +427,96 @@ static lv_obj_t *button_create(lv_obj_t *mom, int x, int y, int w, int h,
 	return box;
 }
 
+/* a question in a box, over whatever screen is up
+
+   What restarts the radio or the panel, or puts the radio off line, asks
+   first, in a box that says what will happen, with a button that does it
+   and CANCEL, the knob going between the two. The author asked for it for
+   UPDATE on 16 October 2026, in place of two taps, whose refusals of a
+   wrong tap he found cryptic; RADIO_KEY and BOOTSEL ask the same way. */
+
+#define CONFIRM_WIDTH 440
+#define CONFIRM_HEIGHT 260
+#define CONFIRM_BUTTON_WIDTH 120
+#define CONFIRM_BUTTON_HEIGHT 48
+
+static lv_obj_t *confirm_layer;
+static lv_obj_t *confirm_question;
+static lv_obj_t *confirm_detail;
+static lv_obj_t *confirm_yes;
+static lv_obj_t *confirm_no;
+static bool confirm_is_on_yes;
+static void (*confirm_done)();
+
+static void confirm_show(){
+	show_mark(confirm_yes, confirm_is_on_yes);
+	show_mark(confirm_no, !confirm_is_on_yes);
+}
+
+static void confirm_answered(bool is_yes){
+	void (*done)() = confirm_done;
+
+	lv_obj_add_flag(confirm_layer, LV_OBJ_FLAG_HIDDEN);
+	confirm_done = NULL;
+	if (is_yes && done != NULL)
+		done();
+}
+
+static void on_confirm_yes(lv_event_t *e){
+	(void)e;
+	confirm_answered(true);
+}
+
+static void on_confirm_no(lv_event_t *e){
+	(void)e;
+	confirm_answered(false);
+}
+
+static void confirm_create(){
+	lv_obj_t *box;
+	int buttons_top = CONFIRM_HEIGHT - CONFIRM_BUTTON_HEIGHT - 2 * PAD;
+
+	confirm_layer = lv_obj_create(lv_layer_top());
+	lv_obj_remove_style_all(confirm_layer);
+	lv_obj_set_size(confirm_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
+	lv_obj_align(confirm_layer, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_bg_color(confirm_layer, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_bg_opa(confirm_layer, LV_OPA_60, 0);
+	lv_obj_add_flag(confirm_layer, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(confirm_layer, LV_OBJ_FLAG_HIDDEN);
+	box = box_create(confirm_layer, (SCREEN_WIDTH - CONFIRM_WIDTH) / 2,
+		(SCREEN_HEIGHT - CONFIRM_HEIGHT) / 2, CONFIRM_WIDTH, CONFIRM_HEIGHT);
+	confirm_question = text_create(box, "", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(confirm_question, LV_ALIGN_TOP_MID, 0, 2 * PAD);
+	confirm_detail = text_create(box, "", &lv_font_montserrat_14, COLOUR_TITLE);
+	lv_label_set_long_mode(confirm_detail, LV_LABEL_LONG_WRAP);
+	lv_obj_set_width(confirm_detail, CONFIRM_WIDTH - 4 * PAD);
+	lv_obj_align(confirm_detail, LV_ALIGN_TOP_MID, 0, 6 * PAD);
+	confirm_yes = button_create(box, CONFIRM_WIDTH / 2 - CONFIRM_BUTTON_WIDTH - PAD,
+		buttons_top, CONFIRM_BUTTON_WIDTH, CONFIRM_BUTTON_HEIGHT, "", on_confirm_yes);
+	confirm_no = button_create(box, CONFIRM_WIDTH / 2 + PAD,
+		buttons_top, CONFIRM_BUTTON_WIDTH, CONFIRM_BUTTON_HEIGHT, "CANCEL", on_confirm_no);
+}
+
+// the question, what will happen, the button that does it, and what is
+// done on it; CANCEL is marked to begin with
+static void confirm_ask(const char *question, const char *detail, const char *yes,
+		void (*done)()){
+	if (confirm_layer == NULL)
+		confirm_create();
+	lv_label_set_text(confirm_question, question);
+	lv_label_set_text(confirm_detail, detail);
+	lv_label_set_text(lv_obj_get_child(confirm_yes, 0), yes);
+	confirm_done = done;
+	confirm_is_on_yes = false;
+	confirm_show();
+	lv_obj_remove_flag(confirm_layer, LV_OBJ_FLAG_HIDDEN);
+}
+
+static bool confirm_is_up(){
+	return confirm_layer != NULL && !lv_obj_has_flag(confirm_layer, LV_OBJ_FLAG_HIDDEN);
+}
+
 //the way back, at the top left of a screen, an arrow to the left: where
 //the author wants it, as on a telephone
 static void back_button_create(lv_obj_t *mom, lv_event_cb_t touched){
@@ -611,15 +702,33 @@ static void next_choice_open(){
 	settings_show();
 }
 
+// UPDATE, touched: the box says what an update does, and a yes sets the
+// radio's UPDATE to UPDATING, the second of its choices, "-/UPDATING",
+// which starts it
+static void update_go(){
+	struct panel_control *c = controls_find("UPDATE");
+
+	if (c == NULL)
+		return;
+	Serial.printf("UPDATE UPDATING\n");
+	i2c_link_changed(c->d.number, 1);
+}
+
+static void update_open(){
+	confirm_ask("Update the radio?",
+		"It fetches the newest software. If there is anything new, it builds "
+		"it, waits until it is not transmitting, gives this panel its new "
+		"firmware and restarts with it all. About ten minutes; the radio "
+		"works meanwhile.",
+		"UPDATE", update_go);
+}
+
 // BOOTSEL restarts the panel as the USB drive its chip has in ROM, for an
 // owner who puts new firmware on it with the cable: the author asked for it
 // among the settings on 16 October 2026, with the version beside it. The
-// panel does it itself, with or without the radio program. Two taps within
-// BOOTSEL_AGAIN_MS, since a panel left as a drive shows nothing until it is
-// given firmware or switched off and on
-#define BOOTSEL_AGAIN_MS 5000
-static uint32_t bootsel_tapped_ms;
-
+// panel does it itself, with or without the radio program. It asks first,
+// since a panel left as a drive shows nothing until it is given firmware or
+// switched off and on
 static struct setting *setting_called(const char *label){
 	for (int i = 0; i < SETTINGS; i++){
 		if (!strcmp(settings[i].label, label))
@@ -628,32 +737,22 @@ static struct setting *setting_called(const char *label){
 	return NULL;
 }
 
-static void bootsel_open(){
+static void bootsel_go(){
 	struct setting *s = setting_called("BOOTSEL");
 
-	if (bootsel_tapped_ms != 0 && millis() - bootsel_tapped_ms < BOOTSEL_AGAIN_MS){
-		s->fixed = "USB DRIVE";
-		settings_show();
-		lv_timer_handler();
-		delay(200);
-		rp2040.rebootToBootloader();
-		return;
-	}
-	bootsel_tapped_ms = millis();
-	s->fixed = "TAP AGAIN";
+	s->fixed = "USB DRIVE";
 	settings_show();
+	lv_timer_handler();
+	delay(200);
+	rp2040.rebootToBootloader();
 }
 
-// TAP AGAIN goes back to - when the second tap does not come
-static void bootsel_slice(){
-	struct setting *s;
-
-	if (bootsel_tapped_ms == 0 || millis() - bootsel_tapped_ms < BOOTSEL_AGAIN_MS)
-		return;
-	bootsel_tapped_ms = 0;
-	s = setting_called("BOOTSEL");
-	s->fixed = "-";
-	settings_show();
+static void bootsel_open(){
+	confirm_ask("Make the panel a USB drive?",
+		"For new firmware by the USB cable. The panel goes blank until a "
+		"computer copies firmware onto the drive RPI-RP2, or the radio is "
+		"switched off and on.",
+		"USB DRIVE", bootsel_go);
 }
 
 static void on_setting_touched(lv_event_t *e){
@@ -1408,9 +1507,9 @@ static void date_open(){
    window builds it from the radio's schema, so a switch the radio gains is
    here without the panel knowing of it: every control of the group
    CONNECTIONS, in the radio's order, a touch or a click of the knob taking
-   it to its next choice (NEW_COOKIE so wants two, within five seconds, as
-   the radio has it), and under them what the radio says of each, which is
-   only read. */
+   it to its next choice (RADIO_KEY asks first, in a box, whether to make
+   a new key), and under them what the radio says of each, which is only
+   read. */
 
 #define CONNECTIONS_MOST 16
 static const char *connection_statuses[] = {
@@ -1427,46 +1526,24 @@ struct connection_row {
 };
 
 // RADIO_KEY, touched: whether to make the radio a new key, NEW KEY or
-// CANCEL, the knob going between the two, as the logbook asks before it
-// deletes. The author wanted the choice of changing the key or leaving it,
+// CANCEL. The author wanted the choice of changing the key or leaving it,
 // on 16 October 2026, when the key and the state of the link had been one
 // control, REMOTE_STATUS
-static lv_obj_t *key_layer;
-static lv_obj_t *key_yes;
-static lv_obj_t *key_no;
-static bool key_is_on_yes;
-
-static void key_ask_show(){
-	show_mark(key_yes, key_is_on_yes);
-	show_mark(key_no, !key_is_on_yes);
-}
-
-static void key_answered(bool is_yes){
+static void new_key_go(){
 	struct panel_control *c = controls_find("NEW_COOKIE");
 
-	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
-	if (!is_yes || c == NULL)
+	if (c == NULL)
 		return;
 	// MAKING is the second of NEW_COOKIE's choices, "-/MAKING"
 	Serial.printf("NEW_COOKIE MAKING\n");
 	i2c_link_changed(c->d.number, 1);
 }
 
-static void on_key_yes(lv_event_t *e){
-	(void)e;
-	key_answered(true);
-}
-
-static void on_key_no(lv_event_t *e){
-	(void)e;
-	key_answered(false);
-}
-
 static void key_ask(){
-	key_is_on_yes = false;
-	key_ask_show();
-	lv_obj_move_foreground(key_layer);
-	lv_obj_remove_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
+	confirm_ask("Make a new radio key?",
+		"The radio goes off line until the new key is typed on its Manage "
+		"page at my.sbitx.net.",
+		"NEW KEY", new_key_go);
 }
 
 static lv_obj_t *connections_screen;
@@ -1575,31 +1652,6 @@ static void connections_create(){
 	label = text_create(connections_screen, "CONNECTIONS", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
 	back_button_create(connections_screen, on_connections_back);
-	key_layer = lv_obj_create(connections_screen);
-	lv_obj_remove_style_all(key_layer);
-	lv_obj_set_size(key_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
-	lv_obj_align(key_layer, LV_ALIGN_TOP_LEFT, 0, 0);
-	lv_obj_set_style_bg_color(key_layer, lv_color_hex(COLOUR_SCREEN), 0);
-	lv_obj_set_style_bg_opa(key_layer, ASK_DIMMED, 0);
-	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_CLICKABLE);
-	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
-	{
-		lv_obj_t *box = box_create(key_layer, (SCREEN_WIDTH - ASK_WIDTH) / 2,
-			(SCREEN_HEIGHT - ASK_HEIGHT) / 2, ASK_WIDTH, ASK_HEIGHT);
-		lv_obj_t *question = text_create(box, "Make a new radio key?",
-			&lv_font_montserrat_16, COLOUR_VALUE);
-		lv_obj_t *detail = text_create(box, "Add it again at my.sbitx.net",
-			&lv_font_montserrat_14, COLOUR_TITLE);
-
-		lv_obj_align(question, LV_ALIGN_TOP_MID, 0, 2 * PAD);
-		lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 5 * PAD);
-		key_yes = button_create(box, ASK_WIDTH / 2 - ASK_BUTTON_WIDTH - PAD,
-			ASK_HEIGHT - ASK_BUTTON_HEIGHT - 2 * PAD, ASK_BUTTON_WIDTH, ASK_BUTTON_HEIGHT,
-			"NEW KEY", on_key_yes);
-		key_no = button_create(box, ASK_WIDTH / 2 + PAD,
-			ASK_HEIGHT - ASK_BUTTON_HEIGHT - 2 * PAD, ASK_BUTTON_WIDTH, ASK_BUTTON_HEIGHT,
-			"CANCEL", on_key_no);
-	}
 	connections_list = lv_obj_create(connections_screen);
 	lv_obj_set_size(connections_list, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
 	lv_obj_align(connections_list, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
@@ -1824,6 +1876,11 @@ static bool is_up(lv_obj_t *screen){
 //mark from row to row, the list moving to keep it in view, and a click
 //chooses the marked row, as a touch on it does
 void screens_knob_turned(int steps){
+	if (confirm_is_up()){
+		confirm_is_on_yes = !confirm_is_on_yes;
+		confirm_show();
+		return;
+	}
 	if (is_up(wifi_screen) && wifi_is_listed && wifi_count > 0){
 		wifi_mark += steps;
 		if (wifi_mark < 0)
@@ -1845,11 +1902,7 @@ void screens_knob_turned(int steps){
 	}
 	// the knob goes to every row, the statuses too, to bring them into
 	// view; a click on a status does nothing
-	if (is_up(connections_screen) && is_up(key_layer)){
-		key_is_on_yes = !key_is_on_yes;
-		key_ask_show();
-	}
-	else if (is_up(connections_screen) && connections_count > 0){
+	if (is_up(connections_screen) && connections_count > 0){
 		connections_mark += steps;
 		if (connections_mark < 0)
 			connections_mark = 0;
@@ -1868,7 +1921,9 @@ void screens_knob_turned(int steps){
 }
 
 void screens_knob_clicked(){
-	if (is_up(log_screen) && is_up(ask_layer))
+	if (confirm_is_up())
+		confirm_answered(confirm_is_on_yes);
+	else if (is_up(log_screen) && is_up(ask_layer))
 		ask_answered(ask_is_on_yes);
 	else if (is_up(log_screen) && !is_up(log_keyboard))
 		log_ask_to_delete();
@@ -1878,8 +1933,6 @@ void screens_knob_clicked(){
 	}
 	else if (is_up(wifi_screen))
 		wifi_choose(wifi_mark);
-	else if (is_up(connections_screen) && is_up(key_layer))
-		key_answered(key_is_on_yes);
 	else if (is_up(connections_screen))
 		connection_next(connections_mark);
 	else if (is_up(settings_screen) && settings[settings_mark].open != NULL)
@@ -1901,7 +1954,6 @@ void screens_status(const char *text){
 
 //from loop(): what has changed on a screen that is up is shown
 void screens_slice(){
-	bootsel_slice();
 	if (wifi_is_to_show && wifi_screen != NULL)
 		wifi_show();
 	if (log_is_to_show && log_screen != NULL)

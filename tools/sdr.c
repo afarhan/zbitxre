@@ -616,30 +616,24 @@ static struct control radio_key = {
 
 // UPDATE brings the radio up to the newest zbitxre: the author asked on 16
 // October 2026 for it among the settings, to run the updates, the panel's
-// firmware with them, without a terminal. Two taps, TAP AGAIN and then
-// RUNNING, within UPDATE_WAIT_MS, since a slip would restart the radio. On
-// RUNNING the radio starts setup/update.sh --if-new on its own: that
-// fetches the newest from GitHub and, if there is anything new, builds it,
-// waits until the radio is not transmitting, stops this program, gives the
-// panel its firmware over I2C and starts the radio again. It says on the
-// status line how it goes, by the terminal's "say". It is in the STATION
-// group, as the settings are, so that the window lists it in SET.
-#define UPDATE_WAIT_MS 5000
+// firmware with them, without a terminal. A tap on it in the window or on
+// the panel asks first, in a box, whether to update, since the radio
+// restarts; a yes sets it to UPDATING. It was two taps, TAP AGAIN and then
+// RUNNING, until the author found the radio's refusals of a wrong tap
+// cryptic and asked for the box instead, the same day. On UPDATING the
+// radio starts setup/update.sh --if-new on its own: that fetches the
+// newest from GitHub and, if there is anything new, builds it, waits until
+// the radio is not transmitting, stops this program, gives the panel its
+// firmware over I2C and starts the radio again. It says on the status line
+// how it goes, by the terminal's "say". It is in the STATION group, as the
+// settings are, so that the window lists it in SET.
 #define UPDATE_SCRIPT "setup/update.sh"
 #define UPDATE_LOG "/tmp/update.log"
 
-static int apply_update(struct control *c, const char *value, char *why, int room) {
-	if (!strcmp(value, "RUNNING") && strcmp(c->value, "TAP AGAIN")) {
-		snprintf(why, room, "TAP AGAIN first");
-		return -1;
-	}
-	return 0;
-}
-
 static struct control update = {
 	.group = "STATION", .name = "UPDATE", .kind = CONTROL_CHOICE,
-	.choices = "-/TAP AGAIN/RUNNING",
-	.value = "-", .apply = apply_update,
+	.choices = "-/UPDATING",
+	.value = "-",
 };
 
 // update.sh, started apart from this program, which it will stop: twice
@@ -667,24 +661,11 @@ static void update_start(void) {
 
 static void set_setting(const char *name, const char *value, int origin);
 
-static void follow_update(long now) {
-	static long tapped_ms;
-	const char *value = control_get("UPDATE");
-
-	if (!strcmp(value, "TAP AGAIN")) {
-		if (tapped_ms == 0)
-			tapped_ms = now;
-		else if (now - tapped_ms > UPDATE_WAIT_MS) {
-			set_setting("UPDATE", "-", ORIGIN_NONE);
-			tapped_ms = 0;
-		}
-		return;
-	}
-	tapped_ms = 0;
-	if (strcmp(value, "RUNNING"))
+static void follow_update(void) {
+	if (strcmp(control_get("UPDATE"), "UPDATING"))
 		return;
 	set_setting("UPDATE", "-", ORIGIN_NONE);
-	panel_say("Looking for an update; if there is one the radio restarts with it");
+	panel_say("Update: looking for a newer version");
 	update_start();
 }
 
@@ -1650,7 +1631,7 @@ static void main_loop(void) {
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
 		follow_sound_card(now_ms());
-		follow_update(now_ms());
+		follow_update();
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();

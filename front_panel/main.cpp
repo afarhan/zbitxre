@@ -1473,8 +1473,8 @@ void main_radio_says(int number, int32_t value){
 	}
 	//a value said while the operator's own change still wins is set aside
 	//and taken when it no longer does, not thrown away: the radio puts
-	//UPDATE back to - a moment after RUNNING, and NEW_COOKIE after MAKING,
-	//and the panel went on showing RUNNING, as the author found
+	//UPDATE back to - a moment after UPDATING, and NEW_COOKIE after MAKING,
+	//and the panel went on showing the first, as the author found
 	if (c->last_user_change != 0
 			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS){
 		c->has_set_aside = true;

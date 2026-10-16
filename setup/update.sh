@@ -55,7 +55,9 @@ fi
 
 # said here, and on the radio's status line through its terminal's "say"
 # when it is running; the pipe is given two seconds, so that an update
-# with no radio program to read it does not wait for ever
+# with no radio program to read it does not wait for ever. The panel's
+# status line holds 48 characters, "Update: " among them, so each is kept
+# to 40 and in plain words: the author found the longer ones cut short
 say() {
 	echo "update: $*"
 	[ -p /tmp/sdr.in ] && pgrep -x sdr > /dev/null \
@@ -89,63 +91,63 @@ EOF
 # install.sh gives the kernel its clock chip, finds GitHub's certificate
 # not yet valid. set_clock.sh says why and sets it from my.sbitx.net
 if ! setup/set_clock.sh > /dev/null; then
-	say "the radio's clock is wrong and could not be set; the update stops"
+	say "the clock is wrong and could not be set"
 	exit 1
 fi
 
 before=$(git rev-parse --short HEAD)
-say "this radio is at $before; asking GitHub for main"
+say "at $before; asking GitHub for news"
 if ! git pull --ff-only --quiet origin main; then
-	say "the pull did not go forward; nothing was changed. 'git status' says why"
+	say "could not pull; nothing was changed"
 	exit 1
 fi
 after=$(git rev-parse --short HEAD)
 if [ "$before" = "$after" ]; then
-	say "already at main, $after"
+	say "already at the newest, $after"
 else
-	say "now at $after:"
+	say "fetched $after"
 	git log --oneline "$before..$after" | sed 's/^/    /'
 fi
 if [ "$if_new" = 1 ] && [ "$before" = "$after" ]; then
-	say "the radio is up to date, at $after"
+	say "up to date, at $after"
 	exit 0
 fi
 
 if ! setup/fetch_rade_weights.sh > /dev/null; then
-	say "RADE's weights could not all be fetched; the build stops here"
+	say "RADE files not fetched; nothing changed"
 	exit 1
 fi
 
-say "building sdr"
+say "building; about ten minutes on a zbitx"
 if ! make --quiet sdr; then
-	say "sdr did not build; the radio keeps the program it had"
+	say "the build failed; the radio is as it was"
 	exit 1
 fi
 if pkg-config --exists gtk+-3.0 2>/dev/null; then
 	say "building the window"
-	make --quiet gui || say "the window did not build; it keeps the one it had"
+	make --quiet gui || say "window build failed; old window kept"
 fi
-say "building zbitx_remote"
-make --quiet remote || say "zbitx_remote did not build; it keeps the one it had"
+say "building the gateway"
+make --quiet remote || say "gateway build failed; old one kept"
 
 if [ "$build_only" = 1 ]; then
-	say "built; the radio goes on with the programs it started with"
+	say "built; used at the next start"
 	exit 0
 fi
 
 if pgrep -x sdr > /dev/null; then
 	while [ "$(radio_tx)" = "ON" ]; do
-		say "the radio is transmitting; waiting for TX OFF"
+		say "waiting for TX OFF to restart"
 		sleep "$TX_POLL_SECONDS"
 	done
-	say "TX is OFF; stopping the radio"
+	say "restarting the radio"
 	[ -p /tmp/sdr.in ] && echo quit > /tmp/sdr.in
 	for _ in $(seq 20); do
 		pgrep -x sdr > /dev/null || break
 		sleep 0.5
 	done
 	if pgrep -x sdr > /dev/null; then
-		say "sdr did not quit; the new build is in place for its next start"
+		say "sdr did not stop; used at the next start"
 		exit 1
 	fi
 fi
