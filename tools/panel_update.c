@@ -38,6 +38,7 @@
 
 #define ANSWER_TRIES_MS 30000
 #define BETWEEN_TRIES_MS 5
+#define READS_BEFORE_A_NUDGE 10
 #define RESTART_WAIT_MS 60000
 #define SIZE_MOST (1024 * 1024)
 
@@ -45,6 +46,7 @@ struct answer {
 	int state;
 	uint32_t wanted;
 	char version[LINK_VERSION_ROOM + 1];
+	int why;
 };
 
 static long now_ms(void) {
@@ -113,15 +115,36 @@ static int read_answer(struct answer *a) {
 		| (uint32_t)bytes[5] << 16 | (uint32_t)bytes[6] << 24;
 	memcpy(a->version, bytes + 7, LINK_VERSION_ROOM);
 	a->version[LINK_VERSION_ROOM] = 0;
+	a->why = bytes[7 + LINK_VERSION_ROOM];
 	return 0;
 }
+
+static int send_message(char kind, const uint8_t *carried, int count);
+
+// how the last wait went, said when the panel stops answering
+static int reads_failed, reads_busy;
 
 // the panel's answer once it is no longer busy, or -1 when it does not come
 static int wait_for_answer(struct answer *a, long within_ms) {
 	long until = now_ms() + within_ms;
 
+	reads_failed = 0;
+	reads_busy = 0;
+	int failed_running = 0;
+
 	while (now_ms() < until) {
-		if (read_answer(a) == 0 && a->state != LINK_UPDATE_BUSY)
+		if (read_answer(a) < 0) {
+			reads_failed++;
+			// a read the panel could not answer while it wrote its flash
+			// leaves its I2C refusing reads until it is written to again:
+			// seen on the zbitx on 16 October 2026, thousands of reads in
+			// a row failing until the tool gave up and wrote. ASK is a
+			// write that changes nothing
+			if (++failed_running % READS_BEFORE_A_NUDGE == 0)
+				send_message(LINK_UPDATE_ASK, NULL, 0);
+		} else if (a->state == LINK_UPDATE_BUSY)
+			reads_busy++;
+		else
 			return 0;
 		sleep_ms(BETWEEN_TRIES_MS);
 	}
@@ -194,11 +217,15 @@ static int give_image(const uint8_t *image, size_t size) {
 			continue;
 		}
 		if (wait_for_answer(&a, ANSWER_TRIES_MS) < 0) {
-			fprintf(stderr, "panel_update: the panel stopped answering at %u\n", offset);
+			fprintf(stderr, "panel_update: the panel stopped answering at %u "
+				"(%d reads failed, %d busy, last state %d, wanting %u)\n",
+				offset, reads_failed, reads_busy, a.state, a.wanted);
 			return -1;
 		}
 		if (a.state == LINK_UPDATE_FAILED) {
-			fprintf(stderr, "panel_update: the panel refused the part at %u\n", offset);
+			fprintf(stderr, "panel_update: the panel refused the part at %u "
+				"(why %d, the Updater's error %d, wanting %u)\n",
+				offset, a.why >> 4, a.why & 0x0f, a.wanted);
 			return -1;
 		}
 		// the panel says where it is; a part it did not get is sent again

@@ -57,6 +57,7 @@ static volatile int pending_count;
 static volatile bool is_pending;
 
 static uint32_t size;
+static volatile uint8_t why;  // LINK_UPDATE_WHY_ and the Updater's error
 static int shown_percent = -1;
 
 static uint32_t number_at(const uint8_t *at) {
@@ -106,6 +107,7 @@ int updater_answer(uint8_t *answer) {
 	memset(answer + 7, 0, LINK_VERSION_ROOM);
 	memcpy(answer + 7, PANEL_FIRMWARE,
 		strnlen(PANEL_FIRMWARE, LINK_VERSION_ROOM));
+	answer[7 + LINK_VERSION_ROOM] = why;
 	return LINK_UPDATE_ANSWER;
 }
 
@@ -120,7 +122,10 @@ static void show_progress(void) {
 	main_note_large(text);
 }
 
-static void fail(void) {
+static void fail(int reason) {
+	why = (uint8_t)(reason << 4 | (Update.getError() & 0x0f));
+	Serial.printf("updater: failed, why %d, Updater error %d, at %lu\n", reason,
+		Update.getError(), (unsigned long)wanted);
 	if (Update.isRunning())
 		Update.end(false);
 	state = LINK_UPDATE_FAILED;
@@ -132,7 +137,7 @@ static void begin(const uint8_t *carried, int count) {
 	char md5[LINK_UPDATE_MD5_HEX + 1];
 
 	if (count != 4 + LINK_UPDATE_MD5_HEX) {
-		fail();
+		fail(LINK_UPDATE_WHY_LENGTH);
 		return;
 	}
 	if (Update.isRunning())
@@ -140,8 +145,9 @@ static void begin(const uint8_t *carried, int count) {
 	size = number_at(carried);
 	memcpy(md5, carried + 4, LINK_UPDATE_MD5_HEX);
 	md5[LINK_UPDATE_MD5_HEX] = 0;
+	why = LINK_UPDATE_WHY_NONE;
 	if (!Update.begin(size) || !Update.setMD5(md5)) {
-		fail();
+		fail(LINK_UPDATE_WHY_BEGIN);
 		return;
 	}
 	wanted = 0;
@@ -154,14 +160,14 @@ static void take_data(const uint8_t *carried, int count) {
 	uint32_t offset;
 	int length;
 
-	if (!Update.isRunning() || count < 5) {
-		fail();
+	if (!Update.isRunning()) {
+		fail(LINK_UPDATE_WHY_NOT_BEGUN);
 		return;
 	}
 	offset = number_at(carried);
-	length = carried[4];
+	length = count >= 5 ? carried[4] : -1;
 	if (length != count - 5) {
-		fail();
+		fail(LINK_UPDATE_WHY_LENGTH);
 		return;
 	}
 	// a part sent again, because its answer was lost, is taken once
@@ -169,9 +175,12 @@ static void take_data(const uint8_t *carried, int count) {
 		state = LINK_UPDATE_READY;
 		return;
 	}
-	if (offset != wanted
-			|| Update.write((uint8_t *)carried + 5, length) != (size_t)length) {
-		fail();
+	if (offset != wanted) {
+		fail(LINK_UPDATE_WHY_OFFSET);
+		return;
+	}
+	if (Update.write((uint8_t *)carried + 5, length) != (size_t)length) {
+		fail(LINK_UPDATE_WHY_WRITE);
 		return;
 	}
 	wanted = offset + length;
@@ -181,7 +190,7 @@ static void take_data(const uint8_t *carried, int count) {
 
 static void finish(void) {
 	if (!Update.isRunning() || wanted != size || !Update.end()) {
-		fail();
+		fail(LINK_UPDATE_WHY_END);
 		return;
 	}
 	state = LINK_UPDATE_DONE;
@@ -192,6 +201,7 @@ void updater_slice(void) {
 	uint8_t message[sizeof(pending)];
 	int count;
 	static uint32_t done_ms;
+	uint32_t heard;
 
 	if (state == LINK_UPDATE_DONE) {
 		// time for the radio to read DONE, then the loader puts the
@@ -202,9 +212,13 @@ void updater_slice(void) {
 			rp2040.reboot();
 		return;
 	}
-	if (is_answering && millis() - heard_ms > LINK_UPDATE_QUIET_MS) {
+	// read before the clock, and the difference taken signed: the
+	// interrupt can set heard_ms between the two, and unsigned that came
+	// out as a wait of 49 days and threw away an update not a second old
+	heard = heard_ms;
+	if (is_answering && (int32_t)(millis() - heard) > LINK_UPDATE_QUIET_MS) {
 		if (Update.isRunning())
-			fail();
+			fail(LINK_UPDATE_WHY_ABORTED);
 		is_answering = false;
 		state = LINK_UPDATE_IDLE;
 		main_note_large("");
@@ -229,7 +243,7 @@ void updater_slice(void) {
 		finish();
 		break;
 	case LINK_UPDATE_ABORT:
-		fail();
+		fail(LINK_UPDATE_WHY_ABORTED);
 		state = LINK_UPDATE_IDLE;
 		break;
 	case LINK_UPDATE_BOOTSEL:

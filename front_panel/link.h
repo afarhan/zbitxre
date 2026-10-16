@@ -188,8 +188,10 @@ int link_has_something_to_say(const struct link_end *end);
 //
 // Numbers are low byte first. After any of these the panel's answer to a
 // read is LINK_UPDATE_ANSWER bytes: the count of those after it, the first
-// mark byte, the state, the offset it wants next (4), and its firmware's
-// version (LINK_VERSION_ROOM). It answers so until it has heard nothing of
+// mark byte, the state, the offset it wants next (4), its firmware's
+// version (LINK_VERSION_ROOM), and why it last failed: one of the
+// LINK_UPDATE_WHY_ below in the high four bits and the Updater's own error
+// in the low four. It answers so until it has heard nothing of
 // an update for LINK_UPDATE_QUIET_MS, and then as before.
 #define LINK_UPDATE_MARK "\xA5\x5A\xC3\x3C"
 #define LINK_UPDATE_MARK_SIZE 4
@@ -202,7 +204,7 @@ int link_has_something_to_say(const struct link_end *end);
 #define LINK_UPDATE_DATA_MAX 192
 #define LINK_UPDATE_MD5_HEX 32
 #define LINK_VERSION_ROOM 8
-#define LINK_UPDATE_ANSWER (7 + LINK_VERSION_ROOM)
+#define LINK_UPDATE_ANSWER (8 + LINK_VERSION_ROOM)
 #define LINK_UPDATE_QUIET_MS 10000
 // the states the answer says
 #define LINK_UPDATE_IDLE 0
@@ -210,6 +212,15 @@ int link_has_something_to_say(const struct link_end *end);
 #define LINK_UPDATE_BUSY 2
 #define LINK_UPDATE_DONE 3
 #define LINK_UPDATE_FAILED 4
+// why
+#define LINK_UPDATE_WHY_NONE 0
+#define LINK_UPDATE_WHY_NOT_BEGUN 1
+#define LINK_UPDATE_WHY_LENGTH 2
+#define LINK_UPDATE_WHY_OFFSET 3
+#define LINK_UPDATE_WHY_WRITE 4
+#define LINK_UPDATE_WHY_BEGIN 5
+#define LINK_UPDATE_WHY_END 6
+#define LINK_UPDATE_WHY_ABORTED 7
 
 uint16_t link_crc16(const uint8_t *bytes, int count);
 
