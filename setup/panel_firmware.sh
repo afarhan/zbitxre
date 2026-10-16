@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.." || exit 1
 say() { echo "panel: $*"; }
 
 release=release/panel
-UF2_ADDRESS=https://github.com/afarhan/zbitxre/raw/main/release/panel/front_panel.uf2
+UF2_ADDRESS=https://my.sbitx.net/zbitx/front_panel.uf2
 [ -f "$release/VERSION" ] || exit 0
 grep -q '^radio=sbitx' data/hw_settings.ini 2>/dev/null && exit 0
 if pgrep -x sdr > /dev/null; then

@@ -1010,6 +1010,12 @@ MAP_PAGE = """<!doctype html>
 """
 
 # what is served from static/, by its name, and as what
+# the files an owner fetches to upgrade a radio, by their address
+RELEASED = {
+    "/install": ("install.sh", "text/plain; charset=utf-8"),
+    "/zbitx/front_panel.uf2": ("front_panel.uf2", "application/octet-stream"),
+}
+
 STATIC = {
     "land.json": "application/json",
     "operate.js": "text/javascript; charset=utf-8",
@@ -2186,6 +2192,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, json.dumps([static_address(name) for name in
                                        ("operate.css", "sound.js", "operate.js")]),
                       "application/json")
+        elif url.path in RELEASED:
+            # what an owner fetches to upgrade a radio: the one-line
+            # installer, curl -fsSL https://my.sbitx.net/install | bash, and
+            # the panel's firmware for its one update with the USB cable.
+            # They are copies of setup/install.sh and release/panel, put in
+            # release/ beside this file when the service is deployed
+            name, kind = RELEASED[url.path]
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "release", name)
+            if not os.path.exists(path):
+                self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
+            else:
+                with open(path, "rb") as file:
+                    self.send(200, file.read(), kind, keep="no-cache")
         elif url.path == "/service-worker.js":
             # a worker obeys the policy its own script comes with: this one
             # fetches pages of the site, and nothing else
