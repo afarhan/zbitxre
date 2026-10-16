@@ -90,15 +90,18 @@ fi
 # from the network some minutes later. Until then every certificate on the
 # internet looks not yet valid to it, and fetching zbitxre from GitHub
 # fails. Seen on a production zbitx on 16 October 2026, which started at
-# 30 April. A year before this script was written is taken to be wrong,
-# and the radio's time service is waited for, three minutes at most
-if [ "$(date +%Y)" -lt 2026 ] || [ "$(date +%Y%m%d)" -lt 20261016 ]; then
+# 30 April. A date before EARLIEST, in UTC, is taken to be wrong, and the
+# radio's time service is waited for, three minutes at most. (The first
+# form of this compared the local date with the day it was written, and a
+# radio west of Greenwich, still on the day before, waited for nothing.)
+EARLIEST=20261001
+if [ "$(date -u +%Y%m%d)" -lt "$EARLIEST" ]; then
 	say "the radio's clock says $(date -u '+%d %B %Y'); waiting for it to be set from the network"
 	for _ in $(seq 36); do
-		[ "$(date +%Y%m%d)" -ge 20261016 ] && break
+		[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] && break
 		sleep 5
 	done
-	[ "$(date +%Y%m%d)" -ge 20261016 ] \
+	[ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] \
 		|| stop "the radio's clock is still wrong. Set it, sudo date -s \"2026-10-16 12:00\" with today's date and time, and run this again."
 	say "the clock is right: $(date -u '+%d %B %Y %H:%M') UTC"
 fi
