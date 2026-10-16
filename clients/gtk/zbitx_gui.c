@@ -688,8 +688,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define VOIP_SPEAKER_CONTROL "VOIP_SPEAKER"
 #define CONNECTIONS_GROUP "CONNECTIONS"
 #define PAGE_CONNECTIONS "connections"
-#define COOKIE_WORD "COOKIE "
-#define ACCOUNT_SITE "my.sbitx.net"
+#define RADIO_KEY_CONTROL "RADIO_KEY"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
 #define WINDOW_NAME "zbitx"
 #define TITLE_MAX 160
@@ -2589,7 +2588,26 @@ static void on_back_pressed(GtkButton *button, gpointer page) {
 	show_page(page);
 }
 
-// a tap on a setting: a text is typed, a choice goes to its next
+// RADIO_KEY, tapped: whether to make the radio a new key, which the owner
+// then types at my.sbitx.net; the author asked for the choice of changing
+// it or leaving it, on 16 October 2026, when the key and the state of the
+// link had been one control
+static void ask_for_a_new_key(void) {
+	GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(main_window), GTK_DIALOG_MODAL,
+		GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Make a new radio key?");
+
+	gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+		"The radio then goes off line until the new key is typed on its "
+		"Manage page at my.sbitx.net.");
+	gtk_dialog_add_buttons(GTK_DIALOG(dialog), "CANCEL", GTK_RESPONSE_CANCEL,
+		"NEW KEY", GTK_RESPONSE_ACCEPT, NULL);
+	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT)
+		send_line("NEW_COOKIE", "MAKING");
+	gtk_widget_destroy(dialog);
+}
+
+// a tap on a setting: a text is typed, a choice goes to its next, and the
+// radio's key asks first whether to make a new one
 static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
 		gdouble y, gpointer setting) {
 	struct known *k = setting;
@@ -2598,6 +2616,10 @@ static void on_setting_tap(GtkGestureMultiPress *gesture, gint presses, gdouble 
 	(void)presses;
 	(void)x;
 	(void)y;
+	if (!strcmp(k->name, RADIO_KEY_CONTROL)) {
+		ask_for_a_new_key();
+		return;
+	}
 	if (k->is_text) {
 		open_text(k);
 		return;
@@ -2668,15 +2690,14 @@ static void fill_settings(void) {
 
 	empty_list(connections_list);
 	fill_with_group(connections_list, CONNECTIONS_GROUP);
-	// what the radio says of being reached from afar: shown, not tapped
+	// what the radio says of being reached from afar, and of VoIP: shown,
+	// not tapped
 	for (i = 0; i < known_count; i++) {
-		if (strcmp(known[i].group, REMOTE_GROUP) || !known[i].is_text)
+		if ((strcmp(known[i].group, REMOTE_GROUP) && strcmp(known[i].name, "VOIP_STATUS"))
+				|| !known[i].is_text)
 			continue;
 		row = list_row_new(known[i].name, &value);
 		snprintf(said, sizeof(said), "%s", known[i].value);
-		if (!strncmp(known[i].value, COOKIE_WORD, strlen(COOKIE_WORD)))
-			snprintf(said, sizeof(said), "type %s at %s",
-				known[i].value + strlen(COOKIE_WORD), ACCOUNT_SITE);
 		gtk_label_set_text(GTK_LABEL(value), said);
 		gtk_widget_set_size_request(row, -1, px_down(ROW_HEIGHT));
 		gtk_box_pack_start(GTK_BOX(connections_list), row, FALSE, FALSE, 0);

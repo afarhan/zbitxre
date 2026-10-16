@@ -304,7 +304,7 @@
 #define TX_PEAK_ASKED "stat:tx_peak="
 
 #define TX_LIMIT_MS     120000
-// NEW_COOKIE's second tap is waited for this long
+// NEW_COOKIE MAKING is put back to - after this long, if no gateway did
 #define NEW_COOKIE_WAIT_MS 5000
 #define NOT_ASKED 0
 #define PTT_SETTLED_MS  30
@@ -602,19 +602,17 @@ static struct control voip_speaker = {
 	.group = "VOIP", .name = "VOIP_SPEAKER", .kind = CONTROL_TEXT,
 };
 
-// NEW_COOKIE makes the radio a new cookie, for when the old one has gone
-// where it should not: the author's way, a new key made on the radio and
-// typed into its owner's list at my.sbitx.net. It takes two taps, TAP
-// AGAIN and then MAKING, within NEW_COOKIE_WAIT_MS, so that a slip of the
-// finger does not take the radio off line. The gateway makes the cookie,
-// shows it in REMOTE_STATUS and puts this back to -
-static int apply_new_cookie(struct control *c, const char *value, char *why, int room) {
-	if (!strcmp(value, "MAKING") && strcmp(c->value, "TAP AGAIN")) {
-		snprintf(why, room, "TAP AGAIN first");
-		return -1;
-	}
-	return 0;
-}
+// RADIO_KEY is the radio's key for my.sbitx.net, the cookie the gateway
+// keeps, "abcd-jklm-wxyz", which the owner types at the website to add the
+// radio. The gateway says it whenever it is up. It was shown in
+// REMOTE_STATUS, beside whether the radio was connected, until the author
+// found the one control doing two things confusing, on 16 October 2026.
+// It is not kept among the settings: the gateway has it in data/remote.key.
+// A tap on it in the window or on the panel asks whether to make a new
+// one; a yes sets NEW_COOKIE to MAKING
+static struct control radio_key = {
+	.group = "CONNECTIONS", .name = "RADIO_KEY", .kind = CONTROL_TEXT,
+};
 
 // UPDATE brings the radio up to the newest zbitxre: the author asked on 16
 // October 2026 for it among the settings, to run the updates, the panel's
@@ -690,10 +688,16 @@ static void follow_update(long now) {
 	update_start();
 }
 
+// NEW_COOKIE makes the radio a new key, for when the old one has gone where
+// it should not: the author's way, a new key made on the radio and typed
+// into its owner's list at my.sbitx.net. The window and the panel ask
+// first, on a tap on RADIO_KEY; this is what they set on a yes, and is in
+// no list of their own, in the group KEY. The gateway makes the key, shows
+// it in RADIO_KEY and puts this back to -
 static struct control new_cookie = {
-	.group = "CONNECTIONS", .name = "NEW_COOKIE", .kind = CONTROL_CHOICE,
-	.choices = "-/TAP AGAIN/MAKING",
-	.value = "-", .apply = apply_new_cookie,
+	.group = "KEY", .name = "NEW_COOKIE", .kind = CONTROL_CHOICE,
+	.choices = "-/MAKING",
+	.value = "-",
 };
 
 static struct control span = {
@@ -1725,6 +1729,7 @@ int main(int argc, char **argv) {
 	control_register(&cat);
 	control_register(&cat_status);
 	control_register(&voip);
+	control_register(&radio_key);
 	control_register(&new_cookie);
 	control_register(&update);
 	control_register(&voip_status);

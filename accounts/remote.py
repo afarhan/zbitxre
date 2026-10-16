@@ -1075,6 +1075,8 @@ class Remote:
             writer.close()
         if not controls:
             return
+        # the radio's key is not kept here, nor shown on the website
+        controls.pop("RADIO_KEY", None)
         with self.store.open() as db:
             db.execute("insert or replace into snapshots (radio, taken, controls, log) "
                        "values (?, ?, ?, ?)",

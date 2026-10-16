@@ -47,8 +47,8 @@
 #     start file is renamed and kept.
 #  8. Asks whether to put the radio on my.sbitx.net. If so, it asks for the
 #     callsign and the grid when the old settings had none, turns REMOTE on,
-#     makes the radio's cookie, and prints the address that adds the radio
-#     with the cookie already typed in.
+#     makes the radio's key, and prints the address that adds the radio
+#     with the key already typed in.
 #  9. Asks to restart the radio.
 #
 # ~/sbitx is not changed, and setup/undo_install.sh puts the old program
@@ -291,7 +291,7 @@ if is_yes "$(ask "Put this radio on my.sbitx.net, to operate it from a browser o
 	cookie=$(head -1 data/remote.key)
 	shown="${cookie:0:4}-${cookie:4:4}-${cookie:8:4}"
 	echo
-	echo "    The radio's cookie is $shown"
+	echo "    The radio key is $shown"
 	echo
 	echo "    Open this on a computer or a phone to add the radio to my.sbitx.net,"
 	echo "    signed in as $callsign, or registering first:"

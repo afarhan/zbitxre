@@ -1639,8 +1639,8 @@ class Service:
                            "else: home, zbitx, shack2.")
         cookie = tidy_secret(cookie_typed)
         if not cookie:
-            return False, ("That is not a cookie. It is the twelve letters the radio "
-                           "shows in its settings, like abcd-jklm-wxyz.")
+            return False, ("That is not a radio key. It is the twelve letters the radio "
+                           "shows as RADIO_KEY, like abcd-jklm-wxyz.")
         with self.store.open() as db:
             had = db.execute("select suffix from radios where account = ?",
                              (account["id"],)).fetchall()
@@ -1662,18 +1662,19 @@ class Service:
         what to tell the owner)"""
         cookie = tidy_secret(cookie_typed)
         if not cookie:
-            return False, ("That is not a cookie. It is the twelve letters the radio "
-                           "shows in its settings, like abcd-jklm-wxyz.")
+            return False, ("That is not a radio key. It is the twelve letters the radio "
+                           "shows as RADIO_KEY, like abcd-jklm-wxyz.")
         with self.store.open() as db:
             found = db.execute("select suffix, cookie from radios where id = ? and account = ?",
                                (radio, account["id"])).fetchone()
             if found is None:
                 return False, "You have no such radio."
             if found["cookie"] == cookie:
-                return False, "That is the cookie it has. Press NEW COOKIE on the radio first."
+                return False, ("That is the key it has. Tap RADIO_KEY on the radio and choose "
+                               "NEW KEY first.")
             db.execute("update radios set cookie = ? where id = ?", (cookie, radio))
-        return True, ("%s has its new cookie. It will come on line within a quarter of a "
-                      "minute; the old cookie is no longer taken."
+        return True, ("%s has its new radio key. It will come on line within a quarter of a "
+                      "minute; the old key is no longer taken."
                       % radio_id(account["callsign"], found["suffix"]))
 
     def radio_remove(self, account, radio):
@@ -1939,12 +1940,12 @@ class Handler(BaseHTTPRequestHandler):
             "<strong>%s</strong>, and set <strong>MYGRID</strong>, such as MK97fj, to be on "
             "the map.</li>"
             "<li>Open <strong>CONNECTIONS</strong> and turn <strong>REMOTE</strong> on.</li>"
-            "<li><strong>REMOTE_STATUS</strong> now shows <strong>COOKIE</strong> and twelve "
-            "letters. Type those letters below.</li>"
+            "<li><strong>RADIO_KEY</strong>, on the same screen, shows twelve letters. "
+            "Type them below.</li>"
             "</ol>"
             "<form method=\"post\" action=\"/radios/add\">"
             "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-            "<label>The twelve letters after COOKIE <input type=\"text\" name=\"cookie\" "
+            "<label>The radio key, the twelve letters of RADIO_KEY <input type=\"text\" name=\"cookie\" "
             "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
             "autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\" "
             "placeholder=\"abcd-jklm-wxyz\" required></label>"
@@ -1954,7 +1955,7 @@ class Handler(BaseHTTPRequestHandler):
             "<button>Add the radio</button></form>"
             "<p class=\"small\">Within a quarter of a minute REMOTE_STATUS on the radio says "
             "ONLINE, and the radio is on your page, ready to operate. "
-            "<a href=\"/help#cookie\">What is the cookie?</a></p>"
+            "<a href=\"/help#cookie\">What is the radio key?</a></p>"
             % (callsign, self.form_guard(self.session_secret()), html.escape(suffix))))
 
     def keys_page(self, account, number, told="", is_wrong=False):
@@ -1974,10 +1975,10 @@ class Handler(BaseHTTPRequestHandler):
             said(told, is_wrong)
             + "<p><a href=\"/\">&larr; Your radios</a></p><h2>Manage %s</h2>"
             "<p>%s%s &middot; added %s</p>"
-            "<h3>Did your radio show a new cookie?</h3>"
-            "<p>Only if you tapped <strong>NEW_COOKIE</strong> on the radio, to stop a copy "
-            "of it signing in. Type the new twelve letters from REMOTE_STATUS here and "
-            "the radio comes back on line.</p>"
+            "<h3>Did you make the radio a new key?</h3>"
+            "<p>Only if you tapped <strong>RADIO_KEY</strong> on the radio and chose NEW KEY, "
+            "to stop a copy of it signing in. Type the new twelve letters of RADIO_KEY here "
+            "and the radio comes back on line.</p>"
             "<form method=\"post\" action=\"/radios/cookie\">%s"
             "<label>The new twelve letters <input type=\"text\" name=\"cookie\" "
             "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
@@ -2016,17 +2017,17 @@ class Handler(BaseHTTPRequestHandler):
             "<h3 id=\"offline\">My radio is off line</h3>"
             "<p>On the radio, open SET, then CONNECTIONS:</p>"
             "<ul><li><strong>REMOTE</strong> should be on.</li>"
-            "<li><strong>REMOTE_STATUS</strong> should say ONLINE. If it says COOKIE and "
-            "twelve letters, the radio has not been added here yet, or it was given a new "
-            "cookie: add it, or type the letters on its Manage page. If it says SET "
+            "<li><strong>REMOTE_STATUS</strong> should say ONLINE. If it says ADD RADIO_KEY "
+            "AT MY.SBITX.NET, the radio has not been added here yet, or it was given a new "
+            "key: add it, or type RADIO_KEY's letters on its Manage page. If it says SET "
             "MYCALLSIGN FIRST, set MYCALLSIGN to your callsign.</li>"
             "<li>The radio needs the internet; its Wi-Fi must be on.</li></ul>"
-            "<h3 id=\"cookie\">What is the cookie?</h3>"
-            "<p>Twelve letters your radio makes for itself, the first time REMOTE is "
-            "turned on. You type them here once, when you add the radio, and the radio "
+            "<h3 id=\"cookie\">What is the radio key?</h3>"
+            "<p>Twelve letters your radio makes for itself, shown as RADIO_KEY among its "
+            "CONNECTIONS. You type them here once, when you add the radio, and the radio "
             "uses them to sign in from then on. You never need them again, unless you make "
-            "the radio a new one with NEW_COOKIE, to stop a copy of the radio signing "
-            "in.</p>"
+            "the radio a new one, by tapping RADIO_KEY and choosing NEW KEY, to stop a copy "
+            "of the radio signing in.</p>"
             "<h3 id=\"window\">The zbitx window on another computer</h3>"
             "<p>The window can work your radio through my.sbitx.net as well as the browser "
             "can: start it as <span class=\"command\">zbitx_gui remote "

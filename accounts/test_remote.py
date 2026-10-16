@@ -42,6 +42,8 @@ import ip_places
 import remote
 
 DAEMON = os.path.join(HERE, "..", "zbitx_remote")
+# REMOTE_STATUS while the website does not know the radio
+NOT_ADDED = "ADD RADIO_KEY AT MY.SBITX.NET"
 PASSWORD = "correct horse battery"
 
 
@@ -182,7 +184,7 @@ class Client:
         one of its connections, which comes when it comes"""
         line = self.file.readline().strip()
         while line.startswith(("SMETER ", "BLUETOOTH_STATUS ", "SOUND_CARD_STATUS ",
-                               "CAT_STATUS ", "VOIP_STATUS ")):
+                               "CAT_STATUS ", "VOIP_STATUS ", "RADIO_KEY ")):
             line = self.file.readline().strip()
         return line
 
@@ -449,12 +451,12 @@ class RemoteTest(unittest.TestCase):
         return open(self.bluetooth_run).read().split()
 
     def switch_on(self):
-        """REMOTE is turned on, and the radio shows its cookie, the website
-        not knowing it; the cookie is returned as it was shown"""
+        """REMOTE is turned on, and the radio says the website does not know
+        it; its key, RADIO_KEY, is returned as it was shown"""
         self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
-        self.wait_for(lambda: self.status().startswith("COOKIE "), "no cookie was shown")
-        return self.status()[len("COOKIE "):]
+        self.wait_for(lambda: self.status() == NOT_ADDED, "it did not say it was not added")
+        return self.radio.controls["RADIO_KEY"]
 
     def switch_on_and_add(self):
         ok, told = self.service.radio_add(self.account, "home", self.switch_on())
@@ -463,10 +465,12 @@ class RemoteTest(unittest.TestCase):
                       "the radio did not come on line")
         return self.service.radio_called("vu2ese-home")
 
-    def test_off_until_the_owner_turns_it_on(self):
-        time.sleep(1.5)
+    def test_off_until_the_owner_turns_it_on_but_its_key_is_shown(self):
+        """the key is made and shown in RADIO_KEY as soon as the gateway is
+        up, so the owner can add the radio first; nothing is connected to"""
+        self.wait_for(lambda: self.radio.controls.get("RADIO_KEY"), "no key was shown")
         self.assertIn(self.status(), ("", "OFF"))
-        self.assertFalse(os.path.exists(self.key_file))
+        self.assertNotIn("-", self.status())
 
     def test_turned_on_it_makes_a_cookie_and_shows_it(self):
         shown = self.switch_on()
@@ -498,7 +502,7 @@ class RemoteTest(unittest.TestCase):
         self.radio.set("REMOTE", "ON")
         self.wait_for(lambda: self.status() == "SET MYCALLSIGN FIRST", "it did not ask")
         self.radio.set("MYCALLSIGN", "VU2ESE")
-        self.wait_for(lambda: self.status().startswith("COOKIE "), "no cookie was shown")
+        self.wait_for(lambda: self.status() == NOT_ADDED, "it did not say it was not added")
 
     def test_the_settings_and_the_logbook_are_copied_once_on_line(self):
         radio = self.switch_on_and_add()["id"]
@@ -1080,8 +1084,8 @@ class RemoteTest(unittest.TestCase):
         self.wait_for(lambda: self.status() == "OFF", "the daemon did not say OFF")
         self.radio.set("STREAMING", "ON")
         self.radio.set("REMOTE", "ON")
-        self.wait_for(lambda: self.status() == "COOKIE " + accounts.show_secret(radio["cookie"]),
-                      "the cookie was not shown again")
+        self.wait_for(lambda: self.status() == NOT_ADDED, "it did not say it was not added")
+        self.assertEqual(self.radio.controls["RADIO_KEY"], accounts.show_secret(radio["cookie"]))
 
     # VoIP: the repeater, through two radios' gateways
 
@@ -1106,10 +1110,9 @@ class RemoteTest(unittest.TestCase):
             stdout=subprocess.DEVNULL)
         self.others.append((daemon, radio, microphone))
         radio.set("VOIP", "ONLINE")
-        self.wait_for(lambda: radio.controls.get("REMOTE_STATUS", "").startswith("COOKIE "),
-                      "the second radio showed no cookie")
-        ok, told = self.service.radio_add(account, "home",
-                                          radio.controls["REMOTE_STATUS"][len("COOKIE "):])
+        self.wait_for(lambda: radio.controls.get("REMOTE_STATUS", "") == NOT_ADDED,
+                      "the second radio did not say it was not added")
+        ok, told = self.service.radio_add(account, "home", radio.controls["RADIO_KEY"])
         self.assertTrue(ok, told)
         return radio, microphone
 
@@ -1168,10 +1171,11 @@ class RemoteTest(unittest.TestCase):
     def test_a_new_cookie_made_at_the_radio_and_typed_on_the_website(self):
         before = self.switch_on_and_add()
         self.radio.set("NEW_COOKIE", "MAKING")
-        self.wait_for(lambda: self.status().startswith("COOKIE ")
+        self.wait_for(lambda: self.radio.controls.get("RADIO_KEY")
+                      != accounts.show_secret(before["cookie"])
                       and self.radio.controls.get("NEW_COOKIE") == "-",
-                      "no new cookie was shown")
-        shown = self.status()[len("COOKIE "):]
+                      "no new key was shown")
+        shown = self.radio.controls["RADIO_KEY"]
         self.assertNotEqual(shown, accounts.show_secret(before["cookie"]))
         with open(self.key_file) as file:
             self.assertEqual(accounts.show_secret(file.read().strip()), shown)

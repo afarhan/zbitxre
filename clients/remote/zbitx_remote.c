@@ -38,14 +38,16 @@
 // settled how the two come to share it: the radio makes it, and the owner
 // carries it to the website. A zbitx has no keyboard, and a secret that had
 // to be typed into the radio, or into a file on it, would be a trial. So
-// the first time REMOTE is turned on, this program makes a cookie of twelve
-// letters, from the system's source of random numbers, and keeps it in a
-// file only the radio's user can read, data/remote.key. While my.sbitx.net
-// does not know the radio, REMOTE_STATUS shows the cookie, "COOKIE
-// abcd-jklm-wxyz", and the owner, signed in at my.sbitx.net, adds a radio
-// there, gives it a name and types the cookie. Within a quarter of a
-// minute the radio is on line, and from then on the cookie is not shown:
-// REMOTE_STATUS says "ONLINE vu2ese-home".
+// this program makes a cookie of twelve letters, the radio key as the
+// owner sees it, from the system's source of random numbers, and keeps it
+// in a file only the radio's user can read, data/remote.key. The radio
+// program's control RADIO_KEY shows it, "abcd-jklm-wxyz", whenever this
+// program is up. The owner, signed in at my.sbitx.net, adds a radio there,
+// gives it a name and types the key; until then REMOTE_STATUS says "ADD
+// RADIO_KEY AT MY.SBITX.NET", and within a quarter of a minute of it the
+// radio is on line: "ONLINE vu2ese-home". The key and the state were one
+// control, REMOTE_STATUS, until the author found that confusing on 16
+// October 2026: "you have overloaded one control to do two things".
 //
 // The grid locator set on the radio, MYGRID, goes to the service too, on
 // the connection that is kept, when it is made and whenever the grid is
@@ -246,13 +248,13 @@
 //
 // A NEW COOKIE
 //
-// The owner can have the radio make a new cookie, with NEW_COOKIE among the
-// CONNECTIONS, which the radio program asks for two taps of: the author's
-// way of putting right a cookie that has gone where it should not, a new
-// key made on the radio and typed into the owner's list at my.sbitx.net,
-// on the radio's Keys page, and the radio keeps its name. This program
-// makes it, lets go of the service, and shows it in REMOTE_STATUS until the
-// website has it.
+// The owner can have the radio make a new key: a tap on RADIO_KEY asks
+// whether to, in the window and on the panel, and a yes sets the radio
+// program's NEW_COOKIE to MAKING. The author's way of putting right a key
+// that has gone where it should not, a new one made on the radio and typed
+// into the owner's list at my.sbitx.net, on the radio's Manage page, and
+// the radio keeps its name. This program makes it, lets go of the
+// service, and shows it in RADIO_KEY.
 //
 // HOW IT RUNS
 //
@@ -322,6 +324,9 @@
 #define CAT_CLIENTS_MAX 4
 #define CAT_WAITING_MOST 4
 #define CAT_STATUS_CONTROL "CAT_STATUS"
+#define RADIO_KEY_CONTROL "RADIO_KEY"
+// REMOTE_STATUS while my.sbitx.net does not know the radio
+#define NOT_ADDED "ADD RADIO_KEY AT MY.SBITX.NET"
 // an address that is nowhere, kept for writing about networks; nothing is
 // sent to it
 #define NOWHERE "192.0.2.1"
@@ -694,7 +699,7 @@ static int have_a_cookie(void) {
 	return make_a_cookie() == 0;
 }
 
-// "COOKIE abcd-jklm-wxyz", for the owner to type at the website
+// the key as the owner sees it, "abcd-jklm-wxyz", to type at the website
 static void show_the_cookie(char *text, int room) {
 	char shown[COOKIE_SHOWN_ROOM];
 	int used = 0;
@@ -706,7 +711,20 @@ static void show_the_cookie(char *text, int room) {
 		shown[used++] = cookie[i];
 	}
 	shown[used] = 0;
-	snprintf(text, room, "COOKIE %s", shown);
+	snprintf(text, room, "%s", shown);
+}
+
+static void status_say(const char *control, char *said, const char *text);
+static char radio_key_said[STATUS_ROOM];
+
+// RADIO_KEY shows the key, made if there is none yet
+static void radio_key_say(void) {
+	char shown[STATUS_ROOM];
+
+	if (!have_a_cookie())
+		return;
+	show_the_cookie(shown, sizeof(shown));
+	status_say(RADIO_KEY_CONTROL, radio_key_said, shown);
 }
 
 // the cookie made slow to guess, with the callsign as salt; done once for
@@ -1158,6 +1176,8 @@ static void radio_poll(long now) {
 		cat_status[0] = 0;
 		status_say(CAT_STATUS_CONTROL, cat_status, said);
 		voip_status[0] = 0;
+		radio_key_said[0] = 0;
+		radio_key_say();
 	}
 	got = take_line(&radio_lines, radio_fd, line, sizeof(line));
 	while (got > 0) {
@@ -1675,8 +1695,6 @@ static void voip_heard_of(const char *line, long now) {
 /* a new cookie, asked for at the radio */
 
 static void cookie_renew(void) {
-	char said[STATUS_ROOM];
-
 	if (make_a_cookie() < 0) {
 		say_status("COOKIE NOT SAVED");
 		return;
@@ -1691,8 +1709,7 @@ static void cookie_renew(void) {
 		sessions_close();
 		state = OFF;
 	}
-	show_the_cookie(said, sizeof(said));
-	say_status(said);
+	radio_key_say();
 	if (radio_fd != NOT_OPEN)
 		send_text(radio_fd, "NEW_COOKIE -\n");
 	printf("remote: a new cookie is made\n");
@@ -1718,7 +1735,11 @@ static void line_open(long now) {
 	char said[STATUS_ROOM];
 	int result = AUTH_NO_ANSWER;
 
-	say_status("CONNECTING");
+	// NOT_ADDED is left on show while the service is asked again, every
+	// quarter of a minute, and not changed to CONNECTING for the second
+	// each try takes: the author found it flashing on a production zbitx
+	if (strcmp(status_said, NOT_ADDED))
+		say_status("CONNECTING");
 	line_fd = dial(server, port);
 	if (line_fd != NOT_OPEN)
 		result = authenticate(line_fd, name);
@@ -1729,8 +1750,7 @@ static void line_open(long now) {
 		close_fd(&line_fd);
 		state = WAITING_TO_RETRY;
 		retry_ms = now + REFUSED_RETRY_MS;
-		show_the_cookie(said, sizeof(said));
-		say_status(said);
+		say_status(NOT_ADDED);
 		return;
 	}
 	if (result == AUTH_OK && (send_text(line_fd, "radio\n") < 0

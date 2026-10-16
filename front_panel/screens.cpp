@@ -1423,7 +1423,51 @@ struct connection_row {
 	lv_obj_t *box;
 	lv_obj_t *value;
 	bool is_switch;
+	bool is_key;
 };
+
+// RADIO_KEY, touched: whether to make the radio a new key, NEW KEY or
+// CANCEL, the knob going between the two, as the logbook asks before it
+// deletes. The author wanted the choice of changing the key or leaving it,
+// on 16 October 2026, when the key and the state of the link had been one
+// control, REMOTE_STATUS
+static lv_obj_t *key_layer;
+static lv_obj_t *key_yes;
+static lv_obj_t *key_no;
+static bool key_is_on_yes;
+
+static void key_ask_show(){
+	show_mark(key_yes, key_is_on_yes);
+	show_mark(key_no, !key_is_on_yes);
+}
+
+static void key_answered(bool is_yes){
+	struct panel_control *c = controls_find("NEW_COOKIE");
+
+	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
+	if (!is_yes || c == NULL)
+		return;
+	// MAKING is the second of NEW_COOKIE's choices, "-/MAKING"
+	Serial.printf("NEW_COOKIE MAKING\n");
+	i2c_link_changed(c->d.number, 1);
+}
+
+static void on_key_yes(lv_event_t *e){
+	(void)e;
+	key_answered(true);
+}
+
+static void on_key_no(lv_event_t *e){
+	(void)e;
+	key_answered(false);
+}
+
+static void key_ask(){
+	key_is_on_yes = false;
+	key_ask_show();
+	lv_obj_move_foreground(key_layer);
+	lv_obj_remove_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
+}
 
 static lv_obj_t *connections_screen;
 static lv_obj_t *connections_list;
@@ -1452,6 +1496,10 @@ static void connection_next(int i){
 	struct panel_control *c = connection_rows[i].c;
 	int next;
 
+	if (connection_rows[i].is_key){
+		key_ask();
+		return;
+	}
 	if (!connection_rows[i].is_switch || controls_choices(c) < 1)
 		return;
 	next = ((int)c->value + 1) % controls_choices(c);
@@ -1475,7 +1523,7 @@ static void on_connections_back(lv_event_t *e){
 	lv_obj_remove_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void connection_add(struct panel_control *c, bool is_switch){
+static void connection_add(struct panel_control *c, bool is_switch, bool is_key){
 	struct connection_row *r;
 	lv_obj_t *label;
 
@@ -1484,17 +1532,18 @@ static void connection_add(struct panel_control *c, bool is_switch){
 	r = &connection_rows[connections_count];
 	r->c = c;
 	r->is_switch = is_switch;
+	r->is_key = is_key;
 	r->box = box_create(connections_list, 0, connections_count * ROW_HEIGHT, SCREEN_WIDTH,
 		ROW_HEIGHT);
 	label = text_create(r->box, c->d.name, &lv_font_montserrat_16,
-		is_switch ? COLOUR_VALUE : COLOUR_TITLE);
+		is_switch || is_key ? COLOUR_VALUE : COLOUR_TITLE);
 	lv_obj_align(label, LV_ALIGN_LEFT_MID, PAD, 0);
 	r->value = text_create(r->box, "", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_label_set_long_mode(r->value, LV_LABEL_LONG_DOT);
 	lv_obj_set_width(r->value, SCREEN_WIDTH / 2);
 	lv_obj_set_style_text_align(r->value, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_obj_align(r->value, LV_ALIGN_RIGHT_MID, -PAD, 0);
-	if (is_switch)
+	if (is_switch || is_key)
 		lv_obj_add_event_cb(r->box, on_connection_touched, LV_EVENT_CLICKED,
 			(void *)(intptr_t)connections_count);
 	connections_count++;
@@ -1510,10 +1559,11 @@ static void connections_rows_make(){
 	for (int i = 0; i < controls_count(); i++){
 		c = controls_at(i);
 		if (!strcmp(c->d.group, "CONNECTIONS") && c->d.kind == LINK_KIND_CHOICE)
-			connection_add(c, true);
+			connection_add(c, true, false);
 	}
+	connection_add(controls_find("RADIO_KEY"), false, true);
 	for (int i = 0; i < CONNECTION_STATUSES; i++)
-		connection_add(controls_find(connection_statuses[i]), false);
+		connection_add(controls_find(connection_statuses[i]), false, false);
 	if (connections_mark >= connections_count)
 		connections_mark = 0;
 }
@@ -1525,6 +1575,31 @@ static void connections_create(){
 	label = text_create(connections_screen, "CONNECTIONS", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
 	back_button_create(connections_screen, on_connections_back);
+	key_layer = lv_obj_create(connections_screen);
+	lv_obj_remove_style_all(key_layer);
+	lv_obj_set_size(key_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
+	lv_obj_align(key_layer, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_bg_color(key_layer, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_bg_opa(key_layer, ASK_DIMMED, 0);
+	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(key_layer, LV_OBJ_FLAG_HIDDEN);
+	{
+		lv_obj_t *box = box_create(key_layer, (SCREEN_WIDTH - ASK_WIDTH) / 2,
+			(SCREEN_HEIGHT - ASK_HEIGHT) / 2, ASK_WIDTH, ASK_HEIGHT);
+		lv_obj_t *question = text_create(box, "Make a new radio key?",
+			&lv_font_montserrat_16, COLOUR_VALUE);
+		lv_obj_t *detail = text_create(box, "Add it again at my.sbitx.net",
+			&lv_font_montserrat_14, COLOUR_TITLE);
+
+		lv_obj_align(question, LV_ALIGN_TOP_MID, 0, 2 * PAD);
+		lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 5 * PAD);
+		key_yes = button_create(box, ASK_WIDTH / 2 - ASK_BUTTON_WIDTH - PAD,
+			ASK_HEIGHT - ASK_BUTTON_HEIGHT - 2 * PAD, ASK_BUTTON_WIDTH, ASK_BUTTON_HEIGHT,
+			"NEW KEY", on_key_yes);
+		key_no = button_create(box, ASK_WIDTH / 2 + PAD,
+			ASK_HEIGHT - ASK_BUTTON_HEIGHT - 2 * PAD, ASK_BUTTON_WIDTH, ASK_BUTTON_HEIGHT,
+			"CANCEL", on_key_no);
+	}
 	connections_list = lv_obj_create(connections_screen);
 	lv_obj_set_size(connections_list, SCREEN_WIDTH, SCREEN_HEIGHT - BAR_HEIGHT);
 	lv_obj_align(connections_list, LV_ALIGN_TOP_LEFT, 0, BAR_HEIGHT);
@@ -1770,7 +1845,11 @@ void screens_knob_turned(int steps){
 	}
 	// the knob goes to every row, the statuses too, to bring them into
 	// view; a click on a status does nothing
-	if (is_up(connections_screen) && connections_count > 0){
+	if (is_up(connections_screen) && is_up(key_layer)){
+		key_is_on_yes = !key_is_on_yes;
+		key_ask_show();
+	}
+	else if (is_up(connections_screen) && connections_count > 0){
 		connections_mark += steps;
 		if (connections_mark < 0)
 			connections_mark = 0;
@@ -1799,6 +1878,8 @@ void screens_knob_clicked(){
 	}
 	else if (is_up(wifi_screen))
 		wifi_choose(wifi_mark);
+	else if (is_up(connections_screen) && is_up(key_layer))
+		key_answered(key_is_on_yes);
 	else if (is_up(connections_screen))
 		connection_next(connections_mark);
 	else if (is_up(settings_screen) && settings[settings_mark].open != NULL)

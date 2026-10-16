@@ -371,7 +371,7 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("action=\"/radios/add\"", text)
         # a mistake is shown on the same page, with the name kept
         text = self.add_radio(browser, "shack", "abcd")
-        self.assertIn("That is not a cookie", text)
+        self.assertIn("That is not a radio key", text)
         self.assertIn("value=\"shack\"", text)
 
     def test_keys_are_only_the_owners(self):
@@ -401,8 +401,8 @@ class AccountsTest(unittest.TestCase):
 
     def test_what_is_not_a_cookie_or_a_name_is_refused(self):
         browser = self.make_account()
-        self.assertIn("That is not a cookie", self.add_radio(browser, "home", "abcd-efgh"))
-        self.assertIn("That is not a cookie", self.add_radio(browser, "home", "1234-5678-9012"))
+        self.assertIn("That is not a radio key", self.add_radio(browser, "home", "abcd-efgh"))
+        self.assertIn("That is not a radio key", self.add_radio(browser, "home", "1234-5678-9012"))
         self.assertIn("up to ten letters and figures",
                       self.add_radio(browser, "my home", "abcd-efgh-jkmn"))
         self.assertEqual(self.service.radios_of("VU2ESE"), [])
@@ -447,16 +447,16 @@ class AccountsTest(unittest.TestCase):
         guard = browser.hidden(text, "guard")
         _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
                                                   "cookie": "PQRS-TUVW-XYZA"})
-        self.assertIn("has its new cookie", text)
+        self.assertIn("has its new radio key", text)
         after = self.service.radio_called("vu2ese-home")
         self.assertEqual(after["cookie"], "pqrstuvwxyza")
         self.assertEqual(after["id"], before["id"])
         _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
                                                   "cookie": "pqrs-tuvw-xyza"})
-        self.assertIn("That is the cookie it has", text)
+        self.assertIn("That is the key it has", text)
         _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
                                                   "cookie": "pqrs"})
-        self.assertIn("That is not a cookie", text)
+        self.assertIn("That is not a radio key", text)
         # another owner cannot change it
         other = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         _, text = other.get("/")
