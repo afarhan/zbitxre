@@ -298,6 +298,20 @@ class AccountsTest(unittest.TestCase):
         _, text = browser.get("/")
         self.assertNotIn("Signed in as", text)
 
+    def test_every_page_has_the_bar_saying_who_is_signed_in(self):
+        browser = self.make_account()
+        for path in ("/", "/map", "/signin", "/register", "/no-such-page"):
+            _, text = browser.get(path)
+            self.assertIn("<nav class=\"bar\">", text, path)
+            self.assertIn("Signed in as <strong>VU2ESE</strong>", text, path)
+            self.assertIn("action=\"/signout\"", text, path)
+        _, text = browser.get("/map")
+        _, text = browser.post("/signout", {"guard": browser.hidden(text, "guard")})
+        for path in ("/", "/map"):
+            _, text = Browser(self.port).get(path)
+            self.assertIn("<nav class=\"bar\">", text, path)
+            self.assertIn("href=\"/signin\">Sign in</a>", text, path)
+
     def test_forgot_mails_a_link_that_sets_a_new_password(self):
         self.make_account()
         fresh = Browser(self.port)

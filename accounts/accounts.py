@@ -914,10 +914,29 @@ MAP_SCRIPT = """
 })();
 """
 
-MAP_STYLE = """
+# the bar along the top of every page, nav_bar()'s, alike on all of them
+BAR_STYLE = """
+.bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3em 1.2em;
+    padding: 0.6em 1em; background: #10181f; color: #ccd; font-family: sans-serif;
+    font-size: 16px; line-height: 1.45; }
+.bar a { color: #9cf; text-decoration: none; }
+.bar a:hover { text-decoration: underline; }
+.bar .site { color: #fff; font-weight: bold; margin-right: 0.6em; }
+.bar .who { margin-left: auto; }
+.bar .who strong { color: #fff; }
+.bar form { display: inline; margin: 0 0 0 0.8em; }
+.bar button { margin: 0; padding: 0; border: 0; background: none; color: #9cf;
+    font-size: 1em; font-family: inherit; cursor: pointer; }
+.bar button:hover { text-decoration: underline; }
+"""
+
+MAP_STYLE = BAR_STYLE + """
 html, body { height: 100%; margin: 0; font-family: sans-serif; background: #05080c;
     color: #fff; overflow: hidden; }
-#top { position: absolute; top: 0; left: 0; right: 0; height: 2.6em; padding: 0 0.6em;
+.bar { position: absolute; top: 0; left: 0; right: 0; height: 2.6em; box-sizing: border-box;
+    flex-wrap: nowrap; white-space: nowrap; overflow: hidden; padding: 0 1em; z-index: 4; }
+@media (max-width: 480px) { .bar .site { display: none; } }
+#top { position: absolute; top: 2.6em; left: 0; right: 0; height: 2.6em; padding: 0 0.6em;
     background: rgba(16,24,32,0.9); z-index: 3; display: flex; align-items: center;
     gap: 0.8em; white-space: nowrap; overflow: hidden; }
 #top a { color: #7cf; text-decoration: none; }
@@ -931,12 +950,12 @@ body.chosen #chosen { display: flex; }
 #chosen button { font-size: 1.15em; line-height: 1; padding: 0.25em 0.5em; background: #1c2834;
     color: #fff; border: 1px solid #405060; border-radius: 4px; flex: none; }
 @media (max-width: 760px) {
-    body.chosen #home, body.chosen #count { display: none; }
+    body.chosen #count { display: none; }
     #hint { display: none; }
 }
 #globe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none;
     cursor: grab; }
-#heard { display: none; position: absolute; right: 0; top: 2.6em; bottom: 0;
+#heard { display: none; position: absolute; right: 0; top: 5.2em; bottom: 0;
     width: 28em; max-width: 88vw; background: rgba(16,24,32,0.93);
     border-left: 1px solid #405060; z-index: 2; flex-direction: column; overflow: hidden; }
 #heard.shown { display: flex; }
@@ -946,7 +965,7 @@ body.chosen #chosen { display: flex; }
 #heard-close, #heard-tab { font-size: 1.1em; background: #1c2834; color: #7cf;
     border: 1px solid #405060; padding: 0.35em 0.8em; }
 #heard-close { border-width: 0 0 0 1px; align-self: stretch; }
-#heard-tab { display: none; position: absolute; right: 0; top: 3.2em; z-index: 2;
+#heard-tab { display: none; position: absolute; right: 0; top: 5.8em; z-index: 2;
     border-right: 0; border-radius: 6px 0 0 6px; }
 #heard-tab.shown { display: block; }
 #heard-list { flex: 1; overflow-y: auto; padding: 0.3em 0.8em; font: 12px/1.5 monospace;
@@ -964,7 +983,8 @@ MAP_PAGE = """<!doctype html>
 <title>Radios on line - my.sbitx.net</title>
 <link rel="stylesheet" href="/map.css">
 </head><body>
-<div id="top"><a id="home" href="/">my.sbitx.net</a><span id="count"></span>
+<!--bar-->
+<div id="top"><span id="count"></span>
 <span id="chosen"><span id="who"></span><span id="tuned"></span><span id="state"></span>
 <button id="listen" title="sound on or off">🔇</button>
 <button id="leave" title="leave this radio">✕</button></span>
@@ -1054,22 +1074,11 @@ OPERATE_PAGE = """<!doctype html>
 PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
-STYLE = """
+STYLE = BAR_STYLE + """
 body { font-family: sans-serif; margin: 0; color: #222; background: #fff; line-height: 1.45; }
 main { max-width: 34em; margin: 4vh auto; padding: 0 1em; }
 h1 { font-size: 1.5em; }
 h1 a { color: inherit; text-decoration: none; }
-.bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3em 1.2em;
-    padding: 0.6em 1em; background: #10181f; color: #ccd; }
-.bar a { color: #9cf; text-decoration: none; }
-.bar a:hover { text-decoration: underline; }
-.bar .site { color: #fff; font-weight: bold; margin-right: 0.6em; }
-.bar .who { margin-left: auto; }
-.bar .who strong { color: #fff; }
-.bar form { display: inline; margin-left: 0.8em; }
-.bar button { margin: 0; padding: 0; border: 0; background: none; color: #9cf;
-    font-size: 1em; cursor: pointer; }
-.bar button:hover { text-decoration: underline; }
 label { display: block; margin-top: 1em; }
 input[type=text], input[type=email], input[type=password] {
     width: 100%; box-sizing: border-box; padding: 0.5em; font-size: 1em; }
@@ -1644,11 +1653,11 @@ class Service:
                 (radio, account["id"])).fetchone()
 
 
-def page(title, body, account=None, guard=None):
-    # a bar along the top of every page, as the author asked: Home and Map
-    # on the left and, at the right, Sign in, or whom the page is signed in
-    # as with Sign out beside it. He has two accounts and goes from one to
-    # the other; Sign out was once only at the foot of his own page
+def nav_bar(account=None, guard=None):
+    """the bar along the top of every page, as the author asked: Home and
+    Map on the left and, at the right, Sign in, or whom the page is signed
+    in as with Sign out beside it. He has two accounts and goes from one to
+    the other; Sign out was once only at the foot of his own page"""
     right = "<a href=\"/signin\">Sign in</a>"
     if account is not None:
         right = "Signed in as <strong>%s</strong>" % html.escape(account["callsign"])
@@ -1656,15 +1665,18 @@ def page(title, body, account=None, guard=None):
             right += ("<form method=\"post\" action=\"/signout\">"
                       "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                       "<button>Sign out</button></form>" % guard)
-    bar = ("<nav class=\"bar\"><a class=\"site\" href=\"/\">my.sbitx.net</a>"
-           "<a href=\"/\">Home</a><a href=\"/map\">Map</a>"
-           "<span class=\"who\">%s</span></nav>" % right)
+    return ("<nav class=\"bar\"><a class=\"site\" href=\"/\">my.sbitx.net</a>"
+            "<a href=\"/\">Home</a><a href=\"/map\">Map</a>"
+            "<span class=\"who\">%s</span></nav>" % right)
+
+
+def page(title, body, account=None, guard=None):
     return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             "<title>%s - my.sbitx.net</title><link rel=\"stylesheet\" href=\"/style.css\">"
             "</head><body>%s<main>%s"
             "<p class=\"foot\">Accounts for sBitx and zBitx owners.</p></main></body></html>\n"
-            % (html.escape(title), bar, body))
+            % (html.escape(title), nav_bar(account, guard), body))
 
 
 def said(text, is_wrong=False):
@@ -1705,6 +1717,14 @@ class Handler(BaseHTTPRequestHandler):
             if name == self.cookie_name():
                 return value
         return ""
+
+    def page(self, title, body):
+        """a page of the site, with the bar along its top saying who is
+        signed in, found here for every page alike, so that no page shows
+        Sign in to someone who is"""
+        secret = self.session_secret()
+        account = self.service.session_account(secret)
+        return page(title, body, account, self.form_guard(secret) if account else None)
 
     def form_guard(self, secret):
         """the value a form posted while signed in must carry"""
@@ -1755,7 +1775,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def home(self, account, told="", is_wrong=False):
         if account is None:
-            self.send(200, page("Welcome", said(told, is_wrong)
+            self.send(200, self.page("Welcome", said(told, is_wrong)
                                 + "<p><a href=\"/signin\">Sign in</a> with your callsign, or "
                                 "<a href=\"/register\">register</a> one.</p>"
                                 "<p><a href=\"/map\">Listen to the radios that are on "
@@ -1814,19 +1834,19 @@ class Handler(BaseHTTPRequestHandler):
                 "class=\"code\" maxlength=\"20\" autocomplete=\"off\" required></label>"
                 "<button>Add the radio</button></form>"
                 % (html.escape(account["email"]), radios, guard))
-        self.send(200, page(account["callsign"], body, account, guard))
+        self.send(200, self.page(account["callsign"], body))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
         if s.registration == "closed":
-            self.send(200, page("Register", "<p>Registration is not open yet.</p>"))
+            self.send(200, self.page("Register", "<p>Registration is not open yet.</p>"))
             return
         invite = ""
         if s.registration == "invite":
             invite = ("<label>Invitation code <input type=\"text\" name=\"invite\" "
                       "autocomplete=\"off\" required></label>")
         challenge, signature = self.service.pow_challenge()
-        self.send(200, page("Register", said(told, is_wrong)
+        self.send(200, self.page("Register", said(told, is_wrong)
                             + "<form method=\"post\" action=\"/register\" "
                             "data-pow-bits=\"%d\">"
                             "<input type=\"hidden\" name=\"pow_challenge\" value=\"%s\">"
@@ -1846,7 +1866,7 @@ class Handler(BaseHTTPRequestHandler):
                             % (html.escape(callsign), html.escape(email), invite)))
 
     def signin_form(self, told="", is_wrong=False, callsign=""):
-        self.send(200, page("Sign in", said(told, is_wrong)
+        self.send(200, self.page("Sign in", said(told, is_wrong)
                             + "<form method=\"post\" action=\"/signin\">"
                             "<label>Callsign <input type=\"text\" name=\"callsign\" value=\"%s\" "
                             "maxlength=\"10\" autocapitalize=\"characters\" "
@@ -1858,7 +1878,7 @@ class Handler(BaseHTTPRequestHandler):
                             "<a href=\"/register\">Register</a></p>" % html.escape(callsign)))
 
     def forgot_form(self, told=""):
-        self.send(200, page("Forgot the password", said(told)
+        self.send(200, self.page("Forgot the password", said(told)
                             + "<form method=\"post\" action=\"/forgot\">"
                             "<label>Callsign <input type=\"text\" name=\"callsign\" "
                             "maxlength=\"10\" autocapitalize=\"characters\" required></label>"
@@ -1868,12 +1888,12 @@ class Handler(BaseHTTPRequestHandler):
         with self.service.store.open() as db:
             account = self.service.token_account(db, secret)
         if account is None:
-            self.send(200, page("Choose a password", said(
+            self.send(200, self.page("Choose a password", said(
                 "This link has been used or has run out. Ask for another.", True)
                 + "<p><a href=\"/forgot\">Forgot the password?</a> &middot; "
                 "<a href=\"/register\">Register</a></p>"))
             return
-        self.send(200, page("Choose a password", said(told, is_wrong)
+        self.send(200, self.page("Choose a password", said(told, is_wrong)
                             + "<p>A password for <strong>%s</strong>, of at least %d "
                             "characters.</p><form method=\"post\" action=\"/password\">"
                             "<input type=\"hidden\" name=\"t\" value=\"%s\">"
@@ -1892,8 +1912,7 @@ class Handler(BaseHTTPRequestHandler):
         mine = [radio for radio in self.service.radios(account["id"])
                 if str(radio["id"]) == number]
         if not mine:
-            self.send(404, page("Not found", "<p>You have no such radio.</p>", account,
-                                     self.form_guard(self.session_secret())))
+            self.send(404, self.page("Not found", "<p>You have no such radio.</p>"))
             return
         name = radio_id(account["callsign"], mine[0]["suffix"])
         sockets = self.service.settings.sockets
@@ -1911,8 +1930,7 @@ class Handler(BaseHTTPRequestHandler):
         if number.isdigit():
             kept = self.service.snapshot(account, int(number))
         if kept is None:
-            self.send(404, page("Not found", "<p>Nothing is kept for that radio.</p>", account,
-                                     self.form_guard(self.session_secret())))
+            self.send(404, self.page("Not found", "<p>Nothing is kept for that radio.</p>"))
             return
         rows = ""
         if what == "settings":
@@ -1932,11 +1950,11 @@ class Handler(BaseHTTPRequestHandler):
                      "<th>Station</th><th>Sent</th><th>Received</th></tr>%s</table>" % rows)
             if not rows:
                 table = "<p>The logbook had no entries.</p>"
-        self.send(200, page(title, "<h2>%s</h2><p>As copied from the radio on %s UTC.</p>%s"
+        self.send(200, self.page(title, "<h2>%s</h2><p>As copied from the radio on %s UTC.</p>%s"
                             "<p><a href=\"/\">Back</a></p>"
                             % (html.escape(title),
                                time.strftime("%Y-%m-%d %H:%M", time.gmtime(kept["taken"])),
-                               table), account))
+                               table)))
 
     # requests
 
@@ -1952,7 +1970,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/pow.js":
             self.send(200, POW_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map":
-            self.send(200, MAP_PAGE, policy=PAGE_POLICY + "; connect-src 'self' "
+            secret = self.session_secret()
+            self.send(200, MAP_PAGE.replace("<!--bar-->", nav_bar(
+                account, self.form_guard(secret) if account else None)), policy=PAGE_POLICY + "; connect-src 'self' "
                       + self.service.settings.sockets)
         elif url.path == "/operate":
             if account is None:
@@ -1996,7 +2016,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.kept_page(account, query.get("radio", [""])[0],
                                url.path.rpartition("/")[2])
         else:
-            self.send(404, page("Not found", "<p>There is no such page.</p>"))
+            self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
 
 
     def do_POST(self):
@@ -2006,7 +2026,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send(413, "too long\n", "text/plain")
             return
         if not self.is_from_this_site():
-            self.send(403, page("Refused", "<p>That form did not come from this site.</p>"))
+            self.send(403, self.page("Refused", "<p>That form did not come from this site.</p>"))
             return
         form = {name: values[0] for name, values in urllib.parse.parse_qs(body).items()}
         secret = self.session_secret()
@@ -2024,7 +2044,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "had finished its work. Wait for the button and send "
                                    "it again.")
             if ok:
-                self.send(200, page("Register", said(told)))
+                self.send(200, self.page("Register", said(told)))
             else:
                 self.register_form(told, True, form.get("callsign", ""), form.get("email", ""))
         elif url.path == "/signin":
@@ -2036,7 +2056,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.redirect("/", [self.session_cookie(secret)])
         elif url.path == "/forgot":
             self.service.forgot(form.get("callsign", ""), self.address())
-            self.send(200, page("Forgot the password", said(
+            self.send(200, self.page("Forgot the password", said(
                 "If that callsign has an account, a link has been mailed to its address.")))
         elif url.path == "/password":
             secret, told = self.service.set_password(form.get("t", ""), form.get("password", ""),
@@ -2048,7 +2068,7 @@ class Handler(BaseHTTPRequestHandler):
         elif account is None:
             self.signin_form("Sign in first.")
         elif not hmac.compare_digest(form.get("guard", ""), self.form_guard(secret)):
-            self.send(403, page("Refused", "<p>That form did not come from this site.</p>"))
+            self.send(403, self.page("Refused", "<p>That form did not come from this site.</p>"))
         elif url.path == "/signout":
             self.service.sign_out(secret)
             self.redirect("/", [self.session_cookie("", 0)])
@@ -2070,7 +2090,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.service.radio_new_password(account, int(form["radio"]))
             self.redirect("/")
         else:
-            self.send(404, page("Not found", "<p>There is no such page.</p>"))
+            self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
 
 
 
