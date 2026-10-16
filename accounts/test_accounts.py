@@ -472,6 +472,10 @@ class AccountsTest(unittest.TestCase):
         # holding an older one asks for this one, and the address is served
         marked = re.findall(r'(?:src|href)="(/static/[a-z_.]+\?v=[0-9a-f]{12})"', text)
         self.assertEqual(len(marked), 3, text)
+        # and the page's UPDATE is told the same files, with the same marks
+        status, listed = first.get("/operate.json")
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(json.loads(listed)), sorted(marked))
         for address in marked:
             self.assertEqual(first.get(address)[0], 200, address)
         second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))

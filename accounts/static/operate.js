@@ -1442,6 +1442,43 @@
         });
       }
     });
+    updateRow(inside);
+  }
+
+  // UPDATE, the last of the settings: whether my.sbitx.net has a newer
+  // page than this one, and a tap to load it. The author asked for it on
+  // 2026-10-16, for the page installed as an application: such a page
+  // fetches the newest each time it is opened, but one left open keeps
+  // what it opened with. It is not reloaded by itself, since a reloaded
+  // page waits for Start, a touch, before it may play sound, and one left
+  // listening would fall silent. Nor while the radio sends.
+  function marksOf(addresses) {
+    return addresses.map(function (address) {
+      return address.replace(/^.*\/static\//, "");
+    }).sort().join(" ");
+  }
+  var OWN_MARKS = marksOf(Array.prototype.map.call(
+    document.querySelectorAll("script[src*='/static/'], link[rel=stylesheet][href*='/static/']"),
+    function (tag) { return tag.getAttribute("src") || tag.getAttribute("href"); }));
+
+  function updateRow(inside) {
+    var row = make("div", "row", null, inside), isNewer = false;
+    make("div", "title", "UPDATE", row);
+    var value = make("div", "value", "checking", row);
+    var request = new XMLHttpRequest();
+    request.onload = function () {
+      if (request.status !== 200) { value.textContent = "cannot check"; return; }
+      isNewer = marksOf(JSON.parse(request.responseText)) !== OWN_MARKS;
+      value.textContent = isNewer ? "new version: tap to load" : "up to date";
+    };
+    request.onerror = function () { value.textContent = "cannot check"; };
+    request.open("GET", "/operate.json");
+    request.send();
+    row.addEventListener("click", function () {
+      if (!isNewer) { return; }
+      if (isSending() || isVoipSending()) { value.textContent = "after TX"; return; }
+      location.reload();
+    });
   }
 
   var logBody = null;

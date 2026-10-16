@@ -2012,6 +2012,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":
             self.send(200, MAP_STYLE, "text/css; charset=utf-8")
+        elif url.path == "/operate.json":
+            # the files the page that works a radio is made of, as it names
+            # them, each with the mark of what is in it: the page's UPDATE
+            # compares them with its own to say whether there is a newer one
+            self.send(200, json.dumps([static_address(name) for name in
+                                       ("operate.css", "sound.js", "operate.js")]),
+                      "application/json")
         elif url.path == "/service-worker.js":
             # a worker obeys the policy its own script comes with: this one
             # fetches pages of the site, and nothing else
