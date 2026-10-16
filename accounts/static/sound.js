@@ -46,39 +46,49 @@ function radioSound() {
   }
   var gain = context.createGain();
 
-  /* the sound goes out through a media player, an <audio> on the page,
-     and not from the page straight to the speaker. A telephone whose
-     screen is put out stops a page's own sound, and the page with it, and
-     its connection to the radio goes; the author's went quiet so. A page
-     that is playing media, as a music player is, it keeps running and
-     heard with the screen out, and shows it on the locked screen, where it
-     is named for the page. It adds a little to the delay. Where there is
-     no such player, or it will not start, the sound goes to the speaker
-     as before. The player is made when the page is touched to listen,
-     which a browser asks for before it will play. */
+  /* the sound goes to the speaker straight from the page while the page is
+     seen, and through a media player, an <audio> on the page, while it is
+     not. A telephone whose screen is put out stops a page's own sound, and
+     the page with it, and its connection to the radio goes; the author's
+     went quiet so. A page that is playing media it keeps running and heard,
+     as it does a music player, and shows it on the locked screen, named for
+     the page. But on the author's Android telephone the player ran short of
+     sound often, which the page's own sound does not; so it is used only
+     with the screen out. It plays from the start, silent while the page is
+     seen, so that it is already playing when the screen goes out: a browser
+     lets a player start only when the page is touched. Where there is no
+     such player, or it will not start, the sound always goes straight to
+     the speaker. */
 
-  var media = null;
-  function playThroughMedia() {
-    if (!context.createMediaStreamDestination || !window.Audio) { return false; }
-    var stream = context.createMediaStreamDestination();
+  var media = null, toMedia = null, isOnMedia = false;
+  function route() {
+    var wantsMedia = toMedia !== null && document.visibilityState !== "visible";
+    if (wantsMedia === isOnMedia) { return; }
+    gain.disconnect();
+    gain.connect(wantsMedia ? toMedia : context.destination);
+    isOnMedia = wantsMedia;
+  }
+  function startMedia() {
+    if (!context.createMediaStreamDestination || !window.Audio) { return; }
+    toMedia = context.createMediaStreamDestination();
     media = new Audio();
-    media.srcObject = stream.stream;
-    gain.connect(stream);
+    media.srcObject = toMedia.stream;
     var started = media.play();
     if (started && started.catch) {
       started.catch(function () {
-        gain.disconnect();
-        gain.connect(context.destination);
+        toMedia = null;
         media = null;
+        route();
       });
     }
     if ("mediaSession" in navigator && window.MediaMetadata) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: document.title.replace(/ - my\.sbitx\.net$/, ""), artist: "my.sbitx.net" });
     }
-    return true;
   }
-  if (!playThroughMedia()) { gain.connect(context.destination); }
+  gain.connect(context.destination);
+  startMedia();
+  document.addEventListener("visibilitychange", route);
 
   /* the screen is kept on for as long as the player lives. A telephone
      left to itself puts its screen out after a minute or so, and a browser
@@ -251,6 +261,7 @@ function radioSound() {
       isClosed = true;
       document.removeEventListener("visibilitychange", stayAwake);
       if (awake) { awake.release(); awake = null; }
+      document.removeEventListener("visibilitychange", route);
       if (media) { media.pause(); media.srcObject = null; media = null; }
       context.close();
       if (keyerContext) { keyerContext.close(); }
