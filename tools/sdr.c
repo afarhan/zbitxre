@@ -226,7 +226,9 @@
 #include <math.h>
 #include <poll.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <sys/wait.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -612,6 +614,80 @@ static int apply_new_cookie(struct control *c, const char *value, char *why, int
 		return -1;
 	}
 	return 0;
+}
+
+// UPDATE brings the radio up to the newest zbitxre: the author asked on 16
+// October 2026 for it among the settings, to run the updates, the panel's
+// firmware with them, without a terminal. Two taps, TAP AGAIN and then
+// RUNNING, within UPDATE_WAIT_MS, since a slip would restart the radio. On
+// RUNNING the radio starts setup/update.sh --if-new on its own: that
+// fetches the newest from GitHub and, if there is anything new, builds it,
+// waits until the radio is not transmitting, stops this program, gives the
+// panel its firmware over I2C and starts the radio again. It says on the
+// status line how it goes, by the terminal's "say". It is in the STATION
+// group, as the settings are, so that the window lists it in SET.
+#define UPDATE_WAIT_MS 5000
+#define UPDATE_SCRIPT "setup/update.sh"
+#define UPDATE_LOG "/tmp/update.log"
+
+static int apply_update(struct control *c, const char *value, char *why, int room) {
+	if (!strcmp(value, "RUNNING") && strcmp(c->value, "TAP AGAIN")) {
+		snprintf(why, room, "TAP AGAIN first");
+		return -1;
+	}
+	return 0;
+}
+
+static struct control update = {
+	.group = "STATION", .name = "UPDATE", .kind = CONTROL_CHOICE,
+	.choices = "-/TAP AGAIN/RUNNING",
+	.value = "-", .apply = apply_update,
+};
+
+// update.sh, started apart from this program, which it will stop: twice
+// forked, so that it is nobody's child here and leaves nothing to wait for
+static void update_start(void) {
+	pid_t child = fork();
+	int log;
+
+	if (child < 0)
+		return;
+	if (child == 0) {
+		if (fork() != 0)
+			_exit(0);
+		setsid();
+		log = open(UPDATE_LOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		if (log >= 0) {
+			dup2(log, STDOUT_FILENO);
+			dup2(log, STDERR_FILENO);
+		}
+		execl("/bin/bash", "bash", UPDATE_SCRIPT, "--if-new", (char *)NULL);
+		_exit(1);
+	}
+	waitpid(child, NULL, 0);
+}
+
+static void set_setting(const char *name, const char *value, int origin);
+
+static void follow_update(long now) {
+	static long tapped_ms;
+	const char *value = control_get("UPDATE");
+
+	if (!strcmp(value, "TAP AGAIN")) {
+		if (tapped_ms == 0)
+			tapped_ms = now;
+		else if (now - tapped_ms > UPDATE_WAIT_MS) {
+			set_setting("UPDATE", "-", ORIGIN_NONE);
+			tapped_ms = 0;
+		}
+		return;
+	}
+	tapped_ms = 0;
+	if (strcmp(value, "RUNNING"))
+		return;
+	set_setting("UPDATE", "-", ORIGIN_NONE);
+	panel_say("Looking for an update; if there is one the radio restarts with it");
+	update_start();
 }
 
 static struct control new_cookie = {
@@ -1216,6 +1292,12 @@ static void handle_command(char *line) {
 		report();
 		return;
 	}
+	// "say <text>": the text on the panel's status line and to every
+	// client, for update.sh to say how an update goes
+	if (begins_with(line, "say ")) {
+		panel_say(line + strlen("say "));
+		return;
+	}
 	if (begins_with(line, PLAY_FOR)) {
 		play_start(line + strlen(PLAY_FOR));
 		return;
@@ -1557,6 +1639,7 @@ static void main_loop(void) {
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
 		follow_sound_card(now_ms());
+		follow_update(now_ms());
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();
@@ -1643,6 +1726,7 @@ int main(int argc, char **argv) {
 	control_register(&cat_status);
 	control_register(&voip);
 	control_register(&new_cookie);
+	control_register(&update);
 	control_register(&voip_status);
 	control_register(&voip_tx);
 	control_register(&voip_speaker);

@@ -1434,7 +1434,8 @@
       // the radio's CONNECTIONS, REMOTE and STREAMING among them, are not
       // offered here: they are set at the radio and nowhere else, the
       // author's rule. What the radio says of its link is shown
-      if (!control || (control.group !== "STATION" && control.group !== "REMOTE")
+      // UPDATE restarts the radio, and is done at the radio, not from afar
+      if (!control || name === "UPDATE" || (control.group !== "STATION" && control.group !== "REMOTE")
           || control.kind === "action" || control.kind === "number") {
         return;
       }

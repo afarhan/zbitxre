@@ -53,7 +53,8 @@
 #define QUIET_FOR_MS 2000
 #define NOT_WAITING (-1L)
 
-static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET", "NEW_COOKIE" };
+static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET", "NEW_COOKIE",
+	"UPDATE" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
 // what the panel measures, the entry being written for the logbook, and
 // what was last said of reaching the radio from afar, and of VoIP: who is

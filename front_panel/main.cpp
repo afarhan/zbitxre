@@ -586,8 +586,10 @@ static bool has_a_place(const struct panel_control *c){
 	int i;
 
 	//the band has its row of buttons, and an action or a text is not for
-	//the list
-	if (c == freq_widget.control || !strcmp(c->d.name, "BAND")
+	//the list. Nor is TX, as in the window: the footer has TX and RX where
+	//a mode sends by them, and the author asked why VOIP's list had a TX,
+	//OFF, when that mode never keys the transmitter
+	if (c == freq_widget.control || !strcmp(c->d.name, "BAND") || !strcmp(c->d.name, "TX")
 			|| c->d.kind == LINK_KIND_ACTION || c->d.kind == LINK_KIND_TEXT)
 		return true;
 	for (i = 0; i < PLACES; i++){

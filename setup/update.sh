@@ -4,6 +4,10 @@
 #
 #     setup/update.sh               pull, build, and restart the radio
 #     setup/update.sh --build-only  pull and build; the radio runs on
+#     setup/update.sh --if-new      as the first, but only if GitHub has
+#                                   something new; what the radio's UPDATE,
+#                                   in SET, runs, and it says how it goes on
+#                                   the radio's status line
 #
 # Written on 14 October 2026 for the sbitx of Sasi, a tester in the
 # development team, whose radio is across the town. The author's ruling: a
@@ -39,15 +43,23 @@ RADIO_PORT=8081
 TX_POLL_SECONDS=5
 
 build_only=0
+if_new=0
 if [ "$1" = "--build-only" ]; then
 	build_only=1
+elif [ "$1" = "--if-new" ]; then
+	if_new=1
 elif [ -n "$1" ]; then
-	echo "usage: setup/update.sh [--build-only]"
+	echo "usage: setup/update.sh [--build-only | --if-new]"
 	exit 2
 fi
 
+# said here, and on the radio's status line through its terminal's "say"
+# when it is running; the pipe is given two seconds, so that an update
+# with no radio program to read it does not wait for ever
 say() {
 	echo "update: $*"
+	[ -p /tmp/sdr.in ] && pgrep -x sdr > /dev/null \
+		&& timeout 2 sh -c 'echo "say $1" > /tmp/sdr.in' sh "Update: $*"
 }
 
 # the last TX line the radio program tells a client that connects: ON or
@@ -85,6 +97,10 @@ if [ "$before" = "$after" ]; then
 else
 	say "now at $after:"
 	git log --oneline "$before..$after" | sed 's/^/    /'
+fi
+if [ "$if_new" = 1 ] && [ "$before" = "$after" ]; then
+	say "the radio is up to date, at $after"
+	exit 0
 fi
 
 if ! setup/fetch_rade_weights.sh > /dev/null; then

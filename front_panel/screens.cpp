@@ -215,6 +215,7 @@ static struct setting settings[] = {
 	{"Connections", NULL, NULL, connections_open, NULL, NULL},
 	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
 	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},
+	{"Update", "UPDATE", NULL, next_choice_open, NULL, NULL},
 	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, NULL, NULL},
 	{"BOOTSEL", NULL, "-", bootsel_open, NULL, NULL},
 };
