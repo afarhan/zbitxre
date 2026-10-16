@@ -1055,10 +1055,21 @@ PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
                "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
 STYLE = """
-body { font-family: sans-serif; max-width: 34em; margin: 6vh auto; padding: 0 1em;
-    color: #222; background: #fff; line-height: 1.45; }
+body { font-family: sans-serif; margin: 0; color: #222; background: #fff; line-height: 1.45; }
+main { max-width: 34em; margin: 4vh auto; padding: 0 1em; }
 h1 { font-size: 1.5em; }
 h1 a { color: inherit; text-decoration: none; }
+.bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3em 1.2em;
+    padding: 0.6em 1em; background: #10181f; color: #ccd; }
+.bar a { color: #9cf; text-decoration: none; }
+.bar a:hover { text-decoration: underline; }
+.bar .site { color: #fff; font-weight: bold; margin-right: 0.6em; }
+.bar .who { margin-left: auto; }
+.bar .who strong { color: #fff; }
+.bar form { display: inline; margin-left: 0.8em; }
+.bar button { margin: 0; padding: 0; border: 0; background: none; color: #9cf;
+    font-size: 1em; cursor: pointer; }
+.bar button:hover { text-decoration: underline; }
 label { display: block; margin-top: 1em; }
 input[type=text], input[type=email], input[type=password] {
     width: 100%; box-sizing: border-box; padding: 0.5em; font-size: 1em; }
@@ -1071,9 +1082,6 @@ td button { margin: 0; padding: 0.2em 0.8em; }
 .wrong { background: #fbeeee; border-left: 4px solid #c33; padding: 0.6em 0.8em; }
 .code { font-family: monospace; letter-spacing: 0.1em; text-transform: uppercase; }
 .foot { margin-top: 3em; color: #777; font-size: 0.9em; }
-.signed { margin: 1em 0; }
-.signed form { display: inline; margin-left: 1em; }
-.signed button { margin: 0; padding: 0.2em 0.8em; }
 """
 
 
@@ -1637,23 +1645,26 @@ class Service:
 
 
 def page(title, body, account=None, guard=None):
-    # signed in, the top of every page says as whom, with Sign out beside
-    # it: the author, with two accounts, wanted to go from one to the other
-    # and found Sign out only at the foot of his own page
-    signed = ""
+    # a bar along the top of every page, as the author asked: Home and Map
+    # on the left and, at the right, Sign in, or whom the page is signed in
+    # as with Sign out beside it. He has two accounts and goes from one to
+    # the other; Sign out was once only at the foot of his own page
+    right = "<a href=\"/signin\">Sign in</a>"
     if account is not None:
-        signed = "<div class=\"signed\">Signed in as <strong>%s</strong>" % html.escape(account["callsign"])
+        right = "Signed in as <strong>%s</strong>" % html.escape(account["callsign"])
         if guard is not None:
-            signed += ("<form method=\"post\" action=\"/signout\">"
-                       "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                       "<button>Sign out</button></form>" % guard)
-        signed += "</div>"
+            right += ("<form method=\"post\" action=\"/signout\">"
+                      "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                      "<button>Sign out</button></form>" % guard)
+    bar = ("<nav class=\"bar\"><a class=\"site\" href=\"/\">my.sbitx.net</a>"
+           "<a href=\"/\">Home</a><a href=\"/map\">Map</a>"
+           "<span class=\"who\">%s</span></nav>" % right)
     return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             "<title>%s - my.sbitx.net</title><link rel=\"stylesheet\" href=\"/style.css\">"
-            "</head><body><h1><a href=\"/\">my.sbitx.net</a></h1>%s%s"
-            "<p class=\"foot\">Accounts for sBitx and zBitx owners.</p></body></html>\n"
-            % (html.escape(title), signed, body))
+            "</head><body>%s<main>%s"
+            "<p class=\"foot\">Accounts for sBitx and zBitx owners.</p></main></body></html>\n"
+            % (html.escape(title), bar, body))
 
 
 def said(text, is_wrong=False):
