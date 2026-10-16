@@ -684,7 +684,7 @@ static int have_a_cookie(void) {
 		if (fgets(line, sizeof(line), file) != NULL) {
 			line[strcspn(line, "\r\n")] = 0;
 			if (is_a_cookie(line))
-				snprintf(cookie, sizeof(cookie), "%s", line);
+				snprintf(cookie, sizeof(cookie), "%.*s", COOKIE_LENGTH, line);
 		}
 		fclose(file);
 	}
