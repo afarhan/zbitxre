@@ -48,7 +48,9 @@
 # is already done.
 #
 # ZBITXRE_REPO names another place to fetch zbitxre from, for trying this
-# before the repository is public.
+# before the repository is public. ZBITXRE_SKIP_SUDO=1 is for trying it
+# where nobody is there to type a password: what apt installs is taken to
+# be there, and a step that would need sudo stops it instead.
 
 REPO=${ZBITXRE_REPO:-https://github.com/afarhan/zbitxre.git}
 DEST=$HOME/zbitxre
@@ -68,7 +70,11 @@ ask() {
 is_yes() { case "$1" in [yY]*) return 0 ;; *) return 1 ;; esac }
 
 [ "$(id -u)" -ne 0 ] || stop "run this as the radio's user, not as root."
-sudo -v || stop "this needs sudo, for apt and the boot configuration."
+if [ -n "$ZBITXRE_SKIP_SUDO" ]; then
+	sudo() { stop "sudo $* is needed here, and ZBITXRE_SKIP_SUDO is set."; }
+else
+	sudo -v || stop "this needs sudo, for apt and the boot configuration."
+fi
 
 # 1. which radio
 model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
@@ -115,11 +121,13 @@ if [ "$radio" = sbitxv3 ]; then
 fi
 
 # 3. what building needs
-say "installing what is needed to build it"
-sudo apt-get update -q > /dev/null
-sudo apt-get install -y -q git gcc make pkg-config curl i2c-tools \
-	libasound2-dev libsqlite3-dev libgtk-3-dev > /dev/null \
-	|| stop "apt could not install what is needed."
+if [ -z "$ZBITXRE_SKIP_SUDO" ]; then
+	say "installing what is needed to build it"
+	sudo apt-get update -q > /dev/null
+	sudo apt-get install -y -q git gcc make pkg-config curl i2c-tools \
+		libasound2-dev libsqlite3-dev libgtk-3-dev > /dev/null \
+		|| stop "apt could not install what is needed."
+fi
 
 # 4. zbitxre, fetched and built
 if [ -d "$DEST/.git" ]; then

@@ -922,7 +922,8 @@
     var group = modeGroup(), control = schema[rowControl(name)];
     if (!control) { return false; }
     // BW sets the passband of the voice modes and CW; the other modes' are their own
-    if (name === "BW") { return group === "VOICE" || group === "CW" || group === "VOIP"; }
+    // VOIP has no passband to set: the author, 16 October 2026
+    if (name === "BW") { return group === "VOICE" || group === "CW"; }
     // VOIP_TX is the TX and RX buttons
     if (name === "VOIP_TX") { return false; }
     return control.group === "RADIO" || control.group === group;

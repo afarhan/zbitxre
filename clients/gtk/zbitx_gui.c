@@ -987,10 +987,10 @@ static int is_row_shown(const struct row *r) {
 	if (r->place == IN_LIST && has_footer_button(r->control))
 		return 0;
 	// BW sets the passband of the voice modes and CW; the other modes'
-	// passbands are their own
+	// passbands are their own. VOIP has none to set: the author, 16
+	// October 2026, "BW is not required on VOIP"
 	if (!strcmp(r->control, "BW"))
-		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "CW")
-			|| !strcmp(mode_group(), VOIP_GROUP);
+		return !strcmp(mode_group(), "VOICE") || !strcmp(mode_group(), "CW");
 	// VOIP has no transmitter: its TX and RX are VOIP_TX's
 	if (!strcmp(r->control, "TX"))
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0
