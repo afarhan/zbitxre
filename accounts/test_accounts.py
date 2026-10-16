@@ -454,6 +454,18 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(manifest["start_url"], "/operate?radio=%d" % radio)
         self.assertEqual((manifest["display"], manifest["orientation"]),
                          ("fullscreen", "landscape"))
+        # and it is an application to install, each radio its own: a
+        # browser asks for an id, and for a service worker the page may load
+        self.assertEqual(manifest["id"], "/operate?radio=%d" % radio)
+        status, worker = Browser(self.port).get("/service-worker.js")
+        self.assertEqual(status, 200)
+        self.assertIn("addEventListener(\"fetch\"", worker)
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
+        connection.request("GET", "/operate?radio=%d" % radio, headers={"Cookie": first.cookie})
+        answer = connection.getresponse()
+        answer.read()
+        connection.close()
+        self.assertIn("worker-src 'self'", answer.getheader("Content-Security-Policy"))
         for icon in manifest["icons"]:
             self.assertEqual(Browser(self.port).get(icon["src"])[0], 200, icon["src"])
         # each file is named with a mark of what is in it, so that a browser

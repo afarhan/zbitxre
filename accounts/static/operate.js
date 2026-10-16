@@ -1687,4 +1687,11 @@
     drawScope();
   });
   show();
+
+  // the page is an application a telephone or a computer can install: its
+  // manifest and the service worker that accounts.py serves, which keeps
+  // nothing, are what browsers ask of one
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/service-worker.js").catch(function () {});
+  }
 })();

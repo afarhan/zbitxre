@@ -1032,6 +1032,32 @@ def static_address(name):
         return "/static/%s?v=%s" % (name, hashlib.sha256(file.read()).hexdigest()[:12])
 
 
+# The service worker that makes the page that works a radio an application
+# a telephone or a computer offers to install, as the author asked on
+# 2026-10-16: Chrome offers "Install app" only to a page with a manifest and
+# a service worker. It keeps nothing: every request goes to the network as
+# it would without it, so the page can never be held at an old operate.js,
+# which cost a day on 2026-10-12 (static_address() says how). The radio
+# cannot be worked without the internet anyway, so when a page cannot be
+# fetched it says so in a few words instead of the browser's error.
+SERVICE_WORKER = """
+"use strict";
+var NO_NETWORK = "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+  + "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+  + "<title>No internet</title></head><body style='background:#101820;color:#dde;"
+  + "font-family:sans-serif;padding:2em'><p>The radio is reached over the internet, "
+  + "and this device has none just now.</p><p>Try again once it has.</p></body></html>";
+self.addEventListener("install", function () { self.skipWaiting(); });
+self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim()); });
+self.addEventListener("fetch", function (e) {
+  if (e.request.mode !== "navigate") { return; }
+  e.respondWith(fetch(e.request).catch(function () {
+    return new Response(NO_NETWORK, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }));
+});
+"""
+
+
 def operate_manifest(radio):
     """what a telephone needs to put the page that works a radio on its
     home screen as an application: Chrome's menu, "Add to Home screen".
@@ -1048,6 +1074,7 @@ def operate_manifest(radio):
     number = radio if radio.isdigit() else ""
     return {
         "name": "sBitx radio", "short_name": "sBitx",
+        "id": "/operate?radio=" + number,
         "start_url": "/operate?radio=" + number, "scope": "/",
         "display": "fullscreen", "orientation": "landscape",
         "background_color": "#000000", "theme_color": "#101820",
@@ -1064,6 +1091,7 @@ OPERATE_PAGE = """<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#101820">
 <link rel="manifest" href="/operate.webmanifest?radio=%d">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
 <title>%s</title>
 <link rel="stylesheet" href="%s">
 </head><body data-radio="%d" data-name="%s" data-sockets="%s">
@@ -1921,7 +1949,8 @@ class Handler(BaseHTTPRequestHandler):
                                        mine[0]["id"], html.escape(name),
                                        html.escape(sockets), static_address("sound.js"),
                                        static_address("operate.js")),
-                  policy=PAGE_POLICY + "; manifest-src 'self'; img-src 'self'; connect-src 'self' "
+                  policy=PAGE_POLICY + "; manifest-src 'self'; img-src 'self'; worker-src 'self'; "
+                  "connect-src 'self' "
                   + sockets)
 
     def kept_page(self, account, number, what):
@@ -1983,6 +2012,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, MAP_SCRIPT, "text/javascript; charset=utf-8")
         elif url.path == "/map.css":
             self.send(200, MAP_STYLE, "text/css; charset=utf-8")
+        elif url.path == "/service-worker.js":
+            # a worker obeys the policy its own script comes with: this one
+            # fetches pages of the site, and nothing else
+            self.send(200, SERVICE_WORKER, "text/javascript; charset=utf-8",
+                      policy="default-src 'none'; connect-src 'self'")
         elif url.path == "/operate.webmanifest":
             self.send(200, json.dumps(operate_manifest(query.get("radio", [""])[0])),
                       "application/manifest+json")
