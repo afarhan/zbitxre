@@ -152,13 +152,14 @@
 //
 // A SOUND CARD FOR OTHER PROGRAMS
 //
-// The fourth is SOUND_CARD: two sound devices that are not sound cards,
-// for another program on the radio to hear the receiver by and to send
-// by, WSJT-X or FreeDV or any that works a radio through its sound.
-// setup/sound_card.py makes them and carries the sound, and says how; it
-// is run for this switch as the earphone's script is for BLUETOOTH, and
-// SOUND_CARD_STATUS is what it says: the names of the two devices to
-// choose in the other program.
+// Two sound devices that are not sound cards, for another program on the
+// radio to hear the receiver by and to send by, WSJT-X or FreeDV or any
+// that works a radio through its sound. setup/sound_card.py makes them and
+// carries the sound, and says how; it is run as the earphone's script is
+// for BLUETOOTH, but always, while the radio program is up: the author
+// ruled on 16 October 2026 that it be always on, where it was a switch,
+// SOUND_CARD. SOUND_CARD_STATUS is what it says: the names of the two
+// devices to choose in the other program.
 //
 // CAT, FOR OTHER PROGRAMS TO SET THE RADIO BY
 //
@@ -1151,6 +1152,8 @@ static void radio_poll(long now) {
 		say_status(said);
 		helper_say_again(&bluetooth);
 		helper_say_again(&sound_card);
+		// the sound devices are always wanted while the radio program is up
+		sound_card.is_wanted = 1;
 		snprintf(said, sizeof(said), "%s", cat_status[0] ? cat_status : "OFF");
 		cat_status[0] = 0;
 		status_say(CAT_STATUS_CONTROL, cat_status, said);
@@ -1174,7 +1177,6 @@ static void radio_poll(long now) {
 		if (!strcmp(line, "NEW_COOKIE MAKING"))
 			cookie_renew();
 		helper_follow(&bluetooth, line);
-		helper_follow(&sound_card, line);
 		cat_hear(line);
 		sscanf(line, "FREQ %15s", tuned_hz);
 		sscanf(line, "MODE %15s", tuned_mode);

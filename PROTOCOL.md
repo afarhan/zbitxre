@@ -344,18 +344,20 @@ shown on the globe, grey, and what it copies in FT8 is not sent.
 To shut somebody out who has got in, the owner changes the account's password.
 Whoever is in by it is let go within half a minute.
 
-Three more switches are in `CONNECTIONS`, which have nothing to do with
+Two more switches are in `CONNECTIONS`, which have nothing to do with
 my.sbitx.net and work with the first two off. The daemon sees to them as well,
 and says what came of each in a control of its own:
 
     BLUETOOTH    BLUETOOTH_STATUS     the radio's sound in a paired earphone
-    SOUND_CARD   SOUND_CARD_STATUS    two sound devices for another program on
-                                      the radio, to hear the receiver by and
-                                      to send by
     CAT          CAT_STATUS           other programs set the frequency and the
                                       mode and key the radio, through Hamlib's
                                       "NET rigctl"; the status is the address
                                       and port to give them, 192.168.1.82:4532
+
+The daemon also always gives other programs on the radio two sound devices,
+to hear the receiver by and to send by, and says their names, or why they are
+not there, in `SOUND_CARD_STATUS`. It was a switch, `SOUND_CARD`, until the
+author ruled it should always be on.
 
 `clients/remote/zbitx_remote.c` and `clients/remote/cat.c` say how each is done.
 
@@ -581,8 +583,8 @@ The author's design: the dial is the room. A radio whose owner has `VOIP`
 `ONLINE`, among its `CONNECTIONS`, is in the channel of its dial, the
 frequency rounded to the nearest kilohertz. Whoever speaks there is heard in
 every other radio in the channel, in place of its receiver, in any mode, while
-it receives and its `SOUND_CARD` is off: a program decoding the radio's sound
-would have the speech in place of the signal. The owner speaks by putting the radio in the mode `VOIP`
+it receives; a program decoding the radio's sound, WSJT-X or fldigi, then
+has the speech in place of the band until it stops. The owner speaks by putting the radio in the mode `VOIP`
 and pressing the PTT, which in that mode sets `VOIP_TX` and not `TX`: the mode
 has no transmitter, and the radio program refuses `TX ON` in it. The first to
 speak holds the channel, for a minute at most. `VOIP` is kept from one start

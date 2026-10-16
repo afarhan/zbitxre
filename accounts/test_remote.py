@@ -372,6 +372,12 @@ class RemoteTest(unittest.TestCase):
         self.bluetooth_script = os.path.join(self.folder, "bluetooth.sh")
         self.bluetooth_run = os.path.join(self.folder, "bluetooth.run")
         self.write_bluetooth_script("PLAYING")
+        # in place of setup/sound_card.py, which the gateway always runs: it
+        # says the names of its devices, and makes none
+        self.sound_card_script = os.path.join(self.folder, "sound_card.sh")
+        with open(self.sound_card_script, "w") as file:
+            file.write("#!/bin/sh\necho 'STATUS zBitx_receive zBitx_transmit'\n")
+        os.chmod(self.sound_card_script, 0o755)
         # in place of the radio program's port for speech to transmit
         self.microphone = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.microphone.bind(("127.0.0.1", 0))
@@ -384,6 +390,7 @@ class RemoteTest(unittest.TestCase):
              "--radio-port", str(self.radio.port), "--key", self.key_file,
              "--microphone-port", str(self.microphone.getsockname()[1]),
              "--bluetooth-script", self.bluetooth_script,
+             "--sound-card-script", self.sound_card_script,
              "--cat-port", str(self.cat_port), "--voip-port", str(self.voip_port)],
             stdout=subprocess.DEVNULL)
         self.others = []
@@ -1093,6 +1100,7 @@ class RemoteTest(unittest.TestCase):
              "--key", os.path.join(self.folder, callsign + ".key"),
              "--microphone-port", str(microphone.getsockname()[1]),
              "--bluetooth-script", self.bluetooth_script,
+             "--sound-card-script", self.sound_card_script,
              "--cat-port", str(free_port(socket.SOCK_STREAM)),
              "--voip-port", str(free_port(socket.SOCK_DGRAM))],
             stdout=subprocess.DEVNULL)

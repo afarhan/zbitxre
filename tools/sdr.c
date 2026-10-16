@@ -526,17 +526,13 @@ static struct control bluetooth_status = {
 	.group = "REMOTE", .name = "BLUETOOTH_STATUS", .kind = CONTROL_TEXT,
 };
 
-// SOUND_CARD is the fourth: whether other programs on the radio are given
-// two sound devices to hear the receiver by and to send by, WSJT-X and
-// FreeDV among them. The gateway sees to it, with setup/sound_card.py, and
-// SOUND_CARD_STATUS is the names of the two devices, to be chosen in the
-// other program
-static struct control sound_card = {
-	.group = "CONNECTIONS", .name = "SOUND_CARD", .kind = CONTROL_CHOICE,
-	.choices = "OFF/ON",
-	.value = "OFF",
-};
-
+// Other programs on the radio, WSJT-X and FreeDV among them, are always
+// given two sound devices to hear the receiver by and to send by: the
+// gateway sees to it, with setup/sound_card.py, whenever this program is
+// up. It was a switch, SOUND_CARD, until the author ruled on 16 October
+// 2026 that it should always be on. SOUND_CARD_STATUS is the names of the
+// two devices, to be chosen in the other program, or why they are not
+// there.
 static struct control sound_card_status = {
 	.group = "REMOTE", .name = "SOUND_CARD_STATUS", .kind = CONTROL_TEXT,
 };
@@ -1369,10 +1365,10 @@ static int is_modem_wanting_tx(void) {
 // VoIP: in the mode VOIP the PTT is VOIP_TX and not TX; another's speech
 // is heard while VOIP is ONLINE and the radio receives, in any mode: the
 // author ruled on 16 October 2026 that break-in is not for the voice modes
-// alone. But not while SOUND_CARD is ON: then a program such as WSJT-X or
-// fldigi is decoding what the speaker is given, and speech in its place
-// would spoil that; until there is a mixer, which the author has put off,
-// the two cannot share it. NEW_COOKIE's first tap is let go if the second
+// alone, and that it stays so with the sound devices for other programs
+// always there. So a program such as WSJT-X or fldigi hears the speech in
+// place of the band while someone speaks, until there is a mixer, which
+// the author has put off. NEW_COOKIE's first tap is let go if the second
 // does not come
 static void follow_voip(long now) {
 	static int was_held;
@@ -1399,8 +1395,7 @@ static void follow_voip(long now) {
 		is_speaking = 0;
 	}
 	rtp_voip_set_speaking(is_speaking);
-	rtp_voip_set_hearing(is_online && strcmp(control_get("TX"), "ON")
-		&& strcmp(control_get("SOUND_CARD"), "ON"));
+	rtp_voip_set_hearing(is_online && strcmp(control_get("TX"), "ON"));
 	rtp_voip_heard_callsign(heard, sizeof(heard));
 	if (strcmp(heard, control_get("VOIP_SPEAKER")))
 		set_setting("VOIP_SPEAKER", heard, ORIGIN_NONE);
@@ -1639,7 +1634,6 @@ int main(int argc, char **argv) {
 	control_register(&remote_status);
 	control_register(&bluetooth);
 	control_register(&bluetooth_status);
-	control_register(&sound_card);
 	control_register(&sound_card_status);
 	control_register(&cat);
 	control_register(&cat_status);
