@@ -183,7 +183,8 @@ typedef void (*text_done_fn)(const char *text);
 //it has one, and what a touch on it does
 struct setting {
 	const char *label;
-	const char *control;
+	const char *control;   // the radio's control whose value is shown, or
+	const char *fixed;     // the panel's own text, when it has no control
 	void (*open)();
 	lv_obj_t *value;
 	lv_obj_t *box;
@@ -192,18 +193,28 @@ struct setting {
 static bool is_up(lv_obj_t *screen);
 static void callsign_open();
 static void grid_open();
+static void bootsel_open();
+// a row that only shows something; a row with no open is drawn dim, as
+// not done yet
+static void nothing_open(){}
 static void date_open();
 static void wifi_open();
 static void next_choice_open();
 static void settings_show_values();
 
+#ifndef PANEL_FIRMWARE
+#define PANEL_FIRMWARE "unknown"
+#endif
+
 static struct setting settings[] = {
-	{"Callsign", "MYCALLSIGN", callsign_open, NULL, NULL},
-	{"Grid", "MYGRID", grid_open, NULL, NULL},
-	{"Date/Time", "CLOCK", date_open, NULL, NULL},
-	{"WiFi", NULL, wifi_open, NULL, NULL},
-	{"FT8 Operations", "FT8_OPS", next_choice_open, NULL, NULL},
-	{"FT8 Reply", "FT8_REPLY", next_choice_open, NULL, NULL},
+	{"Callsign", "MYCALLSIGN", NULL, callsign_open, NULL, NULL},
+	{"Grid", "MYGRID", NULL, grid_open, NULL, NULL},
+	{"Date/Time", "CLOCK", NULL, date_open, NULL, NULL},
+	{"WiFi", NULL, NULL, wifi_open, NULL, NULL},
+	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
+	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},
+	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, NULL, NULL},
+	{"BOOTSEL", NULL, "-", bootsel_open, NULL, NULL},
 };
 #define SETTINGS ((int)(sizeof(settings) / sizeof(settings[0])))
 
@@ -524,6 +535,8 @@ static void settings_show_values(){
 		lv_obj_scroll_to_view(settings[settings_mark].box, LV_ANIM_OFF);
 	for (i = 0; i < SETTINGS; i++){
 		show_mark(settings[i].box, i == settings_mark);
+		if (settings[i].fixed != NULL)
+			lv_label_set_text(settings[i].value, settings[i].fixed);
 		if (settings[i].control == NULL)
 			continue;
 		c = controls_find(settings[i].control);
@@ -592,6 +605,51 @@ static void next_choice_open(){
 	c->last_user_change = millis();
 	Serial.printf("%s %d\n", c->d.name, next);
 	i2c_link_changed(c->d.number, next);
+	settings_show();
+}
+
+// BOOTSEL restarts the panel as the USB drive its chip has in ROM, for an
+// owner who puts new firmware on it with the cable: the author asked for it
+// among the settings on 16 October 2026, with the version beside it. The
+// panel does it itself, with or without the radio program. Two taps within
+// BOOTSEL_AGAIN_MS, since a panel left as a drive shows nothing until it is
+// given firmware or switched off and on
+#define BOOTSEL_AGAIN_MS 5000
+static uint32_t bootsel_tapped_ms;
+
+static struct setting *setting_called(const char *label){
+	for (int i = 0; i < SETTINGS; i++){
+		if (!strcmp(settings[i].label, label))
+			return &settings[i];
+	}
+	return NULL;
+}
+
+static void bootsel_open(){
+	struct setting *s = setting_called("BOOTSEL");
+
+	if (bootsel_tapped_ms != 0 && millis() - bootsel_tapped_ms < BOOTSEL_AGAIN_MS){
+		s->fixed = "USB DRIVE";
+		settings_show();
+		lv_timer_handler();
+		delay(200);
+		rp2040.rebootToBootloader();
+		return;
+	}
+	bootsel_tapped_ms = millis();
+	s->fixed = "TAP AGAIN";
+	settings_show();
+}
+
+// TAP AGAIN goes back to - when the second tap does not come
+static void bootsel_slice(){
+	struct setting *s;
+
+	if (bootsel_tapped_ms == 0 || millis() - bootsel_tapped_ms < BOOTSEL_AGAIN_MS)
+		return;
+	bootsel_tapped_ms = 0;
+	s = setting_called("BOOTSEL");
+	s->fixed = "-";
 	settings_show();
 }
 
@@ -1602,6 +1660,7 @@ void screens_status(const char *text){
 
 //from loop(): what has changed on a screen that is up is shown
 void screens_slice(){
+	bootsel_slice();
 	if (wifi_is_to_show && wifi_screen != NULL)
 		wifi_show();
 	if (log_is_to_show && log_screen != NULL)
