@@ -1527,6 +1527,8 @@ void main_radio_says_text(int number, const char *text){
 			&& millis() - c->last_user_change < OPERATOR_WINS_FOR_MS)
 		return;
 	snprintf(c->text, sizeof(c->text), "%s", text);
+	if (!strcmp(c->d.name, "UPDATE_STATUS"))
+		screens_update_status(text);
 	//whoever is heard over VoIP is named on the status line while they
 	//speak, and the line cleared after, if it still names them
 	if (!strcmp(c->d.name, "VOIP_SPEAKER")){

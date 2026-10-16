@@ -1893,10 +1893,134 @@ static bool is_up(lv_obj_t *screen){
 	return screen != NULL && !lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* the update, seen happening
+
+   As in the window: the author asked on 16 October 2026 to see an update
+   as it goes, and whether it succeeded. A view over every screen opens
+   with the first step the radio says in UPDATE_STATUS, shows the latest
+   steps under one another, and at the end says whether the update
+   succeeded or failed, by the radio's "DONE: " or "FAILED: ", with CLOSE,
+   which a touch or a click of the knob presses. The panel is given new
+   firmware in the middle of an update, and restarts; the radio tells it
+   the end when it starts again. */
+
+#define UPDATE_STEPS_SHOWN 7
+#define UPDATE_STEP_ROOM 64
+#define UPDATE_DONE_MARK "DONE: "
+#define UPDATE_FAILED_MARK "FAILED: "
+
+static lv_obj_t *update_layer;
+static lv_obj_t *update_steps_label;
+static lv_obj_t *update_outcome_label;
+static lv_obj_t *update_close_button;
+static char update_steps[UPDATE_STEPS_SHOWN][UPDATE_STEP_ROOM];
+static int update_steps_count;
+static char update_last[UPDATE_STEP_ROOM];
+static bool update_has_ended;
+
+static bool update_is_up(){
+	return update_layer != NULL && !lv_obj_has_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
+}
+
+//the waterfall, which is painted straight to the screen, is stopped while
+//the view is up and the main screen laid out again after, if it is there
+static void update_close(){
+	lv_obj_add_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
+	update_steps_count = 0;
+	update_last[0] = 0;
+	update_has_ended = false;
+	if (!screens_is_open())
+		main_ui();
+}
+
+static void on_update_close(lv_event_t *e){
+	(void)e;
+	if (update_has_ended)
+		update_close();
+}
+
+static void update_create(){
+	lv_obj_t *box;
+	lv_obj_t *title;
+
+	update_layer = lv_obj_create(lv_layer_top());
+	lv_obj_remove_style_all(update_layer);
+	lv_obj_set_size(update_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
+	lv_obj_align(update_layer, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_bg_color(update_layer, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_bg_opa(update_layer, LV_OPA_COVER, 0);
+	lv_obj_add_flag(update_layer, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
+	box = box_create(update_layer, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+	title = text_create(box, "UPDATING THE RADIO", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, PAD);
+	update_steps_label = text_create(box, "", &lv_font_montserrat_14, COLOUR_TITLE);
+	lv_label_set_long_mode(update_steps_label, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(update_steps_label, SCREEN_WIDTH - 4 * PAD);
+	lv_obj_align(update_steps_label, LV_ALIGN_TOP_LEFT, 2 * PAD, 5 * PAD);
+	update_outcome_label = text_create(box, "", &lv_font_montserrat_20, COLOUR_VALUE);
+	lv_obj_align(update_outcome_label, LV_ALIGN_BOTTOM_MID, 0,
+		-(CONFIRM_BUTTON_HEIGHT + 4 * PAD));
+	update_close_button = button_create(box, (SCREEN_WIDTH - CONFIRM_BUTTON_WIDTH) / 2,
+		SCREEN_HEIGHT - CONFIRM_BUTTON_HEIGHT - 2 * PAD, CONFIRM_BUTTON_WIDTH,
+		CONFIRM_BUTTON_HEIGHT, "CLOSE", on_update_close);
+}
+
+static void update_show(){
+	char text[UPDATE_STEPS_SHOWN * UPDATE_STEP_ROOM] = "";
+
+	for (int i = 0; i < update_steps_count; i++){
+		strncat(text, update_steps[i], sizeof(text) - strlen(text) - 2);
+		strcat(text, "\n");
+	}
+	lv_label_set_text(update_steps_label, text);
+	lv_obj_set_style_opa(update_close_button, update_has_ended ? LV_OPA_COVER : LV_OPA_30, 0);
+	show_mark(update_close_button, update_has_ended);
+}
+
+void screens_update_status(const char *text){
+	bool is_done = !strncmp(text, UPDATE_DONE_MARK, strlen(UPDATE_DONE_MARK));
+	bool is_failed = !strncmp(text, UPDATE_FAILED_MARK, strlen(UPDATE_FAILED_MARK));
+	const char *step = text;
+
+	//the radio tells its controls again when the panel starts: the same
+	//step is not shown twice, and nothing is opened for no update
+	if (text[0] == 0 || !strcmp(text, update_last))
+		return;
+	snprintf(update_last, sizeof(update_last), "%s", text);
+	if (update_layer == NULL)
+		update_create();
+	if (!update_is_up()){
+		update_steps_count = 0;
+		update_has_ended = false;
+		lv_label_set_text(update_outcome_label, "");
+		waterfall_set_painting(false);
+		lv_obj_remove_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
+	}
+	if (is_done)
+		step += strlen(UPDATE_DONE_MARK);
+	if (is_failed)
+		step += strlen(UPDATE_FAILED_MARK);
+	if (update_steps_count == UPDATE_STEPS_SHOWN){
+		memmove(update_steps[0], update_steps[1], sizeof(update_steps[0]) * (UPDATE_STEPS_SHOWN - 1));
+		update_steps_count--;
+	}
+	snprintf(update_steps[update_steps_count++], UPDATE_STEP_ROOM, "%s", step);
+	if (is_done || is_failed){
+		update_has_ended = true;
+		lv_label_set_text(update_outcome_label, is_done ? "UPDATE SUCCEEDED" : "UPDATE FAILED");
+		lv_obj_set_style_text_color(update_outcome_label,
+			lv_color_hex(is_done ? 0x00E060 : 0xFF4040), 0);
+	}
+	update_show();
+}
+
 //the knob, while a screen other than the main one is up: turning moves the
 //mark from row to row, the list moving to keep it in view, and a click
 //chooses the marked row, as a touch on it does
 void screens_knob_turned(int steps){
+	if (update_is_up())
+		return;
 	if (confirm_is_up()){
 		confirm_is_on_yes = !confirm_is_on_yes;
 		confirm_show();
@@ -1942,7 +2066,11 @@ void screens_knob_turned(int steps){
 }
 
 void screens_knob_clicked(){
-	if (confirm_is_up())
+	if (update_is_up()){
+		if (update_has_ended)
+			update_close();
+	}
+	else if (confirm_is_up())
 		confirm_answered(confirm_is_on_yes);
 	else if (is_up(log_screen) && is_up(ask_layer))
 		ask_answered(ask_is_on_yes);
@@ -2030,6 +2158,8 @@ void screens_select(const char *name){
 }
 
 bool screens_is_open(){
+	if (update_is_up())
+		return true;
 	if (settings_screen != NULL && !lv_obj_has_flag(settings_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
 	if (wifi_screen != NULL && !lv_obj_has_flag(wifi_screen, LV_OBJ_FLAG_HIDDEN))

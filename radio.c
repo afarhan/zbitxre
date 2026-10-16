@@ -129,7 +129,7 @@
 #define STARTING_AGC "SLOW"
 #define GAIN_MAX 100
 #define DRIVE_MAX 100
-#define REQUEST_MAX 64
+#define REQUEST_MAX 96
 #define ANSWER_MAX 100
 
 #define NO_BAND (-1)

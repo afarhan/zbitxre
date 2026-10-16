@@ -630,6 +630,23 @@ static struct control radio_key = {
 #define UPDATE_SCRIPT "setup/update.sh"
 #define UPDATE_LOG "/tmp/update.log"
 
+// UPDATE_STATUS is how an update goes, step by step, for the window and the
+// panel to show in a view of their own until it ends: the author asked on
+// 16 October 2026 to see the update happening, and whether it succeeded,
+// when there had been only the status line. update.sh sets it through the
+// terminal's "update_status". Its last says how it ended, beginning
+// "DONE: " or "FAILED: ". An update that restarts the radio stops this
+// program on the way, so update.sh leaves the last in UPDATE_RESULT and
+// the radio says it when it starts again, and lets it go after
+// UPDATE_RESULT_FOR_MS, so that a client that connects later is not shown
+// an old update's end
+#define UPDATE_RESULT "data/update_result"
+#define UPDATE_RESULT_FOR_MS (5 * 60 * 1000L)
+
+static struct control update_status = {
+	.group = "UPDATE", .name = "UPDATE_STATUS", .kind = CONTROL_TEXT,
+};
+
 static struct control update = {
 	.group = "STATION", .name = "UPDATE", .kind = CONTROL_CHOICE,
 	.choices = "-/UPDATING",
@@ -661,11 +678,34 @@ static void update_start(void) {
 
 static void set_setting(const char *name, const char *value, int origin);
 
-static void follow_update(void) {
+static long update_result_until_ms;
+
+// the end of an update that restarted the radio, as update.sh left it
+static void update_result_take(long now) {
+	char line[CONTROL_VALUE_MAX];
+	FILE *file = fopen(UPDATE_RESULT, "r");
+
+	if (file == NULL)
+		return;
+	if (fgets(line, sizeof(line), file) != NULL) {
+		line[strcspn(line, "\n")] = 0;
+		set_setting("UPDATE_STATUS", line, ORIGIN_NONE);
+		update_result_until_ms = now + UPDATE_RESULT_FOR_MS;
+	}
+	fclose(file);
+	unlink(UPDATE_RESULT);
+}
+
+static void follow_update(long now) {
+	if (update_result_until_ms != 0 && now > update_result_until_ms) {
+		update_result_until_ms = 0;
+		set_setting("UPDATE_STATUS", "", ORIGIN_NONE);
+	}
 	if (strcmp(control_get("UPDATE"), "UPDATING"))
 		return;
+	update_result_until_ms = 0;
 	set_setting("UPDATE", "-", ORIGIN_NONE);
-	panel_say("Update: looking for a newer version");
+	set_setting("UPDATE_STATUS", "looking for a newer version", ORIGIN_NONE);
 	update_start();
 }
 
@@ -1285,9 +1325,17 @@ static void handle_command(char *line) {
 		return;
 	}
 	// "say <text>": the text on the panel's status line and to every
-	// client, for update.sh to say how an update goes
+	// client
 	if (begins_with(line, "say ")) {
 		panel_say(line + strlen("say "));
+		return;
+	}
+	// "update_status <text>": update.sh saying how an update goes, which
+	// is put on the status line too, for a panel whose firmware does not
+	// know UPDATE_STATUS
+	if (begins_with(line, "update_status ")) {
+		set_setting("UPDATE_STATUS", line + strlen("update_status "), ORIGIN_TERMINAL);
+		panel_say(line + strlen("update_status "));
 		return;
 	}
 	if (begins_with(line, PLAY_FOR)) {
@@ -1631,7 +1679,7 @@ static void main_loop(void) {
 		client_spectrum_send(now_ms());
 		measure_update(now_ms());
 		follow_sound_card(now_ms());
-		follow_update();
+		follow_update(now_ms());
 		start_check_poll(now_ms());
 		snapshot_save();
 		record_save();
@@ -1720,6 +1768,7 @@ int main(int argc, char **argv) {
 	control_register(&radio_key);
 	control_register(&new_cookie);
 	control_register(&update);
+	control_register(&update_status);
 	control_register(&voip_status);
 	control_register(&voip_tx);
 	control_register(&voip_speaker);
@@ -1730,6 +1779,7 @@ int main(int argc, char **argv) {
 	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
+	update_result_take(now_ms());
 	if (hz != NULL)
 		set_setting("FREQ", hz, ORIGIN_TERMINAL);
 	if (mode != NULL)

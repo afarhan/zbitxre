@@ -545,7 +545,7 @@
 
 #define KNOWN_MAX 128
 #define CONTROL_NAME_MAX 24
-#define CONTROL_VALUE_MAX 32
+#define CONTROL_VALUE_MAX 64
 #define CHOICES_MAX 128
 #define NOT_FOUND (-1)
 #define ON_FREQUENCY (-1)
@@ -706,6 +706,7 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define PAGE_CONNECTIONS "connections"
 #define RADIO_KEY_CONTROL "RADIO_KEY"
 #define UPDATE_CONTROL "UPDATE"
+#define UPDATE_STATUS_CONTROL "UPDATE_STATUS"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
 #define WINDOW_NAME "zbitx"
 #define TITLE_MAX 160
@@ -868,6 +869,8 @@ static atomic_int control_presses;
 
 static void try_to_connect(void);
 static void make_list(void);
+static void update_view_take(const char *status);
+static GtkWidget *key_new(const char *text, GCallback pressed, gpointer data);
 static void add_label_class(GtkWidget *label, const char *name);
 static void set_class(GtkWidget *widget, const char *name, int on);
 static void tell_taps(GtkWidget *widget, GCallback tapped, gpointer data);
@@ -1901,6 +1904,8 @@ static void handle_line(const char *name, char *value) {
 	snprintf(k->value, CONTROL_VALUE_MAX, "%s", value);
 	if (!strcmp(name, VOIP_SPEAKER_CONTROL))
 		show_voip_speaker(value);
+	if (!strcmp(name, UPDATE_STATUS_CONTROL))
+		update_view_take(value);
 	if (!strcmp(name, "FREQ"))
 		take_radio_frequency(atoi(value));
 	// another client changed the VFO: the window follows, and its
@@ -2677,6 +2682,123 @@ static void ask_for_a_new_key(void) {
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT)
 		send_line("NEW_COOKIE", "MAKING");
 	gtk_widget_destroy(dialog);
+}
+
+/* the update, seen happening
+
+   The author asked on 16 October 2026 to see an update as it goes, until
+   it is done, and whether it succeeded: a window over the radio's that
+   opens with the first step the radio says, in its UPDATE_STATUS, lists
+   each step under the last, and at the end says in large letters whether
+   the update succeeded or failed, which the radio says by beginning its
+   last "DONE: " or "FAILED: ". It is closed then, by CLOSE. An update that
+   restarts the radio closes this window with it; the window that starts
+   after is told the end by the radio, and shows it. */
+
+#define DONE_MARK "DONE: "
+#define FAILED_MARK "FAILED: "
+
+static GtkWidget *update_view;
+static GtkWidget *update_steps;
+static GtkWidget *update_steps_scroller;
+static GtkWidget *update_outcome;
+static GtkWidget *update_close;
+static char update_last[CONTROL_VALUE_MAX];
+
+static void on_update_view_closed(GtkWidget *widget, gpointer unused) {
+	(void)widget;
+	(void)unused;
+	update_view = NULL;
+	update_last[0] = 0;
+}
+
+static void on_update_close(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	gtk_widget_destroy(update_view);
+}
+
+static void update_view_open(void) {
+	GtkWidget *inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, px(8));
+	GtkWidget *title = gtk_label_new("Updating the radio");
+
+	update_view = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	gtk_window_set_title(GTK_WINDOW(update_view), "Update");
+	gtk_window_set_transient_for(GTK_WINDOW(update_view), GTK_WINDOW(main_window));
+	gtk_window_set_modal(GTK_WINDOW(update_view), TRUE);
+	gtk_window_set_position(GTK_WINDOW(update_view), GTK_WIN_POS_CENTER_ON_PARENT);
+	gtk_window_set_default_size(GTK_WINDOW(update_view), px_across(600), px_down(360));
+	gtk_container_set_border_width(GTK_CONTAINER(inside), px(12));
+	add_label_class(title, "tile-value");
+	gtk_box_pack_start(GTK_BOX(inside), title, FALSE, FALSE, 0);
+
+	update_steps = gtk_box_new(GTK_ORIENTATION_VERTICAL, px(2));
+	update_steps_scroller = gtk_scrolled_window_new(NULL, NULL);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(update_steps_scroller),
+		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_container_add(GTK_CONTAINER(update_steps_scroller), update_steps);
+	gtk_box_pack_start(GTK_BOX(inside), update_steps_scroller, TRUE, TRUE, 0);
+
+	update_outcome = gtk_label_new("This takes a while; the radio works meanwhile.");
+	gtk_label_set_line_wrap(GTK_LABEL(update_outcome), TRUE);
+	add_label_class(update_outcome, "status");
+	gtk_box_pack_start(GTK_BOX(inside), update_outcome, FALSE, FALSE, 0);
+
+	update_close = key_new("CLOSE", G_CALLBACK(on_update_close), NULL);
+	gtk_widget_set_vexpand(update_close, FALSE);
+	gtk_widget_set_size_request(update_close, -1, px_down(ROW_HEIGHT));
+	gtk_widget_set_sensitive(update_close, FALSE);
+	gtk_box_pack_start(GTK_BOX(inside), update_close, FALSE, FALSE, 0);
+
+	gtk_container_add(GTK_CONTAINER(update_view), inside);
+	g_signal_connect(update_view, "destroy", G_CALLBACK(on_update_view_closed), NULL);
+	gtk_widget_show_all(update_view);
+}
+
+// the newest step is kept in view
+static gboolean update_steps_to_end(gpointer unused) {
+	GtkAdjustment *scroll;
+
+	(void)unused;
+	if (update_view == NULL)
+		return G_SOURCE_REMOVE;
+	scroll = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(update_steps_scroller));
+	gtk_adjustment_set_value(scroll, gtk_adjustment_get_upper(scroll));
+	return G_SOURCE_REMOVE;
+}
+
+static void update_view_take(const char *status) {
+	int is_done = !strncmp(status, DONE_MARK, strlen(DONE_MARK));
+	int is_failed = !strncmp(status, FAILED_MARK, strlen(FAILED_MARK));
+	const char *step = status;
+	GtkWidget *line;
+
+	// a client that connects is told the radio's controls again, this
+	// among them: the same step is not listed twice, and nothing is
+	// opened for an update that is not going on
+	if (status[0] == 0 || !strcmp(status, update_last))
+		return;
+	snprintf(update_last, sizeof(update_last), "%s", status);
+	if (update_view == NULL)
+		update_view_open();
+	if (is_done)
+		step += strlen(DONE_MARK);
+	if (is_failed)
+		step += strlen(FAILED_MARK);
+	line = gtk_label_new(step);
+	gtk_label_set_xalign(GTK_LABEL(line), 0);
+	gtk_label_set_line_wrap(GTK_LABEL(line), TRUE);
+	add_label_class(line, "message");
+	gtk_box_pack_start(GTK_BOX(update_steps), line, FALSE, FALSE, 0);
+	gtk_widget_show(line);
+	g_idle_add(update_steps_to_end, NULL);
+	if (!is_done && !is_failed)
+		return;
+	gtk_label_set_text(GTK_LABEL(update_outcome),
+		is_done ? "Update succeeded" : "Update failed");
+	set_class(update_outcome, "status", 0);
+	set_class(update_outcome, is_done ? "update-done" : "update-failed", 1);
+	gtk_widget_set_sensitive(update_close, TRUE);
 }
 
 // UPDATE, tapped: a box that says what an update does and asks whether to
@@ -3924,6 +4046,8 @@ static void load_style(void) {
 		".tile.voip-on { background-color: #2050C0; }"
 		".tile.focused { box-shadow: inset 0 0 0 %dpx #FFC000; }"
 		".tile.focused.editing { box-shadow: inset 0 0 0 %dpx #00E060; }"
+		".update-done { font-size: %dpx; font-weight: bold; color: #00E060; }"
+		".update-failed { font-size: %dpx; font-weight: bold; color: #FF4040; }"
 		"scrollbar slider { min-width: %dpx; min-height: %dpx; border-radius: 0;"
 		" background-color: #607080; }"
 		"scrollbar { background-color: #101820; }"
@@ -3951,10 +4075,12 @@ static void load_style(void) {
 		" background-image: none; background-color: #101820;"
 		" border: 1px solid #405060; border-radius: 0; box-shadow: none; }"
 		".key:active { background-color: #604800; }"
+		".key:disabled { color: #405060; }"
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; background-color: #101820;"
 		" box-shadow: inset 0 0 0 %dpx #FFC000; }",
-		px(2), px(3), px(SCROLL_BAR_WIDTH), px(SCROLL_BAR_WIDTH),
+		px(2), px(3), px(VALUE_SIZE), px(VALUE_SIZE), px(SCROLL_BAR_WIDTH),
+		px(SCROLL_BAR_WIDTH),
 		px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
 		frequency_px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),

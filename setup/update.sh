@@ -59,15 +59,35 @@ elif [ -n "$1" ]; then
 	exit 2
 fi
 
-# said here, and on the radio's status line through its terminal's "say"
-# when it is running; the pipe is given two seconds, so that an update
-# with no radio program to read it does not wait for ever. The panel's
-# status line holds 48 characters, "Update: " among them, so each is kept
-# to 40 and in plain words: the author found the longer ones cut short
+# said here, and to the radio, when it is running, as its UPDATE_STATUS,
+# which the window and the panel show in a view of their own while the
+# update goes on; the pipe is given two seconds, so that an update with no
+# radio program to read it does not wait for ever. The panel shows 47
+# characters, so each is kept to that, in plain words
 say() {
 	echo "update: $*"
 	[ -p /tmp/sdr.in ] && pgrep -x sdr > /dev/null \
-		&& timeout 2 sh -c 'echo "say $1" > /tmp/sdr.in' sh "Update: $*"
+		&& timeout 2 sh -c 'echo "update_status $1" > /tmp/sdr.in' sh "$*"
+}
+
+# how the update ended, the last that is said, which the window and the
+# panel show as its outcome
+done_with() {
+	say "DONE: $*"
+	exit 0
+}
+
+failed() {
+	say "FAILED: $*"
+	exit 1
+}
+
+# what was not as it should be, but did not stop the update, said at its
+# end
+notes=""
+note() {
+	say "$*"
+	notes="$notes; $1"
 }
 
 # the last TX line the radio program tells a client that connects: ON or
@@ -97,15 +117,13 @@ EOF
 # install.sh gives the kernel its clock chip, finds GitHub's certificate
 # not yet valid. set_clock.sh says why and sets it from my.sbitx.net
 if ! setup/set_clock.sh > /dev/null; then
-	say "the clock is wrong and could not be set"
-	exit 1
+	failed "the clock is wrong and could not be set"
 fi
 
 before=$(git rev-parse --short HEAD)
 say "at $before; asking GitHub for news"
 if ! git pull --ff-only --quiet origin main; then
-	say "could not pull; nothing was changed"
-	exit 1
+	failed "could not reach GitHub; nothing changed"
 fi
 after=$(git rev-parse --short HEAD)
 if [ "$before" = "$after" ]; then
@@ -116,31 +134,27 @@ else
 fi
 built=$(cat "$BUILT_FROM" 2>/dev/null)
 if [ "$if_new" = 1 ] && [ "$built" = "$after" ]; then
-	say "up to date, at $after"
-	exit 0
+	done_with "already up to date, at $after"
 fi
 
 if ! setup/fetch_rade_weights.sh > /dev/null; then
-	say "RADE files not fetched; nothing changed"
-	exit 1
+	failed "RADE files not fetched; nothing changed"
 fi
 
 say "building; about ten minutes on a zbitx"
 if ! make --quiet sdr; then
-	say "the build failed; the radio is as it was"
-	exit 1
+	failed "the build failed; the radio is as it was"
 fi
 mkdir -p data && echo "$after" > "$BUILT_FROM"
 if pkg-config --exists gtk+-3.0 2>/dev/null; then
 	say "building the window"
-	make --quiet gui || say "window build failed; old window kept"
+	make --quiet gui || note "window build failed; old one kept"
 fi
 say "building the gateway"
-make --quiet remote || say "gateway build failed; old one kept"
+make --quiet remote || note "gateway build failed; old one kept"
 
 if [ "$build_only" = 1 ]; then
-	say "built; used at the next start"
-	exit 0
+	done_with "built $after; used at the next start$notes"
 fi
 
 if pgrep -x sdr > /dev/null; then
@@ -155,8 +169,7 @@ if pgrep -x sdr > /dev/null; then
 		sleep 0.5
 	done
 	if pgrep -x sdr > /dev/null; then
-		say "sdr did not stop; used at the next start"
-		exit 1
+		failed "sdr did not stop; restart the radio"
 	fi
 fi
 pkill -x zbitx_gui
@@ -164,7 +177,11 @@ pkill -x zbitx_remote
 
 # a zbitx's front panel, brought to the firmware of this release over I2C,
 # while the radio program is stopped
-setup/panel_firmware.sh
+setup/panel_firmware.sh || notes="$notes; the panel kept its firmware"
+
+# how it ended, for the radio to say when it has started again
+mkdir -p data
+echo "DONE: updated to $after$notes" > data/update_result
 
 export DISPLAY=${DISPLAY:-:0}
 export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
@@ -173,4 +190,5 @@ if command -v x-terminal-emulator > /dev/null && xset q > /dev/null 2>&1; then
 	say "the radio is starting on its screen"
 else
 	say "there is no screen to start the radio on; run setup/start.sh"
+	exit 1
 fi

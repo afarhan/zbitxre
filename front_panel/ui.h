@@ -119,5 +119,6 @@ void screens_slice();
 void screens_knob_turned(int steps);
 void screens_knob_clicked();
 void screens_status(const char *text);
+void screens_update_status(const char *text);
 void main_note(const char *text);
 void main_note_large(const char *text);

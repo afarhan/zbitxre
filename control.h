@@ -6,9 +6,9 @@
 #pragma once
 
 #define CONTROL_NAME_MAX 16
-#define CONTROL_VALUE_MAX 32
+#define CONTROL_VALUE_MAX 64
 #define CONTROL_WHY_MAX 80
-#define CONTROLS_MAX 64
+#define CONTROLS_MAX 96
 
 // who made a change, so that it is not told of it again
 #define ORIGIN_NONE (-1)
