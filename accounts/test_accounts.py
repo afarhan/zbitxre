@@ -341,8 +341,52 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(radio["cookie"], "abcdefghjkmn")
         self.assertRegex(radio["client_password"], r"^[a-z]{12}$")
         self.assertNotEqual(radio["client_password"], radio["cookie"])
-        self.assertIn(accounts.show_secret(radio["client_password"]), text)
-        self.assertNotIn("abcd-efgh-jkmn", text.split("Add a radio")[0])
+        # the radio is a card on the owner's page, and its client password
+        # is on its Keys page, not there; the cookie is shown nowhere
+        self.assertIn("class=\"card\"", text)
+        self.assertNotIn(accounts.show_secret(radio["client_password"]), text)
+        _, keys = browser.get("/radios/keys?radio=%d" % radio["id"])
+        self.assertIn(accounts.show_secret(radio["client_password"]), keys)
+        for page in (text, keys):
+            self.assertNotIn("abcd-efgh-jkmn", page)
+
+    def test_a_new_owner_is_asked_to_add_a_radio_and_shown_how(self):
+        browser = self.make_account()
+        _, text = browser.get("/")
+        self.assertIn("You have not added your radio", text)
+        self.assertIn("href=\"/radios/add\"", text)
+        _, text = browser.get("/radios/add")
+        self.assertIn("MYCALLSIGN</strong> is <strong>VU2ESE", text)
+        self.assertIn("action=\"/radios/add\"", text)
+        # a mistake is shown on the same page, with the name kept
+        text = self.add_radio(browser, "shack", "abcd")
+        self.assertIn("That is not a cookie", text)
+        self.assertIn("value=\"shack\"", text)
+
+    def test_keys_are_only_the_owners(self):
+        first = self.make_account()
+        self.add_radio(first)
+        radio = self.service.radio_called("vu2ese-home")
+        second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        status, text = second.get("/radios/keys?radio=%d" % radio["id"])
+        self.assertEqual(status, 404)
+        self.assertNotIn(accounts.show_secret(radio["client_password"]), text)
+        status, _ = Browser(self.port).get("/radios/keys?radio=%d" % radio["id"])
+        self.assertNotIn(accounts.show_secret(radio["client_password"]), _)
+
+    def test_a_sign_in_is_remembered_only_when_asked(self):
+        self.make_account()
+        for form, kept in (({}, False), ({"remember": "on"}, True)):
+            form.update({"callsign": "VU2ESE", "password": PASSWORD})
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
+            connection.request("POST", "/signin", body=urllib.parse.urlencode(form), headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": self.browser.origin})
+            answer = connection.getresponse()
+            answer.read()
+            connection.close()
+            self.assertEqual(answer.status, 303)
+            self.assertEqual("Max-Age=" in answer.getheader("Set-Cookie"), kept, form)
 
     def test_what_is_not_a_cookie_or_a_name_is_refused(self):
         browser = self.make_account()

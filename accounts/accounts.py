@@ -232,7 +232,10 @@ import decodes
 
 VERIFY_LINK_S = 48 * 3600
 RESET_LINK_S = 2 * 3600
+# a sign-in that is to be remembered on the device lasts a month; one that
+# is not ends when the browser is closed, and in any case within a day
 SESSION_S = 30 * 24 * 3600
+SESSION_UNREMEMBERED_S = 24 * 3600
 WINDOW_S = 15 * 60
 SIGNIN_TRIES_A_CALLSIGN = 5
 SIGNIN_TRIES_AN_ADDRESS = 20
@@ -1104,7 +1107,24 @@ PAGE_POLICY = ("default-src 'none'; style-src 'self'; script-src 'self'; "
 
 STYLE = BAR_STYLE + """
 body { font-family: sans-serif; margin: 0; color: #222; background: #fff; line-height: 1.45; }
-main { max-width: 34em; margin: 4vh auto; padding: 0 1em; }
+main { max-width: 52em; margin: 4vh auto; padding: 0 1em; }
+form, main > p, ol { max-width: 34em; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 1em; }
+a.action { background: #10181f; color: #fff; padding: 0.45em 1em; border-radius: 4px;
+    text-decoration: none; white-space: nowrap; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr)); gap: 1em; }
+.card { border: 1px solid #ccd; border-radius: 8px; padding: 0.9em 1em; }
+.card .name { font-weight: bold; font-size: 1.1em; word-break: break-all; }
+.card .state { color: #777; margin: 0.2em 0 0.7em; }
+.card .state.on { color: #2a8a3a; }
+.card .state::before { content: "\\25CF  "; }
+.card .links { display: flex; flex-wrap: wrap; gap: 0.3em 1em; }
+.small { color: #777; font-size: 0.9em; margin-top: 2em; }
+.secret { font-size: 1.3em; background: #f4f6f8; padding: 0.5em 0.8em; display: inline-block; }
+.steps li { margin-bottom: 0.5em; }
+.command { font-family: monospace; }
+.tick { display: flex; align-items: center; gap: 0.5em; }
+button.danger { background: #fbeeee; border: 1px solid #c33; color: #a22; }
 h1 { font-size: 1.5em; }
 h1 a { color: inherit; text-decoration: none; }
 label { display: block; margin-top: 1em; }
@@ -1500,14 +1520,14 @@ class Service:
             db.execute("delete from sessions where account = ?", (account["id"],))
             return self.new_session(db, account["id"]), ""
 
-    def new_session(self, db, account_id):
+    def new_session(self, db, account_id, life=SESSION_S):
         secret = secrets.token_urlsafe(32)
         db.execute("delete from sessions where expires < ?", (now(),))
         db.execute("insert into sessions (hash, account, expires) values (?, ?, ?)",
-                   (digest(secret), account_id, now() + SESSION_S))
+                   (digest(secret), account_id, now() + life))
         return secret
 
-    def sign_in(self, callsign_typed, password, address):
+    def sign_in(self, callsign_typed, password, address, is_remembered=True):
         """returns (the session's secret or None, what to tell the user)"""
         callsign = callsign_typed.strip().upper()
         wrong = "The callsign or the password is wrong."
@@ -1529,7 +1549,8 @@ class Service:
             if account["status"] == "suspended":
                 return None, "This account is suspended. Write to %s." % (
                     self.settings.support or "support")
-            return self.new_session(db, account["id"]), ""
+            return self.new_session(db, account["id"], SESSION_S if is_remembered
+                                    else SESSION_UNREMEMBERED_S), ""
 
     def session_account(self, secret):
         if not secret:
@@ -1795,9 +1816,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send(303, "", headers=(("Location", where),) + tuple(headers))
 
     def session_cookie(self, secret, life=SESSION_S):
+        """with no life the cookie is the browser's to forget when it is
+        closed: a sign-in not to be remembered"""
         secure = "; Secure" if self.cookie_name().startswith("__Host-") else ""
-        return ("Set-Cookie", "%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax%s"
-                % (self.cookie_name(), secret, life, secure))
+        kept = "; Max-Age=%d" % life if life is not None else ""
+        return ("Set-Cookie", "%s=%s; Path=/%s; HttpOnly; SameSite=Lax%s"
+                % (self.cookie_name(), secret, kept, secure))
 
     # the pages
 
@@ -1809,60 +1833,118 @@ class Handler(BaseHTTPRequestHandler):
                                 "<p><a href=\"/map\">Listen to the radios that are on "
                                 "line now</a>, on the globe. Anyone may.</p>"))
             return
-        guard = self.form_guard(self.session_secret())
-        rows = ""
+        # the owner's radios, a card each in a grid, as the author asked on
+        # 2026-10-16: what can be done with each is on its card, and what
+        # keeps it safe, its client password and its cookie, is on a page of
+        # its own, Keys, as GitHub keeps its keys away from the rest
+        cards = ""
         for radio in self.service.radios(account["id"]):
-            state = "on line" if radio["online"] else "off line"
-            state += (" &middot; <a href=\"/operate?radio=%d\">operate</a>"
-                      " &middot; <a href=\"/map#%d\">listen</a>" % (radio["id"], radio["id"]))
-            kept = ""
-            if self.service.snapshot(account, radio["id"]) is not None:
-                kept = ("<a href=\"/radios/settings?radio=%d\">settings</a> &middot; "
-                        "<a href=\"/radios/log?radio=%d\">logbook</a>"
-                        % (radio["id"], radio["id"]))
-            buttons = ""
-            for action, label in (("password", "New password"), ("remove", "Remove")):
-                buttons += ("<form method=\"post\" action=\"/radios/%s\">"
-                            "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                            "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
-                            "<button>%s</button></form> " % (action, guard, radio["id"], label))
-            buttons += ("<form method=\"post\" action=\"/radios/cookie\">"
-                        "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                        "<input type=\"hidden\" name=\"radio\" value=\"%d\">"
-                        "<input type=\"text\" name=\"cookie\" class=\"code\" maxlength=\"20\" "
-                        "autocomplete=\"off\" placeholder=\"abcd-jklm-wxyz\" "
-                        "aria-label=\"the radio's new cookie\" required>"
-                        "<button>New cookie</button></form>" % (guard, radio["id"]))
-            rows += ("<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td>"
-                     "<td class=\"code\">%s</td><td>%s</td><td>%s</td></tr>"
-                     % (html.escape(radio_id(account["callsign"], radio["suffix"])), state,
-                        html.escape(radio["grid"]), show_secret(radio["client_password"]),
-                        kept, buttons))
-        if rows:
-            radios = ("<table><tr><th>Radio</th><th></th><th>Grid</th><th>Client password</th>"
-                      "<th>Kept here</th><th></th></tr>%s</table>"
-                      "<p>To reach a radio from another computer, give the client its "
-                      "name and its client password.</p>"
-                      "<p>To change a radio's cookie, press NEW COOKIE among the radio's "
-                      "CONNECTIONS and type the cookie it then shows beside the radio "
-                      "here. Its name and client password stay as they are.</p>" % rows)
+            number = radio["id"]
+            links = ["<a href=\"/operate?radio=%d\">Operate</a>" % number,
+                     "<a href=\"/map#%d\">Listen</a>" % number]
+            if self.service.snapshot(account, number) is not None:
+                links += ["<a href=\"/radios/settings?radio=%d\">Radio settings</a>" % number,
+                          "<a href=\"/radios/log?radio=%d\">Logbook</a>" % number]
+            links.append("<a href=\"/radios/keys?radio=%d\">Keys</a>" % number)
+            cards += ("<div class=\"card\"><div class=\"name\">%s</div>"
+                      "<div class=\"state %s\">%s%s</div><div class=\"links\">%s</div></div>"
+                      % (html.escape(radio_id(account["callsign"], radio["suffix"])),
+                         "on" if radio["online"] else "off",
+                         "on line" if radio["online"] else "off line",
+                         " &middot; " + html.escape(radio["grid"]) if radio["grid"] else "",
+                         "".join(links)))
+        if cards:
+            radios = "<div class=\"cards\">%s</div>" % cards
         else:
-            radios = "<p>You have added no radio yet.</p>"
+            radios = ("<p class=\"said\">You have not added your radio. Click on "
+                      "<a href=\"/radios/add\">Add Radio</a>.</p>")
         body = (said(told, is_wrong)
-                + "<p>Address on record: %s &middot; <a href=\"/map\">the radios on line "
-                "now, on the globe</a></p><h2>Your radios</h2>%s"
-                "<h2>Add a radio</h2>"
-                "<p>On the radio, turn REMOTE on in its settings. It shows a cookie of "
-                "twelve letters. Give the radio a name and type the cookie here.</p>"
-                "<form method=\"post\" action=\"/radios/add\">"
-                "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-                "<label>A name for it, such as home <input type=\"text\" name=\"suffix\" "
-                "maxlength=\"10\" autocomplete=\"off\" required></label>"
-                "<label>The radio's cookie <input type=\"text\" name=\"cookie\" "
-                "class=\"code\" maxlength=\"20\" autocomplete=\"off\" required></label>"
-                "<button>Add the radio</button></form>"
-                % (html.escape(account["email"]), radios, guard))
+                + "<div class=\"heading\"><h2>Your radios</h2>"
+                "<a class=\"action\" href=\"/radios/add\">Add Radio</a></div>%s"
+                "<p class=\"small\">Address on record: %s</p>"
+                % (radios, html.escape(account["email"])))
         self.send(200, self.page(account["callsign"], body))
+
+    def add_radio_page(self, account, told="", is_wrong=False, suffix=""):
+        """the form that adds a radio, with what to do at the radio first"""
+        callsign = html.escape(account["callsign"])
+        self.send(200, self.page("Add Radio", said(told, is_wrong)
+            + "<h2>Add Radio</h2>"
+            "<p>A radio is added once. After that it signs in to my.sbitx.net by "
+            "itself whenever it is switched on.</p>"
+            "<ol class=\"steps\">"
+            "<li>On the radio, open <strong>SET</strong> and see that "
+            "<strong>MYCALLSIGN</strong> is <strong>%s</strong>, the callsign of this "
+            "account. A radio with no callsign, or another one, is not let in. Set "
+            "<strong>MYGRID</strong> too, such as MK97fj, for the radio to be on the map."
+            "</li>"
+            "<li>Still in SET, open <strong>CONNECTIONS</strong> and turn "
+            "<strong>REMOTE</strong> on.</li>"
+            "<li>A moment later <strong>REMOTE_STATUS</strong> shows "
+            "<strong>COOKIE</strong> and twelve letters, such as "
+            "<span class=\"code\">abcd-jklm-wxyz</span>. That cookie is the radio's own "
+            "secret. Type it below.</li>"
+            "<li>Give the radio a name of up to ten letters and figures, such as "
+            "<em>home</em> or <em>shack</em>. It will be known as "
+            "<strong>%s-</strong><em>name</em>.</li>"
+            "</ol>"
+            "<form method=\"post\" action=\"/radios/add\">"
+            "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+            "<label>Name <input type=\"text\" name=\"suffix\" value=\"%s\" "
+            "maxlength=\"10\" autocomplete=\"off\" required></label>"
+            "<label>The radio's cookie <input type=\"text\" name=\"cookie\" "
+            "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
+            "placeholder=\"abcd-jklm-wxyz\" required></label>"
+            "<button>Add the radio</button></form>"
+            "<p>Within a quarter of a minute the radio's REMOTE_STATUS says ONLINE, and "
+            "the radio is on your page here.</p>"
+            % (callsign, html.escape(account["callsign"].lower()),
+               self.form_guard(self.session_secret()), html.escape(suffix))))
+
+    def keys_page(self, account, number, told="", is_wrong=False):
+        """a radio's client password and cookie, and its removal: what keeps
+        it safe, apart from the rest, as GitHub keeps its keys"""
+        mine = [radio for radio in self.service.radios(account["id"])
+                if str(radio["id"]) == str(number)]
+        if not mine:
+            self.send(404, self.page("Not found", "<p>You have no such radio.</p>"))
+            return
+        radio = mine[0]
+        name = html.escape(radio_id(account["callsign"], radio["suffix"]))
+        guard = self.form_guard(self.session_secret())
+        hidden = ("<input type=\"hidden\" name=\"guard\" value=\"%s\">"
+                  "<input type=\"hidden\" name=\"radio\" value=\"%d\">" % (guard, radio["id"]))
+        self.send(200, self.page("Keys of %s" % radio_id(account["callsign"], radio["suffix"]),
+            said(told, is_wrong)
+            + "<p><a href=\"/\">&larr; Your radios</a></p><h2>Keys of %s</h2>"
+            "<h3>Client password</h3>"
+            "<p class=\"secret code\">%s</p>"
+            "<p>A program on another computer that works this radio, such as the zbitx "
+            "window started as <span class=\"command\">zbitx_gui remote %s</span>, signs "
+            "in with the radio's name and this password. The radio's page here does not "
+            "need it.</p>"
+            "<p>A new one takes the old one's place, and whatever is signed in with the "
+            "old one is let go within 20 seconds.</p>"
+            "<form method=\"post\" action=\"/radios/password\">%s"
+            "<button>Make a new client password</button></form>"
+            "<h3>The radio's cookie</h3>"
+            "<p>The cookie is the radio's own secret, made by the radio, and how it signs "
+            "in here. It is not shown here. To change it, as when a radio may have "
+            "been copied or is passing to another owner:</p>"
+            "<ol class=\"steps\"><li>On the radio, open SET, then CONNECTIONS, and tap "
+            "<strong>NEW_COOKIE</strong> twice within five seconds.</li>"
+            "<li>REMOTE_STATUS shows the new cookie. Type it here.</li></ol>"
+            "<form method=\"post\" action=\"/radios/cookie\">%s"
+            "<label>The radio's new cookie <input type=\"text\" name=\"cookie\" "
+            "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
+            "placeholder=\"abcd-jklm-wxyz\" required></label>"
+            "<button>Use the new cookie</button></form>"
+            "<p>The radio's name and client password stay as they are.</p>"
+            "<h3>Remove the radio</h3>"
+            "<p>It is let go at once, and can be added again later with its cookie.</p>"
+            "<form method=\"post\" action=\"/radios/remove\">%s"
+            "<button class=\"danger\">Remove %s</button></form>"
+            % (name, show_secret(radio["client_password"]), name, hidden, hidden, hidden, name)))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
@@ -1901,6 +1983,8 @@ class Handler(BaseHTTPRequestHandler):
                             "autocomplete=\"username\" required></label>"
                             "<label>Password <input type=\"password\" name=\"password\" "
                             "autocomplete=\"current-password\" required></label>"
+                            "<label class=\"tick\"><input type=\"checkbox\" name=\"remember\">"
+                            " Remember me on this device, for a month</label>"
                             "<button>Sign in</button></form>"
                             "<p><a href=\"/forgot\">Forgot the password?</a> &middot; "
                             "<a href=\"/register\">Register</a></p>" % html.escape(callsign)))
@@ -1963,7 +2047,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         rows = ""
         if what == "settings":
-            title = "Settings of %s" % radio_id(account["callsign"], kept["suffix"])
+            title = "Radio settings of %s" % radio_id(account["callsign"], kept["suffix"])
             for line in kept["controls"].splitlines():
                 name, _, value = line.partition(" ")
                 rows += "<tr><td>%s</td><td>%s</td></tr>" % (html.escape(name),
@@ -2050,6 +2134,13 @@ class Handler(BaseHTTPRequestHandler):
             self.forgot_form()
         elif url.path == "/password":
             self.password_form(query.get("t", [""])[0])
+        elif url.path in ("/radios/add", "/radios/keys"):
+            if account is None:
+                self.signin_form("Sign in first.")
+            elif url.path == "/radios/add":
+                self.add_radio_page(account)
+            else:
+                self.keys_page(account, query.get("radio", [""])[0])
         elif url.path in ("/radios/settings", "/radios/log"):
             if account is None:
                 self.signin_form("Sign in first.")
@@ -2089,12 +2180,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.register_form(told, True, form.get("callsign", ""), form.get("email", ""))
         elif url.path == "/signin":
+            is_remembered = form.get("remember", "") == "on"
             secret, told = self.service.sign_in(form.get("callsign", ""),
-                                                form.get("password", ""), self.address())
+                                                form.get("password", ""), self.address(),
+                                                is_remembered)
             if secret is None:
                 self.signin_form(told, True, form.get("callsign", ""))
             else:
-                self.redirect("/", [self.session_cookie(secret)])
+                self.redirect("/", [self.session_cookie(
+                    secret, SESSION_S if is_remembered else None)])
         elif url.path == "/forgot":
             self.service.forgot(form.get("callsign", ""), self.address())
             self.send(200, self.page("Forgot the password", said(
@@ -2116,19 +2210,24 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/radios/add":
             ok, told = self.service.radio_add(account, form.get("suffix", ""),
                                               form.get("cookie", ""))
-            self.home(account, told, not ok)
+            if ok:
+                self.home(account, told)
+            else:
+                self.add_radio_page(account, told, True, form.get("suffix", ""))
         elif url.path == "/radios/cookie":
             ok, told = False, "You have no such radio."
             if form.get("radio", "").isdigit():
                 ok, told = self.service.radio_new_cookie(account, int(form["radio"]),
                                                          form.get("cookie", ""))
-            self.home(account, told, not ok)
-        elif url.path in ("/radios/password", "/radios/remove"):
+            self.keys_page(account, form.get("radio", ""), told, not ok)
+        elif url.path == "/radios/password":
             if form.get("radio", "").isdigit():
-                if url.path == "/radios/remove":
-                    self.service.radio_remove(account, int(form["radio"]))
-                else:
-                    self.service.radio_new_password(account, int(form["radio"]))
+                self.service.radio_new_password(account, int(form["radio"]))
+            self.keys_page(account, form.get("radio", ""),
+                           "A new client password is made. The old one no longer works.")
+        elif url.path == "/radios/remove":
+            if form.get("radio", "").isdigit():
+                self.service.radio_remove(account, int(form["radio"]))
             self.redirect("/")
         else:
             self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
