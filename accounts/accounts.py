@@ -1137,7 +1137,9 @@ td form { margin: 0; display: inline; }
 td button { margin: 0; padding: 0.2em 0.8em; }
 .said { background: #eef6ee; border-left: 4px solid #3a3; padding: 0.6em 0.8em; }
 .wrong { background: #fbeeee; border-left: 4px solid #c33; padding: 0.6em 0.8em; }
-.code { font-family: monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+/* keys are shown as the radio shows them, in small letters; the author found
+   them in capitals here and small on the radio. Either is taken when typed */
+.code { font-family: monospace; letter-spacing: 0.1em; }
 .foot { margin-top: 3em; color: #777; font-size: 0.9em; }
 """
 
@@ -1894,6 +1896,7 @@ class Handler(BaseHTTPRequestHandler):
             "maxlength=\"10\" autocomplete=\"off\" required></label>"
             "<label>The radio's cookie <input type=\"text\" name=\"cookie\" "
             "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
+            "autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\" "
             "placeholder=\"abcd-jklm-wxyz\" required></label>"
             "<button>Add the radio</button></form>"
             "<p>Within a quarter of a minute the radio's REMOTE_STATUS says ONLINE, and "
@@ -1937,6 +1940,7 @@ class Handler(BaseHTTPRequestHandler):
             "<form method=\"post\" action=\"/radios/cookie\">%s"
             "<label>The radio's new cookie <input type=\"text\" name=\"cookie\" "
             "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
+            "autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\" "
             "placeholder=\"abcd-jklm-wxyz\" required></label>"
             "<button>Use the new cookie</button></form>"
             "<p>The radio's name and client password stay as they are.</p>"

@@ -347,6 +347,10 @@ class AccountsTest(unittest.TestCase):
         self.assertNotIn(accounts.show_secret(radio["client_password"]), text)
         _, keys = browser.get("/radios/keys?radio=%d" % radio["id"])
         self.assertIn(accounts.show_secret(radio["client_password"]), keys)
+        # keys are shown in small letters, as the radio shows them
+        self.assertNotIn("uppercase", accounts.STYLE)
+        # and a cookie typed in small letters, as the radio shows it, is taken
+        self.assertIn("is added", self.add_radio(browser, "shack", "pqrs-tuvw-xyza"))
         for page in (text, keys):
             self.assertNotIn("abcd-efgh-jkmn", page)
 
