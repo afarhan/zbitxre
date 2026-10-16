@@ -1428,7 +1428,6 @@ static lv_obj_t *connections_screen;
 static lv_obj_t *connections_list;
 static struct connection_row connection_rows[CONNECTIONS_MOST];
 static int connections_count;
-static int connections_switches;
 static int connections_mark;
 
 static void connections_show(){
@@ -1442,8 +1441,7 @@ static void connections_show(){
 		else
 			controls_value_text(r->c, text, sizeof(text));
 		lv_label_set_text(r->value, text);
-		if (r->is_switch)
-			show_mark(r->box, i == connections_mark);
+		show_mark(r->box, i == connections_mark);
 	}
 	if (connections_mark < connections_count)
 		lv_obj_scroll_to_view(connection_rows[connections_mark].box, LV_ANIM_OFF);
@@ -1513,10 +1511,9 @@ static void connections_rows_make(){
 		if (!strcmp(c->d.group, "CONNECTIONS") && c->d.kind == LINK_KIND_CHOICE)
 			connection_add(c, true);
 	}
-	connections_switches = connections_count;
 	for (int i = 0; i < CONNECTION_STATUSES; i++)
 		connection_add(controls_find(connection_statuses[i]), false);
-	if (connections_mark >= connections_switches)
+	if (connections_mark >= connections_count)
 		connections_mark = 0;
 }
 
@@ -1770,12 +1767,14 @@ void screens_knob_turned(int steps){
 		roller_set(roller_marked, roller_value(roller_marked) + steps);
 		date_show();
 	}
-	if (is_up(connections_screen) && connections_switches > 0){
+	// the knob goes to every row, the statuses too, to bring them into
+	// view; a click on a status does nothing
+	if (is_up(connections_screen) && connections_count > 0){
 		connections_mark += steps;
 		if (connections_mark < 0)
 			connections_mark = 0;
-		if (connections_mark > connections_switches - 1)
-			connections_mark = connections_switches - 1;
+		if (connections_mark > connections_count - 1)
+			connections_mark = connections_count - 1;
 		connections_show();
 	}
 	if (is_up(settings_screen)){
