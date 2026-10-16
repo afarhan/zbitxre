@@ -199,42 +199,46 @@ proof must not be something that a listener on the way can use again. A
 password or a key sent down the connection would be exactly that. So the proof
 is an answer to a challenge.
 
-## A radio's cookie and its client password
+## A radio's cookie, and the owner's password
 
 An owner has up to five radios at my.sbitx.net. Each has a name the owner gave
 it, and is known by the callsign with that after it: `vu2ese-home`,
-`vu2ese-zbitx`. Each radio has two secrets, both twelve letters written in
-fours, `abcd-jklm-wxyz`.
+`vu2ese-zbitx`. Two secrets sign in to the service.
 
 **The cookie** is the radio's own. The radio makes it, the first time remote
 access is turned on, and shows it among its settings. The owner, signed in at
 the website, adds a radio by giving it a name and typing the cookie. Nothing is
 typed on the radio, and no file on it is edited: the author's design, a zbitx
 having no keyboard. The radio answers the service's challenge with the cookie
-from then on, and no longer shows it.
+from then on, and no longer shows it. It is twelve letters written in fours,
+`abcd-jklm-wxyz`.
 
-**The client password** is made by the website and shown there beside the
-radio. It is what the owner types into a client, with the radio's name, to
-reach the radio from afar. It is apart from the cookie so that it can be
-changed at the website, when a laptop is lost, with nothing done at the radio,
-and so that whoever has it cannot pass for the radio.
+**The owner's password**, the account's, the one the website is signed in
+with, is what a client on another computer answers with, the window started
+as `zbitx_gui remote vu2ese-home` among them. Until 2026-10-16 each radio had a
+client password of its own for that, twelve letters the website made; the
+author found it, beside the cookie, confusing, and had it taken out. A laptop
+that is lost is shut out by changing the account's password.
 
-The account's own password is typed into the website and nowhere else.
-
-my.sbitx.net keeps both secrets as they are and not as hashes, since it has to
-work out the same answer to its challenge, and has to show the owner the
-client password. Whoever read the service's database would have them.
+my.sbitx.net keeps the cookie as it is, since it has to work out the same
+answer to its challenge, and of the password, besides the hash the website
+checks it by, its stretch, below, which is what a client's answer is made
+with. A client keeps the stretch too, and not the password, in
+`~/.config/zbitx/<callsign>.key`. Whoever read the service's database could
+answer as the radios and their owners' clients, but would not have the
+passwords. An account from before there was a stretch has none until its owner
+next signs in at the website.
 
 ## Stretching
 
-Twelve letters are few enough to find by trying them all, for someone who
-overheard a challenge and its answer and can check each guess against them. So
-the letters are not the key of the proof. The key is what PBKDF2, with
-HMAC-SHA256 and 50,000 rounds, makes of the twelve letters, written small and
-without the strokes, with the salt `zbitx-1 ` followed by, in small letters,
-the callsign for a cookie and the radio's name for a client password; the
-result is used as the 64 hex digits it is written in. Each guess then costs
-50,000 times what it would.
+Twelve letters, or a password, are few enough to find by trying, for someone
+who overheard a challenge and its answer and can check each guess against
+them. So the secret is not the key of the proof. The key is what PBKDF2, with
+HMAC-SHA256 and 50,000 rounds, makes of it, with the salt `zbitx-1 ` followed
+by the owner's callsign in small letters; the result is used as the 64 hex
+digits it is written in. A cookie is stretched as twelve small letters without
+the strokes, a password as it was typed. Each guess then costs 50,000 times
+what it would.
 
 ## The handshake
 
@@ -251,7 +255,7 @@ The one connecting makes a nonce of its own, 32 hex digits. Its proof is
     HMAC-SHA256(key, "zbitx-auth-1 radio VU2ESE <challenge> <nonce>")
     HMAC-SHA256(key, "zbitx-auth-1 client vu2ese-home <challenge> <nonce>")
 
-in hex, the key being the stretched cookie or the stretched client password,
+in hex, the key being the stretched cookie or the stretched password,
 and the name in it being the name exactly as it was sent. The service's proof
 is the same with `server` in place of `radio` or `client`, and shows that the
 service has the secret too, so that nobody is talking to an impostor.
@@ -275,7 +279,7 @@ is, and what is guarded is what crosses the internet.
 | Connection | Who challenges | What answers |
 |---|---|---|
 | the radio's side to my.sbitx.net | the service | the radio's cookie |
-| a client to my.sbitx.net | the service | the radio's client password |
+| a client to my.sbitx.net | the service | the owner's password, stretched |
 | a client straight to a radio on the home network | nobody | nothing |
 | a program on the radio itself, to the radio | nobody | nothing |
 
@@ -337,8 +341,7 @@ go. One that does not allow streaming is listened to by its owner alone,
 signed in, who has to hear it to work it; anyone else is told `closed`. It is
 shown on the globe, grey, and what it copies in FT8 is not sent.
 
-To shut somebody out who has got in, the owner changes the password that let
-them in: the radio's client password, on the website, or the account's own.
+To shut somebody out who has got in, the owner changes the account's password.
 Whoever is in by it is let go within half a minute.
 
 Three more switches are in `CONNECTIONS`, which have nothing to do with

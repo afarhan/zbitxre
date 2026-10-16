@@ -18,20 +18,24 @@
 //
 // REACHING A RADIO THROUGH MY.SBITX.NET
 //
-// The window has to show that it is the radio's owner asking. Each radio
-// has a client password for that, twelve letters that the website made and
-// shows beside the radio. The first time, the window asks for it, on the
-// screen that any text is typed on, and keeps it in
-// ~/.config/zbitx/<radio>.password, which only this user can read. The
-// account's own password is typed into the website and never into this
-// window.
+// The window has to show that it is the radio's owner asking, and does it
+// with the password of the owner's account, the one the website is signed
+// in to with. The first time, the window asks for it, on the screen that
+// any text is typed on, where it is shown as stars and its letters keep
+// their case; it is typed on the computer's own keyboard, since the
+// window's keys are capitals only. The password itself is not kept: what
+// it stretches to is, the key of the proofs below, in
+// ~/.config/zbitx/<callsign>.key, which only this user can read. Until
+// 2026-10-16 each radio had a client password of its own, twelve letters
+// the website made; the author found it confusing beside the radio's
+// cookie, and had it taken out.
 //
 // Then the window connects to the service and, before anything of the
 // radio's, there are a few lines between the two:
 //
 //     CHALLENGE ...                the service
 //     AUTH client vu2ese-home ...  the window, with a proof made with the
-//                                  client password
+//                                  account's password
 //     WELCOME vu2ese-home ...      the service, with a proof of its own,
 //                                  which the window checks: it will not go
 //                                  on with something that does not have the
@@ -41,11 +45,11 @@
 // and from there on it is the radio's own protocol, as if the window had
 // connected to the radio itself, and everything below is the same. The
 // password is never sent: it is the secret in the proof, stretched first,
-// as PROTOCOL.md says, so that twelve letters cannot be found by trying
-// them all. None of this is inside TLS, by the author's ruling; the proof
-// is there to say who is on the line.
+// with the callsign as salt, as PROTOCOL.md says. None of this is inside
+// TLS, by the author's ruling; the proof is there to say who is on the
+// line.
 //
-// A password the service refuses is forgotten and asked for again. If the
+// A key the service refuses is forgotten and the password asked for again. If the
 // radio is not on line, the window says so and tries again every three
 // seconds, as it does for a radio that cannot be reached.
 //
@@ -437,7 +441,6 @@
 #define KEY_FOLDER_MODE 0700
 #define KEY_FILE_MODE 0600
 #define PATH_ROOM 512
-#define PASSWORD_ROOM 32
 #define STRETCH_ROUNDS 50000
 #define SALT_BEGINS "zbitx-1 "
 #define RETRY_EVERY_MS 3000
@@ -760,7 +763,9 @@ static struct known *typed_for;
 // seconds, once the radio has said the time
 static gint64 radio_ahead_s;
 static int is_time_known;
-static char typed[CONTROL_VALUE_MAX];
+// what is being typed; room for a password, which is longer than a control
+#define TYPED_ROOM 128
+static char typed[TYPED_ROOM];
 static guint mark_timer;
 static int messages_shown;
 static GtkWidget *band_box[BANDS];
@@ -1913,87 +1918,93 @@ static void send_a_line(const char *line) {
 	g_output_stream_write_all(writer, "\n", 1, NULL, NULL, NULL);
 }
 
-// where the radio's client password is kept on this computer, in a folder
-// that is made if it is not there
-static void password_path(char *path, int room) {
+// the callsign of the radio's owner, from its name: vu2ese of vu2ese-home
+static void owner_of_wanted(char *callsign, int room) {
+	int i;
+
+	snprintf(callsign, room, "%.*s", (int)strcspn(through_wanted, "-"), through_wanted);
+	for (i = 0; callsign[i] != 0; i++)
+		callsign[i] = g_ascii_tolower(callsign[i]);
+}
+
+// where the stretched password of the owner's account is kept on this
+// computer, in a folder that is made if it is not there; and where the
+// radio's client password was, before it was done away with
+static void key_path(char *path, int room, int is_old_password) {
 	char folder[PATH_ROOM];
+	char callsign[LINE_MAX_LENGTH];
 
 	snprintf(folder, sizeof(folder), "%s/zbitx", g_get_user_config_dir());
 	g_mkdir_with_parents(folder, KEY_FOLDER_MODE);
-	snprintf(path, room, "%.*s/%.40s.password", PATH_ROOM - 64, folder, through_wanted);
+	owner_of_wanted(callsign, sizeof(callsign));
+	if (is_old_password)
+		snprintf(path, room, "%.*s/%.40s.password", PATH_ROOM - 64, folder, through_wanted);
+	else
+		snprintf(path, room, "%.*s/%.20s.key", PATH_ROOM - 64, folder, callsign);
 }
 
-// the letters of a client password as the website keeps them: small, with
-// the strokes and spaces it is written with left out
-static void tidy_password(const char *typed_text, char *letters, int room) {
-	int used = 0;
-	int i;
-
-	for (i = 0; typed_text[i] != 0 && used < room - 1; i++) {
-		if (g_ascii_isalpha(typed_text[i]))
-			letters[used++] = g_ascii_tolower(typed_text[i]);
-	}
-	letters[used] = 0;
-}
-
-// the password is stretched as the service stretches it, with the radio's
-// name as salt, and what comes of it is the key of the proofs
-static void take_password(const char *typed_text) {
-	char letters[PASSWORD_ROOM];
+// the password is stretched as the service stretches it, with the owner's
+// callsign as salt, and what comes of it is the key of the proofs; it is
+// kept, and the password is not
+static void take_password(const char *password) {
 	char salt[LINE_MAX_LENGTH];
-	size_t i;
-
-	tidy_password(typed_text, letters, sizeof(letters));
-	snprintf(salt, sizeof(salt), "%s%.40s", SALT_BEGINS, through_wanted);
-	for (i = 0; salt[i] != 0; i++)
-		salt[i] = g_ascii_tolower(salt[i]);
-	pbkdf2_sha256_hex(letters, salt, STRETCH_ROUNDS, through_key);
-	has_through_key = letters[0] != 0;
-}
-
-static void save_password(const char *typed_text) {
+	char callsign[LINE_MAX_LENGTH];
 	char path[PATH_ROOM];
-	char letters[PASSWORD_ROOM];
 	FILE *file;
 
-	password_path(path, sizeof(path));
-	tidy_password(typed_text, letters, sizeof(letters));
+	if (password[0] == 0)
+		return;
+	owner_of_wanted(callsign, sizeof(callsign));
+	snprintf(salt, sizeof(salt), "%s%.40s", SALT_BEGINS, callsign);
+	pbkdf2_sha256_hex(password, salt, STRETCH_ROUNDS, through_key);
+	has_through_key = 1;
+	key_path(path, sizeof(path), 0);
 	file = fopen(path, "w");
 	if (file != NULL) {
 		g_chmod(path, KEY_FILE_MODE);
-		fprintf(file, "%s\n", letters);
+		fprintf(file, "%s\n", through_key);
 		fclose(file);
 	}
-	take_password(letters);
 }
 
 static void forget_password(void) {
 	char path[PATH_ROOM];
 
-	password_path(path, sizeof(path));
+	key_path(path, sizeof(path), 0);
 	g_remove(path);
 	has_through_key = 0;
 }
 
-// says whether the window has the radio's client password; if it has not,
-// from an earlier time or from its file, the owner is asked to type it
+// says whether the window has the key of the owner's account; if it has
+// not, from an earlier time or from its file, the owner is asked for the
+// password
 static int has_password_or_asks(void) {
 	char path[PATH_ROOM];
 	char line[LINE_MAX_LENGTH];
+	char callsign[LINE_MAX_LENGTH];
 	FILE *file;
 
 	if (has_through_key)
 		return 1;
-	password_path(path, sizeof(path));
+	// a radio's client password, from before, is of no use now
+	key_path(path, sizeof(path), 1);
+	g_remove(path);
+	key_path(path, sizeof(path), 0);
 	file = fopen(path, "r");
 	if (file != NULL) {
-		if (fgets(line, sizeof(line), file) != NULL)
-			take_password(line);
+		if (fgets(line, sizeof(line), file) != NULL
+				&& strspn(line, "0123456789abcdef") == SHA256_HEX_ROOM - 1) {
+			snprintf(through_key, sizeof(through_key), "%.*s", SHA256_HEX_ROOM - 1, line);
+			has_through_key = 1;
+		}
 		fclose(file);
 	}
 	if (has_through_key)
 		return 1;
-	snprintf(password_asked.name, sizeof(password_asked.name), "CLIENT PASSWORD");
+	owner_of_wanted(callsign, sizeof(callsign));
+	for (int i = 0; callsign[i] != 0; i++)
+		callsign[i] = g_ascii_toupper(callsign[i]);
+	snprintf(password_asked.name, sizeof(password_asked.name), "PASSWORD OF %.10s", callsign);
 	password_asked.value[0] = 0;
 	password_asked.is_text = 1;
 	open_text(&password_asked);
@@ -2003,13 +2014,13 @@ static int has_password_or_asks(void) {
 // what was typed on the text screen was the password: it is kept, and the
 // radio is tried for
 static void take_typed_password(const char *typed_text) {
-	save_password(typed_text);
+	take_password(typed_text);
 	show_page(PAGE_MAIN);
 	try_to_connect();
 }
 
-// the service's challenge is answered with a proof made with the client
-// password, and the nonce the proof was made with is kept, to check the
+// the service's challenge is answered with a proof made with the
+// account's password, and the nonce the proof was made with is kept, to check the
 // service's own proof by
 static void answer_the_challenge(const char *challenge) {
 	uint8_t random_bytes[NONCE_BYTES];
@@ -2034,7 +2045,7 @@ static void answer_the_challenge(const char *challenge) {
 	through = TO_BE_WELCOMED;
 }
 
-// whether what answered has the client password too
+// whether what answered has the account's key too
 static int is_the_service(const char *its_proof) {
 	char text[LINE_MAX_LENGTH * 2];
 	char proof[SHA256_HEX_ROOM];
@@ -2074,7 +2085,7 @@ static void take_through_line(char *line) {
 	if (through == TO_BE_WELCOMED && !strcmp(line, "WELCOME")) {
 		rest = strchr(rest, ' ');
 		if (rest == NULL || !is_the_service(rest + 1)) {
-			disconnect("what answered does not have the client password");
+			disconnect("what answered does not have the account's password");
 			return;
 		}
 		through = TO_BE_CONNECTED;
@@ -2440,9 +2451,15 @@ static int is_page_shown(const char *name) {
 }
 
 static void show_typed(void) {
-	char with_mark[CONTROL_VALUE_MAX + 2];
+	char with_mark[TYPED_ROOM + 2];
+	size_t i;
 
 	snprintf(with_mark, sizeof(with_mark), "%s_", typed);
+	// a password is shown as stars
+	if (typed_for == &password_asked) {
+		for (i = 0; typed[i] != 0; i++)
+			with_mark[i] = '*';
+	}
 	gtk_label_set_text(GTK_LABEL(typed_label), with_mark);
 }
 
@@ -2516,7 +2533,7 @@ static void save_typed(void) {
 		return;
 	}
 	if (typed_for != NULL && typed[0] != 0 && strcmp(typed, typed_for->value)) {
-		snprintf(typed_for->value, CONTROL_VALUE_MAX, "%s", typed);
+		snprintf(typed_for->value, CONTROL_VALUE_MAX, "%.*s", CONTROL_VALUE_MAX - 1, typed);
 		send_line(typed_for->name, typed_for->value);
 	}
 	fill_settings();
@@ -2756,7 +2773,9 @@ static void move_focus(int direction) {
 
 // a key of a keyboard plugged into the radio, while a text is being typed
 static gboolean on_key_while_typing(const GdkEventKey *event) {
-	guint32 character = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
+	// a password's letters keep their case; everything else is in capitals
+	guint32 character = gdk_keyval_to_unicode(typed_for == &password_asked
+		? event->keyval : gdk_keyval_to_upper(event->keyval));
 
 	if (typed_for == &cw_sending && (event->keyval == GDK_KEY_Return
 			|| event->keyval == GDK_KEY_KP_Enter))

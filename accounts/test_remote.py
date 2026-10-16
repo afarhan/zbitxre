@@ -157,19 +157,21 @@ class RadioProgram:
 
 class Client:
     """the owner's client: it names its radio and answers the challenge with
-    that radio's client password"""
+    the password of that radio's account, stretched with the callsign"""
 
-    def __init__(self, port, name, password):
+    def __init__(self, port, name, password=None):
+        password = PASSWORD if password is None else password
+        key = accounts.client_key_of(password, name.partition("-")[0])
         self.socket = socket.create_connection(("127.0.0.1", port), timeout=15)
         self.file = self.socket.makefile("rw", newline="\n")
         challenge = self.read().split()[1]
         nonce = secrets.token_hex(16)
         self.say("AUTH client %s %s %s" % (
-            name, nonce, remote.proof(password, name, "client", name, challenge, nonce)))
+            name, nonce, remote.proof(key, "client", name, challenge, nonce)))
         self.welcome = self.read()
         words = self.welcome.split()
         self.is_server_proven = (len(words) == 3 and hmac.compare_digest(
-            words[2], remote.proof(password, name, "server", name, challenge, nonce)))
+            words[2], remote.proof(key, "server", name, challenge, nonce)))
 
     def say(self, line):
         self.file.write(line + "\n")
@@ -400,10 +402,19 @@ class RemoteTest(unittest.TestCase):
         self.loop.call_soon_threadsafe(self.loop.stop)
         shutil.rmtree(self.folder, ignore_errors=True)
 
-    def make_account(self, callsign, email):
+    def make_account(self, callsign, email, password=PASSWORD):
         self.service.register(callsign, email, "", "127.0.0.1")
         link = self.mail.sent[-1].split("/password?t=")[1].split()[0]
-        self.service.set_password(link, PASSWORD, PASSWORD)
+        self.service.set_password(link, password, password)
+        with self.service.store.open() as db:
+            return db.execute("select * from accounts where callsign = ?",
+                              (callsign,)).fetchone()
+
+    def change_password(self, callsign, password):
+        """as the owner does it: a link mailed, and a new password chosen"""
+        self.service.forgot(callsign, "127.0.0.1")
+        link = self.mail.sent[-1].split("/password?t=")[1].split()[0]
+        self.service.set_password(link, password, password)
         with self.service.store.open() as db:
             return db.execute("select * from accounts where callsign = ?",
                               (callsign,)).fetchone()
@@ -496,7 +507,7 @@ class RemoteTest(unittest.TestCase):
 
     def test_a_client_reaches_its_radio_and_they_talk(self):
         radio = self.switch_on_and_add()
-        client = Client(self.port, "VU2ESE-Home", radio["client_password"])
+        client = Client(self.port, "VU2ESE-Home")
         self.assertTrue(client.welcome.startswith("WELCOME vu2ese-home "))
         self.assertTrue(client.is_server_proven)
         self.assertEqual(client.read(), "CONNECTED vu2ese-home")
@@ -511,7 +522,7 @@ class RemoteTest(unittest.TestCase):
 
     def test_turned_off_the_radio_goes_off_line_and_a_client_is_cut_off(self):
         radio = self.switch_on_and_add()
-        client = Client(self.port, "vu2ese-home", radio["client_password"])
+        client = Client(self.port, "vu2ese-home")
         self.assertEqual(client.read(), "CONNECTED vu2ese-home")
         self.radio.set("STREAMING", "OFF")
         self.radio.set("REMOTE", "OFF")
@@ -522,7 +533,7 @@ class RemoteTest(unittest.TestCase):
         while client.read():
             pass
         client.close()
-        again = Client(self.port, "vu2ese-home", radio["client_password"])
+        again = Client(self.port, "vu2ese-home")
         self.assertEqual(again.read(), "ERROR connect that radio is not on line")
         again.close()
 
@@ -541,40 +552,51 @@ class RemoteTest(unittest.TestCase):
         wrong = Client(self.port, "vu2ese-home", radio["cookie"])
         self.assertTrue(wrong.welcome.startswith("ERROR AUTH"), wrong.welcome)
         wrong.close()
-        other = self.make_account("VU2XYZ", "xyz@example.org")
+        other = self.make_account("VU2XYZ", "xyz@example.org", "their own password")
         self.service.radio_add(other, "home", "abcd-efgh-jkmn")
-        theirs = self.service.radio_called("vu2xyz-home")["client_password"]
-        stranger = Client(self.port, "vu2ese-home", theirs)
+        stranger = Client(self.port, "vu2ese-home", "their own password")
         self.assertTrue(stranger.welcome.startswith("ERROR AUTH"), stranger.welcome)
         stranger.close()
-        nobody = Client(self.port, "vu2ese-attic", radio["client_password"])
+        nobody = Client(self.port, "vu2ese-attic")
         self.assertTrue(nobody.welcome.startswith("ERROR AUTH"), nobody.welcome)
         nobody.close()
 
-    def test_a_new_client_password_shuts_out_the_old(self):
-        radio = self.switch_on_and_add()
-        self.service.radio_new_password(self.account, radio["id"])
-        old = Client(self.port, "vu2ese-home", radio["client_password"])
+    def test_a_new_account_password_shuts_out_the_old(self):
+        self.switch_on_and_add()
+        self.change_password("VU2ESE", "a newer long password")
+        old = Client(self.port, "vu2ese-home")
         self.assertTrue(old.welcome.startswith("ERROR AUTH"), old.welcome)
         old.close()
-        new = Client(self.port, "vu2ese-home",
-                     self.service.radio_called("vu2ese-home")["client_password"])
+        new = Client(self.port, "vu2ese-home", "a newer long password")
         self.assertEqual(new.read(), "CONNECTED vu2ese-home")
         new.close()
         self.assertEqual(self.status(), "ONLINE vu2ese-home")
 
+    def test_an_account_from_before_signs_in_at_the_website_first(self):
+        self.switch_on_and_add()
+        with self.service.store.open() as db:
+            db.execute("update accounts set client_key = ''")
+        early = Client(self.port, "vu2ese-home")
+        self.assertIn("sign in once at the website", early.welcome)
+        early.close()
+        secret, _ = self.service.sign_in("VU2ESE", PASSWORD, "127.0.0.1")
+        self.assertIsNotNone(secret)
+        late = Client(self.port, "vu2ese-home")
+        self.assertEqual(late.read(), "CONNECTED vu2ese-home")
+        late.close()
+
     def test_a_second_client_is_told_the_radio_is_in_use(self):
         radio = self.switch_on_and_add()
-        first = Client(self.port, "vu2ese-home", radio["client_password"])
+        first = Client(self.port, "vu2ese-home")
         self.assertEqual(first.read(), "CONNECTED vu2ese-home")
-        second = Client(self.port, "vu2ese-home", radio["client_password"])
+        second = Client(self.port, "vu2ese-home")
         self.assertEqual(second.read(),
                          "ERROR connect that radio is being worked by another client")
         second.close()
         first.close()
         self.wait_for(lambda: self.remote.sessions.get(radio["id"]) == 0,
                       "the first client did not leave")
-        third = Client(self.port, "vu2ese-home", radio["client_password"])
+        third = Client(self.port, "vu2ese-home")
         self.assertEqual(third.read(), "CONNECTED vu2ese-home")
         third.close()
 
@@ -798,7 +820,7 @@ class RemoteTest(unittest.TestCase):
             while True:
                 page.read()
         self.assertEqual(self.owners_page(self.account, radio["id"]).read(), "! closed")
-        client = Client(self.port, "vu2ese-home", radio["client_password"])
+        client = Client(self.port, "vu2ese-home")
         self.assertIn("switched off", client.read())
         self.assertEqual(self.listener(radio["id"], address="203.0.113.9").read(), "online")
         self.assertEqual(streaming_kept(), 1)
@@ -819,10 +841,10 @@ class RemoteTest(unittest.TestCase):
         with self.assertRaises((ConnectionError, socket.timeout, struct.error)):
             while True:
                 page.read()
-        # a client that is in is let go when the radio's client password is changed
-        client = Client(self.port, "vu2ese-home", radio["client_password"])
+        # a client that is in is let go when the owner's password is changed
+        client = Client(self.port, "vu2ese-home")
         self.assertEqual(client.read(), "CONNECTED vu2ese-home")
-        self.service.radio_new_password(self.account, radio["id"])
+        self.change_password("VU2ESE", "a newer long password")
         client.socket.settimeout(10)
         with self.assertRaises((ConnectionError, socket.timeout, OSError)):
             while True:
@@ -897,7 +919,7 @@ class RemoteTest(unittest.TestCase):
         self.assertNotIn(".", self.radio.controls)
 
         # one client at a time, the window's kind and the browser's alike
-        other = Client(self.port, "vu2ese-home", radio["client_password"])
+        other = Client(self.port, "vu2ese-home")
         self.assertEqual(other.read(),
                          "ERROR connect that radio is being worked by another client")
         other.close()
@@ -1150,7 +1172,7 @@ class RemoteTest(unittest.TestCase):
         self.wait_for(lambda: self.status() == "ONLINE vu2ese-home",
                       "the radio did not come back on line with its new cookie")
         after = self.service.radio_called("vu2ese-home")
-        self.assertEqual(after["client_password"], before["client_password"])
+        self.assertEqual(after["client_key"], before["client_key"])
 
 
 if __name__ == "__main__":

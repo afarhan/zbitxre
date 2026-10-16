@@ -31,7 +31,7 @@ An account is "pending" until its address is verified, then "active", and
 "suspended" when customer service has shut it: a suspended account cannot
 sign in and its radios' keys are refused.
 
-A RADIO, ITS COOKIE AND ITS CLIENT PASSWORD
+A RADIO AND ITS COOKIE
 
 An owner has up to five radios here. Each has a name of the owner's
 choosing, home or zbitx, and is known by the callsign with that after it:
@@ -47,33 +47,37 @@ challenge with, and the radio no longer shows it.
 
 A radio's cookie can be changed, the author's way: the owner makes a new
 one on the radio, NEW COOKIE among its CONNECTIONS, and types it here
-beside the radio, "new cookie". The radio keeps its name and its client
-password, so the owner's clients reach it as before; the old cookie is
+on the radio's Keys page. The radio keeps its name, so the owner's
+programs reach it as before; the old cookie is
 forgotten, and remote.py lets go of the radio if it is on line with it,
 within twenty seconds. That is what to do when a radio, or a copy of its
 card, has gone where it should not. A radio sold is removed by the one who
 sold it and added by the one who bought it, after a new cookie.
 
-Each radio also has a client password, twelve letters that this site makes
-and shows beside the radio. That, with the radio's name, is what the owner
-types into a client, the window on another computer, to reach the radio
-from afar. It is apart from the cookie so that it can be changed here, when
-a laptop is lost, without anything being done at the radio, and so that
-whoever has it cannot pass for the radio.
+A program on another computer, the window started as a remote one, signs
+in to one of the owner's radios with the owner's own callsign and
+password, as the website is signed in to. Each radio had a client password
+of its own for that until 2026-10-16, made here and shown beside the
+radio; the author found it, beside the cookie, confusing, and had it taken
+out. A laptop that is lost is shut out by changing the account's password.
 
-Neither is ever sent to remote.py, the part of this service that is reached
-over plain TCP: each is the secret in the answer to a challenge. PROTOCOL.md
-says how. To check an answer the service has to work out the same answer,
-so both are kept here as they are and not as hashes; the client password
-has to be shown to the owner anyway. The database is readable by the
-service's user alone.
+Neither the cookie nor the password is ever sent to remote.py, the part of
+this service that is reached over plain TCP: each is the secret in the
+answer to a challenge, stretched first. PROTOCOL.md says how. To check an
+answer the service has to work out the same answer, so the cookie is kept
+here as it is, and of the password, besides its scrypt hash for the
+website, what it stretches to, client_key_of(). That is not the password,
+but it is what a program signs in with, as a cookie is; the database is
+readable by the service's user alone.
 
 WHAT IS KEPT, AND HOW
 
-    accounts   callsign, email, the password's hash, status, a note
+    accounts   callsign, email, the password's hash and its client key,
+               status, a note
     tokens     the links mailed out, to verify an address or reset a password
     sessions   who is signed in, in which browser
-    radios     each radio's name, its cookie and its client password; and
+    radios     each radio's name and its cookie (and an empty column where
+               its client password was); and
                from remote.py, whether it is on line now and the grid
                locator set on it, which the radio's daemon tells the service
                along with the callsign, as the author asked
@@ -251,7 +255,7 @@ SCRYPT_MEMORY = 64 * 1024 * 1024
 HASHES_AT_ONCE = 2
 POW_BITS = 18
 POW_LIFE_S = 10 * 60
-# a cookie and a client password are twelve letters, written in fours, of an
+# a cookie is twelve letters, written in fours, of an
 # alphabet without the letters that are mistaken for one another or for
 # figures: no i, l or o. zbitx_remote.c makes a radio's cookie of the same
 SECRET_LETTERS = "abcdefghjkmnpqrstuvwxyz"
@@ -1230,7 +1234,7 @@ def new_secret():
 
 
 def tidy_secret(typed):
-    """a cookie or a client password as it is kept, twelve small letters, or
+    """a cookie as it is kept, twelve small letters, or
     '' if what was typed is not one; capitals, strokes and spaces are let by"""
     letters = re.sub(r"[^a-z]", "", typed.lower())
     if len(letters) != SECRET_LENGTH:
@@ -1244,6 +1248,20 @@ def show_secret(letters):
 
 
 stretched = {}
+
+
+def client_key_of(password, callsign):
+    """the account's password, stretched as stretch() stretches a cookie,
+    with the callsign as salt: what a program on another computer, the zbitx
+    window started as a remote one, proves it has when it signs in to one
+    of the owner's radios. Until 2026-10-16 each radio had a client password
+    of its own for that; the author found it and the cookie together
+    confusing, and had it taken out: the owner's own callsign and password
+    are what sign in, at the website and from any program. Only this is
+    kept, not the password, and it is not remembered in stretch()'s store"""
+    return hashlib.pbkdf2_hmac("sha256", password.encode(),
+                               ("zbitx-1 " + callsign.lower()).encode(),
+                               STRETCH_ROUNDS).hex()
 
 
 def stretch(secret, salt):
@@ -1330,6 +1348,12 @@ class Store:
                 db.execute("alter table radios add column streaming integer not null default 1")
             if "listener_places" not in columns:
                 db.execute("alter table radios add column listener_places text not null "
+                           "default ''")
+            # the account's client key, client_key_of() its password: what a
+            # program on another computer signs in to the owner's radios with
+            columns = [row["name"] for row in db.execute("pragma table_info(accounts)")]
+            if "client_key" not in columns:
+                db.execute("alter table accounts add column client_key text not null "
                            "default ''")
 
     @contextlib.contextmanager
@@ -1516,8 +1540,9 @@ class Service:
                 return None, "This link has been used or has run out. Ask for another."
             if account["status"] == "suspended":
                 return None, "This account is suspended."
-            db.execute("update accounts set password = ?, status = 'active' where id = ?",
-                       (kept, account["id"]))
+            db.execute("update accounts set password = ?, client_key = ?, status = 'active' "
+                       "where id = ?", (kept, client_key_of(password, account["callsign"]),
+                                        account["id"]))
             db.execute("delete from tokens where account = ?", (account["id"],))
             db.execute("delete from sessions where account = ?", (account["id"],))
             return self.new_session(db, account["id"]), ""
@@ -1551,6 +1576,10 @@ class Service:
             if account["status"] == "suspended":
                 return None, "This account is suspended. Write to %s." % (
                     self.settings.support or "support")
+            key = client_key_of(password, account["callsign"])
+            if account["client_key"] != key:
+                db.execute("update accounts set client_key = ? where id = ?",
+                           (key, account["id"]))
             return self.new_session(db, account["id"], SESSION_S if is_remembered
                                     else SESSION_UNREMEMBERED_S), ""
 
@@ -1609,14 +1638,14 @@ class Service:
                 return False, "You have a radio called %s already." % suffix
             db.execute("insert into radios (account, suffix, cookie, client_password, created) "
                        "values (?, ?, ?, ?, ?)",
-                       (account["id"], suffix, cookie, new_secret(), now()))
+                       (account["id"], suffix, cookie, "", now()))
         return True, ("%s is added. It will come on line within a quarter of a minute, "
                       "if it is switched on and its remote access is on."
                       % radio_id(account["callsign"], suffix))
 
     def radio_new_cookie(self, account, radio, cookie_typed):
         """the cookie the owner made anew on the radio takes the old one's
-        place; the radio's name and client password stay. Returns (ok,
+        place; the radio's name stays. Returns (ok,
         what to tell the owner)"""
         cookie = tidy_secret(cookie_typed)
         if not cookie:
@@ -1634,11 +1663,6 @@ class Service:
                       "minute; the old cookie is no longer taken."
                       % radio_id(account["callsign"], found["suffix"]))
 
-    def radio_new_password(self, account, radio):
-        with self.store.open() as db:
-            db.execute("update radios set client_password = ? where id = ? and account = ?",
-                       (new_secret(), radio, account["id"]))
-
     def radio_remove(self, account, radio):
         with self.store.open() as db:
             db.execute("delete from radios where id = ? and account = ?",
@@ -1648,7 +1672,8 @@ class Service:
         """for remote.py: the radios of a callsign whose account is active"""
         with self.store.open() as db:
             return db.execute(
-                "select radios.*, accounts.callsign from radios join accounts "
+                "select radios.*, accounts.callsign, accounts.client_key from radios "
+                "join accounts "
                 "on accounts.id = radios.account where accounts.callsign = ? "
                 "and accounts.status = 'active'", (callsign.upper(),)).fetchall()
 
@@ -1837,7 +1862,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         # the owner's radios, a card each in a grid, as the author asked on
         # 2026-10-16: what can be done with each is on its card, and what
-        # keeps it safe, its client password and its cookie, is on a page of
+        # keeps it safe, its cookie, is on a page of
         # its own, Keys, as GitHub keeps its keys away from the rest
         cards = ""
         for radio in self.service.radios(account["id"]):
@@ -1905,7 +1930,7 @@ class Handler(BaseHTTPRequestHandler):
                self.form_guard(self.session_secret()), html.escape(suffix))))
 
     def keys_page(self, account, number, told="", is_wrong=False):
-        """a radio's client password and cookie, and its removal: what keeps
+        """a radio's cookie, how its owner's programs sign in, and its removal: what keeps
         it safe, apart from the rest, as GitHub keeps its keys"""
         mine = [radio for radio in self.service.radios(account["id"])
                 if str(radio["id"]) == str(number)]
@@ -1920,16 +1945,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, self.page("Keys of %s" % radio_id(account["callsign"], radio["suffix"]),
             said(told, is_wrong)
             + "<p><a href=\"/\">&larr; Your radios</a></p><h2>Keys of %s</h2>"
-            "<h3>Client password</h3>"
-            "<p class=\"secret code\">%s</p>"
-            "<p>A program on another computer that works this radio, such as the zbitx "
-            "window started as <span class=\"command\">zbitx_gui remote %s</span>, signs "
-            "in with the radio's name and this password. The radio's page here does not "
-            "need it.</p>"
-            "<p>A new one takes the old one's place, and whatever is signed in with the "
-            "old one is let go within 20 seconds.</p>"
-            "<form method=\"post\" action=\"/radios/password\">%s"
-            "<button>Make a new client password</button></form>"
             "<h3>The radio's cookie</h3>"
             "<p>The cookie is the radio's own secret, made by the radio, and how it signs "
             "in here. It is not shown here. To change it, as when a radio may have "
@@ -1943,12 +1958,17 @@ class Handler(BaseHTTPRequestHandler):
             "autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\" "
             "placeholder=\"abcd-jklm-wxyz\" required></label>"
             "<button>Use the new cookie</button></form>"
-            "<p>The radio's name and client password stay as they are.</p>"
+            "<p>The radio's name stays as it is.</p>"
+            "<h3>From a program on another computer</h3>"
+            "<p>The zbitx window on another computer, started as "
+            "<span class=\"command\">zbitx_gui remote %s</span>, signs in with your "
+            "callsign and the password you sign in here with. Change that password and "
+            "whatever is signed in with the old one is let go within 20 seconds.</p>"
             "<h3>Remove the radio</h3>"
             "<p>It is let go at once, and can be added again later with its cookie.</p>"
             "<form method=\"post\" action=\"/radios/remove\">%s"
             "<button class=\"danger\">Remove %s</button></form>"
-            % (name, show_secret(radio["client_password"]), name, hidden, hidden, hidden, name)))
+            % (name, hidden, name, hidden, name)))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
@@ -2224,11 +2244,6 @@ class Handler(BaseHTTPRequestHandler):
                 ok, told = self.service.radio_new_cookie(account, int(form["radio"]),
                                                          form.get("cookie", ""))
             self.keys_page(account, form.get("radio", ""), told, not ok)
-        elif url.path == "/radios/password":
-            if form.get("radio", "").isdigit():
-                self.service.radio_new_password(account, int(form["radio"]))
-            self.keys_page(account, form.get("radio", ""),
-                           "A new client password is made. The old one no longer works.")
         elif url.path == "/radios/remove":
             if form.get("radio", "").isdigit():
                 self.service.radio_remove(account, int(form["radio"]))

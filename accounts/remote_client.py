@@ -12,10 +12,12 @@ as a model for a client on any platform: PROTOCOL.md says what is spoken,
 and this is all of it in a page.
 
 The radio is named as the website names it, the owner's callsign and the
-radio's own name. The first time, the radio's client password is asked
-for, the twelve letters the website shows beside the radio; it is kept in
-~/.config/zbitx/<radio>.password, which only this user can read, where
-zbitx_gui keeps it too. A password the service refuses is forgotten.
+radio's own name. The first time, the password of that callsign's account
+is asked for, the one the website is signed in to with. It is not kept:
+what it stretches to is, the key the proofs are made with, in
+~/.config/zbitx/<callsign>.key, which only this user can read, where
+zbitx_gui keeps it too. A key the service refuses is forgotten. (Until
+2026-10-16 each radio had a client password of its own for this.)
 
 --server and --port point it at another service than my.sbitx.net.
 """
@@ -25,7 +27,6 @@ import getpass
 import hashlib
 import hmac
 import os
-import re
 import secrets
 import socket
 import sys
@@ -34,30 +35,30 @@ import threading
 STRETCH_ROUNDS = 50000
 
 
-def password_file(radio):
-    return os.path.expanduser("~/.config/zbitx/%s.password" % radio)
+def key_file(radio):
+    return os.path.expanduser("~/.config/zbitx/%s.key" % radio.partition("-")[0].lower())
 
 
-def password_of(radio):
-    """the radio's client password, its twelve letters, from the file or
-    asked for and then kept"""
-    path = password_file(radio)
+def key_of(radio):
+    """the stretched password of the radio's account, from the file, or
+    from the password asked for, and then kept"""
+    path = key_file(radio)
     if os.path.exists(path):
         with open(path) as file:
             return file.read().strip()
-    letters = re.sub(r"[^a-z]", "", getpass.getpass(
-        "The client password of %s, from my.sbitx.net: " % radio).lower())
+    callsign = radio.partition("-")[0]
+    password = getpass.getpass("The password of %s at my.sbitx.net: " % callsign.upper())
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                              ("zbitx-1 " + callsign.lower()).encode(), STRETCH_ROUNDS).hex()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
-        file.write(letters + "\n")
-    return letters
+        file.write(key + "\n")
+    return key
 
 
-def proof(password, side, radio, challenge, nonce):
+def proof(key, side, radio, challenge, nonce):
     """the answer to a challenge: a keyed hash whose key is the password
-    stretched, with the radio's name as salt"""
-    key = hashlib.pbkdf2_hmac("sha256", password.encode(),
-                              ("zbitx-1 " + radio.lower()).encode(), STRETCH_ROUNDS).hex()
+    stretched, with the callsign as salt"""
     text = "zbitx-auth-1 %s %s %s %s" % (side, radio, challenge, nonce)
     return hmac.new(key.encode(), text.encode(), hashlib.sha256).hexdigest()
 
@@ -68,21 +69,21 @@ def main():
     parser.add_argument("--server", default="my.sbitx.net")
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args()
-    password = password_of(args.radio)
+    key = key_of(args.radio)
 
     line = socket.create_connection((args.server, args.port), timeout=20)
     said = line.makefile("r", newline="\n")
     challenge = said.readline().split()[1]
     nonce = secrets.token_hex(16)
     line.sendall(("AUTH client %s %s %s\n" % (
-        args.radio, nonce, proof(password, "client", args.radio, challenge, nonce))).encode())
+        args.radio, nonce, proof(key, "client", args.radio, challenge, nonce))).encode())
     welcome = said.readline().split()
     if len(welcome) != 3 or welcome[0] != "WELCOME":
-        os.remove(password_file(args.radio))
+        os.remove(key_file(args.radio))
         sys.exit("The service refused: %s" % " ".join(welcome))
     if not hmac.compare_digest(welcome[2],
-                               proof(password, "server", args.radio, challenge, nonce)):
-        sys.exit("Whatever answered at %s does not have the client password." % args.server)
+                               proof(key, "server", args.radio, challenge, nonce)):
+        sys.exit("Whatever answered at %s does not have the password." % args.server)
     answer = said.readline().strip()
     print(answer)
     if not answer.startswith("CONNECTED"):

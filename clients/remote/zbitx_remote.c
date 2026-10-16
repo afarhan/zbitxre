@@ -249,7 +249,7 @@
 // CONNECTIONS, which the radio program asks for two taps of: the author's
 // way of putting right a cookie that has gone where it should not, a new
 // key made on the radio and typed into the owner's list at my.sbitx.net,
-// beside the radio, which keeps its name and client password. This program
+// on the radio's Keys page, and the radio keeps its name. This program
 // makes it, lets go of the service, and shows it in REMOTE_STATUS until the
 // website has it.
 //

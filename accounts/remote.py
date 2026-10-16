@@ -17,9 +17,9 @@ WHO CONNECTS
 A radio at home cannot be connected to from outside, so its daemon,
 clients/remote/zbitx_remote.c, connects out to here and stays. A client, the
 window on another computer, connects to here as well. Both are met with a
-challenge. Neither is asked for the account's password, and nothing here
-is inside TLS: the author's ruling, since these are amateur radio
-communications and all that is wanted is to be sure who is on the line.
+challenge. Nothing here is inside TLS: the author's ruling, since these are
+amateur radio communications and all that is wanted is to be sure who is
+on the line; so no secret is ever sent, only proofs made with one.
 
     CHALLENGE <32 hex digits>                      from here, first
     AUTH radio <callsign> <nonce> <proof>          from a radio's daemon, or
@@ -30,15 +30,20 @@ A radio answers with its cookie, the twelve letters it made for itself and
 its owner typed into the website when adding it. It says only whose it is,
 by the callsign set on it; which of the owner's radios it is, this end
 finds by trying the cookie of each, five at most. A client answers with
-the client password of the radio it names, vu2ese-home.
+the password of the account whose radio it names, vu2ese-home: the owner's
+own, which signs in to the website too. Each radio had a client password of
+its own for this until 2026-10-16; the author found it confusing beside the
+cookie, and it was taken out.
 
 The proof is HMAC-SHA256 of "zbitx-auth-1 <radio or client> <the name as
-sent> <challenge> <nonce>", in hex, and its key is not the twelve letters
-themselves but what PBKDF2 makes of them, so that someone who overhears an
-answer cannot find the letters by trying them all: accounts.stretch() is
-that, with the callsign as the salt for a cookie and the radio's name for a
-client password. The proof sent back is of the same text with "server"
-first, and shows that this end has the secret too.
+sent> <challenge> <nonce>", in hex, and its key is not the secret itself
+but what PBKDF2 makes of it, so that someone who overhears an answer
+cannot find the secret by trying: accounts.stretch() is that, with the
+callsign as the salt, for a cookie and for the account's password alike.
+The service keeps the password's stretch, accounts.client_key_of(), and
+not the password; an account from before has none until its owner next
+signs in at the website. The proof sent back is of the same text with
+"server" first, and shows that this end has the secret too.
 
 A wrong proof is answered "ERROR AUTH" and the connection closed. A radio
 that has not been added on the website yet is refused in just this way,
@@ -230,7 +235,7 @@ window does; accounts/static/operate.js is it. A browser cannot make the
 plain connection the window makes, so the page opens a WebSocket here,
 through nginx, at /work?radio=<number>, and this service is the go-between.
 It is for the radio's owner, signed in to the website: the browser's
-session says who it is, and no client password is asked for. It is then a
+session says who it is, and no password is asked for. It is then a
 client like the window: the one client the radio may have, with a session
 of its own to the radio program by way of the daemon. Each text message
 from the page is lines of the radio's protocol, passed to the radio as
@@ -345,12 +350,12 @@ NOT_CONTROLS = ("SPECTRUM", "MODULATION", "MESSAGE", "CW", "SAY", "WARN", "QSO",
                 "LOG_LIST", "TIME", "ERROR", "CONTROL")
 
 
-def proof(secret, salt, side, name, challenge, nonce):
-    """the answer to a challenge; side is radio, client or server, and name
-    is what the one connecting called itself"""
+def proof(key, side, name, challenge, nonce):
+    """the answer to a challenge, made with a stretched secret; side is
+    radio, client or server, and name is what the one connecting called
+    itself"""
     text = "zbitx-auth-1 %s %s %s %s" % (side, name, challenge, nonce)
-    return hmac.new(accounts.stretch(secret, salt).encode(), text.encode(),
-                    hashlib.sha256).hexdigest()
+    return hmac.new(key.encode(), text.encode(), hashlib.sha256).hexdigest()
 
 
 class Stream:
@@ -429,17 +434,19 @@ class Remote:
         return line.decode("utf-8", "replace").strip()
 
     def who_answered(self, side, name, challenge, nonce, answer):
-        """the radio whose secret made that answer, with the secret and its
-        salt, or None. A radio's daemon names only its callsign, and the
-        cookie of each of that callsign's radios is tried"""
+        """the radio whose stretched secret made that answer, with that key,
+        or None. A radio's daemon names only its callsign, and the cookie of
+        each of that callsign's radios is tried; a client names the radio,
+        and the key is its account's"""
         if side == "radio":
-            tried = [(radio, radio["cookie"], name) for radio in self.service.radios_of(name)]
+            tried = [(radio, accounts.stretch(radio["cookie"], name))
+                     for radio in self.service.radios_of(name)]
         else:
             radio = self.service.radio_called(name)
-            tried = [(radio, radio["client_password"], name)] if radio is not None else []
-        for radio, secret, salt in tried:
-            if hmac.compare_digest(answer, proof(secret, salt, side, name, challenge, nonce)):
-                return radio, secret, salt
+            tried = [(radio, radio["client_key"])] if radio is not None else []
+        for radio, key in tried:
+            if key and hmac.compare_digest(answer, proof(key, side, name, challenge, nonce)):
+                return radio, key
         return None
 
     async def greet(self, reader, writer, address):
@@ -464,14 +471,14 @@ class Remote:
                 writer.write(b"ERROR AUTH no radio of that callsign has this cookie; "
                              b"add it at the website\n")
             else:
-                writer.write(("ERROR AUTH there is no radio %s with that client password: "
-                              "check the name and the password at the website\n"
-                              % name.lower()).encode())
+                writer.write(("ERROR AUTH there is no radio %s with that callsign's "
+                              "password: check the name, and sign in once at the website "
+                              "with that password\n" % name.lower()).encode())
             return None, None
-        radio, secret, salt = found
+        radio, key = found
         writer.write(("WELCOME %s %s\n" % (
             accounts.radio_id(radio["callsign"], radio["suffix"]),
-            proof(secret, salt, "server", name, challenge, nonce))).encode())
+            proof(key, "server", name, challenge, nonce))).encode())
         if side == "radio":
             with self.store.open() as db:
                 db.execute("update radios set last_seen = ? where id = ?",
@@ -1122,11 +1129,14 @@ class Remote:
         writer.write(("CONNECTED %s\n" % name).encode())
         self.sessions[radio["id"]] = self.sessions.get(radio["id"], 0) + 1
         self.say("a client is on %s" % name)
+        # the owner's password changed, the radio removed or the account
+        # suspended, and the client is let go
         def has_the_password():
             with self.store.open() as db:
-                now = db.execute("select client_password from radios where id = ?",
-                                 (radio["id"],)).fetchone()
-            return now is not None and now[0] == radio["client_password"]
+                now = db.execute("select accounts.client_key from radios join accounts on "
+                                 "accounts.id = radios.account where radios.id = ? and "
+                                 "accounts.status = 'active'", (radio["id"],)).fetchone()
+            return now is not None and now[0] == radio["client_key"]
         ways = [asyncio.ensure_future(self.pass_on(reader, radio_writer)),
                 asyncio.ensure_future(self.pass_on(radio_reader, writer)),
                 asyncio.ensure_future(self.until_revoked(has_the_password))]
@@ -1141,7 +1151,7 @@ class Remote:
 
     async def until_revoked(self, is_still_good, then=lambda: None):
         """comes back when what let someone in no longer would: the radio's
-        client password has been changed, or the owner's password has, which
+        owner's password has been changed, which
         signs every browser out. The author's way of shutting someone out
         of a radio is to change the password; this makes that take hold of
         one who is already in, within REVOKED_LOOK_S, and not only of the

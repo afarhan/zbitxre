@@ -333,20 +333,20 @@ class AccountsTest(unittest.TestCase):
 
     # radios
 
-    def test_a_radio_is_added_with_its_cookie_and_given_a_client_password(self):
+    def test_a_radio_is_added_with_its_cookie(self):
         browser = self.make_account()
         text = self.add_radio(browser, "Home", "ABCD EFGH JKMN")
         self.assertIn("vu2ese-home is added", text)
         radio = self.service.radio_called("VU2ESE-home")
         self.assertEqual(radio["cookie"], "abcdefghjkmn")
-        self.assertRegex(radio["client_password"], r"^[a-z]{12}$")
-        self.assertNotEqual(radio["client_password"], radio["cookie"])
-        # the radio is a card on the owner's page, and its client password
-        # is on its Keys page, not there; the cookie is shown nowhere
+        # there is no client password any more: the owner's programs sign
+        # in with the account's password, which the Keys page says
+        self.assertEqual(radio["client_password"], "")
         self.assertIn("class=\"card\"", text)
-        self.assertNotIn(accounts.show_secret(radio["client_password"]), text)
         _, keys = browser.get("/radios/keys?radio=%d" % radio["id"])
-        self.assertIn(accounts.show_secret(radio["client_password"]), keys)
+        self.assertIn("zbitx_gui remote vu2ese-home", keys)
+        self.assertNotIn("client password", keys.lower())
+        self.assertNotIn("/radios/password", keys)
         # keys are shown in small letters, as the radio shows them
         self.assertNotIn("uppercase", accounts.STYLE)
         # and a cookie typed in small letters, as the radio shows it, is taken
@@ -374,9 +374,9 @@ class AccountsTest(unittest.TestCase):
         second = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         status, text = second.get("/radios/keys?radio=%d" % radio["id"])
         self.assertEqual(status, 404)
-        self.assertNotIn(accounts.show_secret(radio["client_password"]), text)
-        status, _ = Browser(self.port).get("/radios/keys?radio=%d" % radio["id"])
-        self.assertNotIn(accounts.show_secret(radio["client_password"]), _)
+        self.assertNotIn("Keys of", text)
+        status, text = Browser(self.port).get("/radios/keys?radio=%d" % radio["id"])
+        self.assertNotIn("Keys of", text)
 
     def test_a_sign_in_is_remembered_only_when_asked(self):
         self.make_account()
@@ -410,16 +410,27 @@ class AccountsTest(unittest.TestCase):
         self.add_radio(other, "home")
         self.assertIn("called home already", self.add_radio(other, "home"))
 
-    def test_a_new_client_password_replaces_the_old(self):
-        browser = self.make_account()
-        self.add_radio(browser)
-        before = self.service.radio_called("vu2ese-home")
+    def test_the_accounts_client_key_follows_its_password(self):
+        """what the owner's programs sign in with is the account's password
+        stretched, kept when the password is chosen, and when it is signed
+        in with, for an account from before there was one"""
+        self.make_account()
+        with self.service.store.open() as db:
+            kept = db.execute("select client_key, password from accounts").fetchone()
+        self.assertEqual(kept["client_key"], accounts.client_key_of(PASSWORD, "VU2ESE"))
+        self.assertNotIn(PASSWORD, kept["client_key"])
+        with self.service.store.open() as db:
+            db.execute("update accounts set client_key = ''")
+        Browser(self.port).post("/signin", {"callsign": "VU2ESE", "password": PASSWORD})
+        with self.service.store.open() as db:
+            self.assertEqual(db.execute("select client_key from accounts").fetchone()[0],
+                             accounts.client_key_of(PASSWORD, "VU2ESE"))
+        # and there is no page that makes a client password
+        browser = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         _, text = browser.get("/")
-        browser.post("/radios/password", {"guard": browser.hidden(text, "guard"),
-                                          "radio": str(before["id"])})
-        after = self.service.radio_called("vu2ese-home")
-        self.assertNotEqual(after["client_password"], before["client_password"])
-        self.assertEqual(after["cookie"], before["cookie"])
+        status, _ = browser.post("/radios/password", {"guard": browser.hidden(text, "guard"),
+                                                      "radio": "1"})
+        self.assertEqual(status, 404)
 
     def test_a_new_cookie_replaces_the_old_and_keeps_the_name_and_password(self):
         browser = self.make_account()
@@ -432,7 +443,6 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("has its new cookie", text)
         after = self.service.radio_called("vu2ese-home")
         self.assertEqual(after["cookie"], "pqrstuvwxyza")
-        self.assertEqual(after["client_password"], before["client_password"])
         self.assertEqual(after["id"], before["id"])
         _, text = browser.post("/radios/cookie", {"guard": guard, "radio": str(before["id"]),
                                                   "cookie": "pqrs-tuvw-xyza"})
@@ -555,7 +565,7 @@ class AccountsTest(unittest.TestCase):
                                              "grid": "MK97", "lat": 17.5, "lon": 79.0,
                                              "streaming": True, "listening": 0,
                                              "listeners": []}])
-        for hidden in ("home", "fj", "abcd", home["client_password"]):
+        for hidden in ("home", "fj", "abcd", home["cookie"]):
             self.assertNotIn(hidden, text)
 
     def test_what_a_radio_on_the_globe_copies_in_ft8_is_anyones_to_read(self):
