@@ -1997,9 +1997,9 @@ class Handler(BaseHTTPRequestHandler):
                 + "<h2>Your sBitx or zBitx, from anywhere</h2>"
                 "<p>Operate your radio from a browser or a phone, and listen to the "
                 "radios that are on line now.</p>"
-                "<p><a class=\"action\" href=\"/signin\">Sign in</a> &nbsp; "
-                "<a href=\"/register\">Register and put your radio on line</a> &nbsp;&middot;&nbsp; "
-                "<a href=\"/map\">Listen on the map</a>, no account needed</p>"))
+                "<p>Listen to the bitx radios online. <a href=\"/map\">Click Here</a></p>"
+                "<p><a class=\"action\" href=\"/signin\">Sign in</a></p>"
+                "<p><a href=\"/register\">Register and put your radio on line</a></p>"))
             return
         radios = self.service.radios(account["id"])
         cards = ""
