@@ -325,6 +325,9 @@ class AccountsTest(unittest.TestCase):
         # a clock that says 2000 refuses the certificate: today, to type
         self.assertIn("sudo date -u -s \"%s" % time.strftime("%Y-%m-%d", time.gmtime()), text)
         self.assertIn("href=\"/zbitx/front_panel.uf2\"", text)
+        # the knob held as the radio is switched on, and the cable after
+        self.assertLess(text.index("switch the radio <strong>on</strong>"),
+                        text.index("Connect the panel's USB socket"))
         self.assertIn("/static/upgrade.js?v=", text)
         self.assertIn("href=\"/upgrade\">Upgrade</a>", text)
         # the script it names is served, from this site, as a script must be

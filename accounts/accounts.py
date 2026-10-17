@@ -2053,7 +2053,9 @@ class Handler(BaseHTTPRequestHandler):
         2026-10-17 from what went wrong for the first tester: the radio was
         not on the Wi-Fi, he typed only the address and not the whole line,
         the radio's clock said 2000, so that my.sbitx.net's certificate was
-        refused, and the panel needed its firmware by the USB cable. The
+        refused, and the panel needed its firmware by the USB cable, which
+        is put on by switching the radio on with the tuning knob held in and
+        only then plugging the cable in, the author's order. The
         line that sets the clock is given with the time the page was served,
         in UTC, which is near enough for a certificate"""
         self.send(200, self.page("Upgrade your radio",
@@ -2127,13 +2129,16 @@ class Handler(BaseHTTPRequestHandler):
             "<ol class=\"steps\">"
             "<li>Download <a href=\"/zbitx/front_panel.uf2\" download>"
             "front_panel.uf2</a> on your computer.</li>"
-            "<li>Switch the radio off.</li>"
+            "<li>Switch the radio <strong>off</strong>.</li>"
             "<li>Hold the <strong>tuning knob pressed in</strong>, and while holding "
-            "it, connect the panel's USB socket to your computer. Let go when a "
-            "drive called <strong>RPI-RP2</strong> appears.</li>"
+            "it, switch the radio <strong>on</strong>. Then let go of the knob.</li>"
+            "<li>Connect the panel's USB socket to your computer. A drive called "
+            "<strong>RPI-RP2</strong> appears.</li>"
             "<li>Copy <span class=\"command\">front_panel.uf2</span> onto that "
             "drive. The drive goes away by itself and the panel restarts.</li>"
-            "<li>Unplug the cable and switch the radio on.</li></ol>"
+            "<li>Unplug the cable.</li></ol>"
+            "<p>The order matters: plugged in first, the cable keeps the panel "
+            "powered, and it never starts as the drive.</p>"
 
             "<h3>Afterwards</h3>"
             "<ul class=\"steps\">"
