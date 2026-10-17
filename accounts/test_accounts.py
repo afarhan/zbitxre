@@ -176,6 +176,26 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("vu2ese-home", text)
         self.assertEqual(self.service.radio_called("vu2ese-home")["cookie"], "abcdefghjkmn")
 
+    def test_a_radio_just_added_is_waited_for(self):
+        browser = self.make_account()
+        text = self.add_radio(browser)
+        self.assertIn("Waiting for vu2ese-home to come on line", text)
+        self.assertIn('http-equiv="refresh" content="5; url=/"', text)
+        self.assertNotIn("None of your radios is on line", text)
+        # once it is on line nothing is waited for
+        with self.service.store.open() as db:
+            db.execute("update radios set online = 1")
+        _, text = browser.get("/")
+        self.assertNotIn("Waiting for", text)
+        self.assertNotIn("http-equiv", text)
+        # and one that has not come in two minutes is shown what to check
+        with self.service.store.open() as db:
+            db.execute("update radios set online = 0, created = created - 600")
+        _, text = browser.get("/")
+        self.assertIn("None of your radios is on line", text)
+        self.assertIn("MYCALLSIGN should be VU2ESE", text)
+        self.assertNotIn("http-equiv", text)
+
     def test_the_boxes_must_be_ticked(self):
         radio = dict(suffix="home", cookie="abcd-efgh-jkmn", tick_remote="on")
         _, text = self.browser.register("VU2ESE", "farhan@example.org", radio=radio)

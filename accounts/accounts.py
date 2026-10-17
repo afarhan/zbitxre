@@ -246,6 +246,11 @@ RESET_LINK_S = 2 * 3600
 SESSION_S = 30 * 24 * 3600
 SESSION_UNREMEMBERED_S = 24 * 3600
 WINDOW_S = 15 * 60
+# a radio added this lately and not yet on line is waited for: the home
+# page says so and looks again by itself, the author's wish of 2026-10-17,
+# instead of saying none of the radios is on line as soon as one is added
+WAITING_FOR_RADIO_S = 2 * 60
+WAITING_LOOKS_EVERY_S = 5
 SIGNIN_TRIES_A_CALLSIGN = 5
 SIGNIN_TRIES_AN_ADDRESS = 20
 MAILS_AN_ADDRESS = 6
@@ -1751,9 +1756,7 @@ class Service:
             db.execute("insert into radios (account, suffix, cookie, client_password, created) "
                        "values (?, ?, ?, ?, ?)",
                        (account["id"], suffix, cookie, "", now()))
-        return True, ("%s is added. It will come on line within a quarter of a minute, "
-                      "if it is switched on and its remote access is on."
-                      % radio_id(account["callsign"], suffix))
+        return True, "%s is added." % radio_id(account["callsign"], suffix)
 
     def radio_new_cookie(self, account, radio, cookie_typed):
         """the cookie the owner made anew on the radio takes the old one's
@@ -1866,19 +1869,29 @@ def nav_bar(account=None, guard=None):
             "<span class=\"who\">%s</span></nav>" % right)
 
 
-def page(title, body, account=None, guard=None):
+def page(title, body, account=None, guard=None, look_again_s=0):
+    """with look_again_s, the browser fetches the home page again after that
+    many seconds"""
+    again = ""
+    if look_again_s:
+        again = "<meta http-equiv=\"refresh\" content=\"%d; url=/\">" % look_again_s
     return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s"
             "<title>%s - my.sbitx.net</title><link rel=\"stylesheet\" href=\"/style.css\">"
             "</head><body>%s<main>%s"
             "<p class=\"foot\">Accounts for sBitx and zBitx owners.</p></main></body></html>\n"
-            % (html.escape(title), nav_bar(account, guard), body))
+            % (again, html.escape(title), nav_bar(account, guard), body))
 
 
 def said(text, is_wrong=False):
     if not text:
         return ""
     return "<p class=\"%s\">%s</p>" % ("wrong" if is_wrong else "said", html.escape(text))
+
+
+def is_new(radio):
+    """a radio added lately that has not come on line: one to wait for"""
+    return not radio["online"] and now() - radio["created"] < WAITING_FOR_RADIO_S
 
 
 def tick_box(name, words):
@@ -1946,13 +1959,14 @@ class Handler(BaseHTTPRequestHandler):
                 return value
         return ""
 
-    def page(self, title, body):
+    def page(self, title, body, look_again_s=0):
         """a page of the site, with the bar along its top saying who is
         signed in, found here for every page alike, so that no page shows
         Sign in to someone who is"""
         secret = self.session_secret()
         account = self.service.session_account(secret)
-        return page(title, body, account, self.form_guard(secret) if account else None)
+        return page(title, body, account, self.form_guard(secret) if account else None,
+                    look_again_s)
 
     def form_guard(self, secret):
         """the value a form posted while signed in must carry"""
@@ -2013,6 +2027,7 @@ class Handler(BaseHTTPRequestHandler):
     # computer among them, is on Help, apart from the pages used every day.
 
     def home(self, account, told="", is_wrong=False):
+        look_again_s = 0
         if account is None:
             self.send(200, self.page("Welcome", said(told, is_wrong)
                 + "<h2>Your sBitx or zBitx, from anywhere</h2>"
@@ -2033,6 +2048,8 @@ class Handler(BaseHTTPRequestHandler):
             more.append("<a href=\"/radios/manage?radio=%d\">Manage</a>" % number)
             if radio["online"]:
                 go = "<a class=\"action\" href=\"/operate?radio=%d\">Operate</a>" % number
+            elif is_new(radio):
+                go = "<span class=\"waiting\">Waiting for it to come on line&hellip;</span>"
             else:
                 go = ("<span class=\"waiting\">Switch the radio on, with REMOTE on in its "
                       "CONNECTIONS, to operate it from here.</span>")
@@ -2057,15 +2074,23 @@ class Handler(BaseHTTPRequestHandler):
                     % html.escape(account["callsign"]))
         else:
             hint = ""
-            if not any(radio["online"] for radio in radios):
+            waited = [radio for radio in radios if is_new(radio)]
+            if waited:
+                look_again_s = WAITING_LOOKS_EVERY_S
+                hint = ("<p class=\"said\">Waiting for %s to come on line. It takes up to a "
+                        "quarter of a minute; this page looks again by itself.</p>"
+                        % html.escape(", ".join(radio_id(account["callsign"], radio["suffix"])
+                                                for radio in waited)))
+            elif not any(radio["online"] for radio in radios):
                 hint = ("<p class=\"said\">None of your radios is on line. On the radio, "
-                        "open SET, then CONNECTIONS, and see that REMOTE is on and "
-                        "REMOTE_STATUS says ONLINE. <a href=\"/help#offline\">More help</a>"
-                        "</p>")
+                        "open SET: MYCALLSIGN should be %s. Then CONNECTIONS: REMOTE "
+                        "should be ON, and REMOTE_STATUS say ONLINE. "
+                        "<a href=\"/help#offline\">More help</a></p>"
+                        % html.escape(account["callsign"]))
             body = ("<div class=\"heading\"><h2>Your radios</h2>"
                     "<a href=\"/radios/add\">+ Add Radio</a></div>%s"
                     "<div class=\"cards\">%s</div>" % (hint, cards))
-        self.send(200, self.page(account["callsign"], said(told, is_wrong) + body))
+        self.send(200, self.page(account["callsign"], said(told, is_wrong) + body, look_again_s))
 
     def add_radio_page(self, account, told="", is_wrong=False, suffix=""):
         """the form that adds a radio, with what to do at the radio first"""
