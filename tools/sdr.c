@@ -642,6 +642,7 @@ static struct control radio_key = {
 #define UPDATE_SCRIPT "setup/update.sh"
 #define PANEL_FIRMWARE_SCRIPT "setup/panel_firmware.sh --from-radio"
 #define BUILT_FROM_FILE "data/built_from"
+#define BUILT_FROM_ROOM 16
 #define UPDATED_ENV "ZBITXRE_UPDATED"
 #define UPDATE_BUILT 0
 #define UPDATE_SAID_FOR_MS (5 * 60 * 1000L)
@@ -822,7 +823,8 @@ static void follow_update(long now) {
 // this program becomes the one just built, in its place: the same process,
 // in the same terminal, with nothing open but what it was started with
 static void restart_as_built(char **argv) {
-	char built[CONTROL_VALUE_MAX] = "";
+	// a commit's short name, as update.sh writes it
+	char built[BUILT_FROM_ROOM] = "";
 	char said[CONTROL_VALUE_MAX];
 	FILE *file = fopen(BUILT_FROM_FILE, "r");
 
