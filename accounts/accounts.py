@@ -42,7 +42,12 @@ time remote access is turned on, the radio makes a cookie of twelve letters
 and shows it among its settings, "abcd-jklm-wxyz". The owner, signed in
 here, adds a radio by giving it a name and typing the cookie. Nothing is
 typed on the radio, which on a zbitx has no keyboard, and no file on it is
-edited. From then on the cookie is what the radio answers this service's
+edited. The registration form asks for the radio too, the author's wizard
+of 2026-10-17, and the radio is added when the mailed link is followed.
+Before a radio is added the owner ticks three boxes: MYCALLSIGN is theirs,
+REMOTE is ON, STREAMING is ON. No two radios here may have one cookie: a
+cookie seen twice is a copied card or a radio sold and not removed, and the
+owner is asked to make the radio a new one. From then on the cookie is what the radio answers this service's
 challenge with, and the radio no longer shows it.
 
 A radio's cookie can be changed, the author's way: the owner makes a new
@@ -264,6 +269,20 @@ SECRET_GROUP = 4
 # a secret is stretched before it is used, so that twelve letters are slow
 # to guess for someone who overheard an answer to a challenge
 STRETCH_ROUNDS = 50000
+# what an owner ticks before a radio is added, at registration and on Add
+# Radio. The author asked for them on 2026-10-17: people do not read the
+# steps, and a radio added with REMOTE or STREAMING off is not seen on line.
+# The radio signs in with the callsign set on it, so MYCALLSIGN has to be
+# the account's
+TICKS = (("tick_callsign", "MYCALLSIGN on the radio is %s"),
+         ("tick_remote", "REMOTE is ON"),
+         ("tick_streaming", "STREAMING is ON"))
+NOT_TICKED = "Tick the three boxes once the radio is set that way."
+# a key that another radio here has already: the two cannot both be
+# trusted, and a key seen twice is a copied card or a radio sold and not
+# removed. The owner makes the radio a new one
+KEY_IN_USE = ("That radio key is already in use on my.sbitx.net. On the radio, tap "
+              "RADIO_KEY, choose NEW KEY, and type the new twelve letters here.")
 
 CALLSIGN_FORM = re.compile(r"^[A-Z0-9]{3,10}$")
 GRID_FORM = re.compile(r"^[A-R]{2}[0-9]{2}([A-X]{2})?$")
@@ -284,7 +303,9 @@ create table if not exists tokens (
     hash text primary key,
     account integer not null references accounts(id) on delete cascade,
     purpose text not null,
-    expires integer not null
+    expires integer not null,
+    radio_suffix text not null default '',
+    radio_cookie text not null default ''
 );
 create table if not exists sessions (
     hash text primary key,
@@ -1378,6 +1399,14 @@ class Store:
             if "client_key" not in columns:
                 db.execute("alter table accounts add column client_key text not null "
                            "default ''")
+            # the radio given on the registration form waits with the link
+            # mailed out, and is added when the link is followed
+            columns = [row["name"] for row in db.execute("pragma table_info(tokens)")]
+            if "radio_cookie" not in columns:
+                db.execute("alter table tokens add column radio_suffix text not null "
+                           "default ''")
+                db.execute("alter table tokens add column radio_cookie text not null "
+                           "default ''")
 
     @contextlib.contextmanager
     def open(self):
@@ -1475,13 +1504,16 @@ class Service:
 
     # links mailed out
 
-    def mail_link(self, db, account, purpose):
+    def mail_link(self, db, account, purpose, suffix="", cookie=""):
+        """with a radio's name and cookie, from the registration form, which
+        are added as a radio when the link is followed"""
         secret = secrets.token_urlsafe(32)
         life = VERIFY_LINK_S if purpose == "verify" else RESET_LINK_S
         db.execute("delete from tokens where account = ? and purpose = ?",
                    (account["id"], purpose))
-        db.execute("insert into tokens (hash, account, purpose, expires) values (?, ?, ?, ?)",
-                   (digest(secret), account["id"], purpose, now() + life))
+        db.execute("insert into tokens (hash, account, purpose, expires, radio_suffix, "
+                   "radio_cookie) values (?, ?, ?, ?, ?, ?)",
+                   (digest(secret), account["id"], purpose, now() + life, suffix, cookie))
         link = "%s/password?t=%s" % (self.settings.base_url, secret)
         if purpose == "verify":
             subject = "Confirm your address for %s" % account["callsign"]
@@ -1498,8 +1530,10 @@ class Service:
                     % (account["callsign"], self.settings.base_url, link))
         self.mailer.send(account["email"], subject, text)
 
-    def register(self, callsign_typed, email_typed, invite, address):
-        """returns (ok, what to tell the user)"""
+    def register(self, callsign_typed, email_typed, invite, address, suffix_typed="",
+                 cookie_typed=""):
+        """with the radio to add, when the form gave one: it waits with the
+        link mailed out. Returns (ok, what to tell the user)"""
         s = self.settings
         if s.registration == "closed":
             return False, "Registration is not open yet."
@@ -1513,7 +1547,16 @@ class Service:
         email = email_typed.strip()
         if not EMAIL_FORM.match(email):
             return False, "That does not look like an email address."
+        suffix, cookie = "", ""
+        if cookie_typed.strip():
+            suffix, cookie, wrong = self.radio_typed(suffix_typed, cookie_typed)
+            if wrong:
+                return False, wrong
         with self.store.open() as db:
+            if cookie:
+                wrong = self.radio_refused(db, None, suffix, cookie)
+                if wrong:
+                    return False, wrong
             if tried_too_often(db, "mail " + address, MAILS_AN_ADDRESS):
                 return False, "Too many tries from here. Try again in a quarter of an hour."
             note_attempt(db, "mail " + address)
@@ -1537,19 +1580,23 @@ class Service:
                            (callsign, email, now()))
             account = db.execute("select * from accounts where callsign = ?",
                                  (callsign,)).fetchone()
-            self.mail_link(db, account, "verify")
+            self.mail_link(db, account, "verify", suffix, cookie)
         return True, ("We have mailed a link to %s. Open it to confirm the address and "
-                      "choose a password." % email)
+                      "choose a password%s." % (email, ", and your radio is added" if cookie
+                                                else ""))
 
     def token_account(self, db, secret):
         row = db.execute(
-            "select tokens.purpose, accounts.* from tokens join accounts "
+            "select tokens.purpose, tokens.radio_suffix, tokens.radio_cookie, accounts.* "
+            "from tokens join accounts "
             "on accounts.id = tokens.account where tokens.hash = ? and tokens.expires > ?",
             (digest(secret), now())).fetchone()
         return row
 
     def set_password(self, secret, password, again):
-        """returns (the session's secret or None, what to tell the user)"""
+        """the radio given at registration is added now. Returns (the
+        session's secret or None, what to tell the user): with a session,
+        what is told is why the radio was not added, or nothing"""
         if password != again:
             return None, "The two passwords are not the same."
         if len(password) < PASSWORD_SHORTEST:
@@ -1568,7 +1615,17 @@ class Service:
                                         account["id"]))
             db.execute("delete from tokens where account = ?", (account["id"],))
             db.execute("delete from sessions where account = ?", (account["id"],))
-            return self.new_session(db, account["id"]), ""
+            told = ""
+            if account["radio_cookie"]:
+                # another radio may have been added with the key since
+                told = self.radio_refused(db, account["id"], account["radio_suffix"],
+                                          account["radio_cookie"])
+                if not told:
+                    db.execute("insert into radios (account, suffix, cookie, "
+                               "client_password, created) values (?, ?, ?, ?, ?)",
+                               (account["id"], account["radio_suffix"],
+                                account["radio_cookie"], "", now()))
+            return self.new_session(db, account["id"]), told
 
     def new_session(self, db, account_id, life=SESSION_S):
         secret = secrets.token_urlsafe(32)
@@ -1640,25 +1697,55 @@ class Service:
             return db.execute("select * from radios where account = ? order by suffix",
                               (account_id,)).fetchall()
 
+    @staticmethod
+    def radio_typed(suffix_typed, cookie_typed):
+        """a radio's name and cookie as typed, tidied: (suffix, cookie, what
+        is wrong with them or '')"""
+        suffix = suffix_typed.strip().lower()
+        if not SUFFIX_FORM.match(suffix):
+            return "", "", ("A radio's name is up to ten letters and figures, with nothing "
+                            "else: home, zbitx, shack2.")
+        cookie = tidy_secret(cookie_typed)
+        if not cookie:
+            return "", "", ("That is not a radio key. It is the twelve letters the radio "
+                            "shows as RADIO_KEY, like abcd-jklm-wxyz.")
+        return suffix, cookie, ""
+
+    @staticmethod
+    def key_holder(db, cookie):
+        """the radio here that has that cookie already, or None"""
+        return db.execute("select radios.*, accounts.callsign from radios join accounts "
+                          "on accounts.id = radios.account where radios.cookie = ?",
+                          (cookie,)).fetchone()
+
+    def radio_refused(self, db, account_id, suffix, cookie):
+        """why a radio of that name and cookie cannot be added to the
+        account, or '': an account not yet made has no radios"""
+        holder = self.key_holder(db, cookie)
+        if holder is not None and holder["account"] == account_id:
+            return "Your radio %s has that key already." % radio_id(holder["callsign"],
+                                                                     holder["suffix"])
+        if holder is not None:
+            return KEY_IN_USE
+        had = db.execute("select suffix from radios where account = ?",
+                         (account_id,)).fetchall()
+        if len(had) >= RADIOS_AN_ACCOUNT:
+            return "An account has room for %d radios. Remove one first." % (
+                RADIOS_AN_ACCOUNT)
+        if suffix in [row["suffix"] for row in had]:
+            return "You have a radio called %s already." % suffix
+        return ""
+
     def radio_add(self, account, suffix_typed, cookie_typed):
         """the owner adds a radio: a name for it and the cookie it shows.
         Returns (ok, what to tell the owner)"""
-        suffix = suffix_typed.strip().lower()
-        if not SUFFIX_FORM.match(suffix):
-            return False, ("A radio's name is up to ten letters and figures, with nothing "
-                           "else: home, zbitx, shack2.")
-        cookie = tidy_secret(cookie_typed)
-        if not cookie:
-            return False, ("That is not a radio key. It is the twelve letters the radio "
-                           "shows as RADIO_KEY, like abcd-jklm-wxyz.")
+        suffix, cookie, wrong = self.radio_typed(suffix_typed, cookie_typed)
+        if wrong:
+            return False, wrong
         with self.store.open() as db:
-            had = db.execute("select suffix from radios where account = ?",
-                             (account["id"],)).fetchall()
-            if len(had) >= RADIOS_AN_ACCOUNT:
-                return False, "An account has room for %d radios. Remove one first." % (
-                    RADIOS_AN_ACCOUNT)
-            if suffix in [row["suffix"] for row in had]:
-                return False, "You have a radio called %s already." % suffix
+            wrong = self.radio_refused(db, account["id"], suffix, cookie)
+            if wrong:
+                return False, wrong
             db.execute("insert into radios (account, suffix, cookie, client_password, created) "
                        "values (?, ?, ?, ?, ?)",
                        (account["id"], suffix, cookie, "", now()))
@@ -1682,6 +1769,12 @@ class Service:
             if found["cookie"] == cookie:
                 return False, ("That is the key it has. Tap RADIO_KEY on the radio and choose "
                                "NEW KEY first.")
+            holder = self.key_holder(db, cookie)
+            if holder is not None and holder["account"] == account["id"]:
+                return False, "Your radio %s has that key already." % radio_id(
+                    holder["callsign"], holder["suffix"])
+            if holder is not None:
+                return False, KEY_IN_USE
             db.execute("update radios set cookie = ? where id = ?", (cookie, radio))
         return True, ("%s has its new radio key. It will come on line within a quarter of a "
                       "minute; the old key is no longer taken."
@@ -1784,6 +1877,19 @@ def said(text, is_wrong=False):
     if not text:
         return ""
     return "<p class=\"%s\">%s</p>" % ("wrong" if is_wrong else "said", html.escape(text))
+
+
+def tick_boxes(callsign):
+    """the three boxes ticked before a radio is added, callsign already
+    made safe for the page"""
+    return "".join("<label class=\"tick\"><input type=\"checkbox\" name=\"%s\" "
+                   "required> %s</label>" % (name, words % callsign if "%s" in words
+                                             else words)
+                   for name, words in TICKS)
+
+
+def are_ticked(form):
+    return all(form.get(name, "") == "on" for name, _ in TICKS)
 
 
 def when(at):
@@ -1892,7 +1998,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<p>Operate your radio from a browser or a phone, and listen to the "
                 "radios that are on line now.</p>"
                 "<p><a class=\"action\" href=\"/signin\">Sign in</a> &nbsp; "
-                "<a href=\"/register\">Register your callsign</a> &nbsp;&middot;&nbsp; "
+                "<a href=\"/register\">Register and put your radio on line</a> &nbsp;&middot;&nbsp; "
                 "<a href=\"/map\">Listen on the map</a>, no account needed</p>"))
             return
         radios = self.service.radios(account["id"])
@@ -1950,7 +2056,8 @@ class Handler(BaseHTTPRequestHandler):
             "<li>Open <strong>SET</strong>. Check that <strong>MYCALLSIGN</strong> is "
             "<strong>%s</strong>, and set <strong>MYGRID</strong>, such as MK97fj, to be on "
             "the map.</li>"
-            "<li>Open <strong>CONNECTIONS</strong> and turn <strong>REMOTE</strong> on.</li>"
+            "<li>Open <strong>CONNECTIONS</strong> and turn <strong>REMOTE</strong> ON and "
+            "<strong>STREAMING</strong> ON.</li>"
             "<li><strong>RADIO_KEY</strong>, on the same screen, shows twelve letters. "
             "Type them below.</li>"
             "</ol>"
@@ -1962,12 +2069,13 @@ class Handler(BaseHTTPRequestHandler):
             "placeholder=\"abcd-jklm-wxyz\" required></label>"
             "<label>A name for the radio, such as home or shack <input type=\"text\" "
             "name=\"suffix\" value=\"%s\" maxlength=\"10\" autocomplete=\"off\" "
-            "autocapitalize=\"none\" required></label>"
+            "autocapitalize=\"none\" required></label>%s"
             "<button>Add the radio</button></form>"
             "<p class=\"small\">Within a quarter of a minute REMOTE_STATUS on the radio says "
             "ONLINE, and the radio is on your page, ready to operate. "
             "<a href=\"/help#cookie\">What is the radio key?</a></p>"
-            % (callsign, self.form_guard(self.session_secret()), html.escape(suffix))))
+            % (callsign, self.form_guard(self.session_secret()), html.escape(suffix),
+               tick_boxes(callsign))))
 
     def keys_page(self, account, number, told="", is_wrong=False):
         """a radio's Manage page: the two things seldom wanted, each under
@@ -2009,10 +2117,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, self.page("Help",
             "<h2>Help</h2>"
             "<h3 id=\"start\">Getting started</h3>"
-            "<ol class=\"steps\"><li><a href=\"/register\">Register</a> your callsign "
-            "and choose a password.</li>"
-            "<li><a href=\"/radios/add\">Add your radio</a>, with it switched on beside "
-            "you.</li>"
+            "<ol class=\"steps\"><li><a href=\"/register\">Register</a>, with your "
+            "radio switched on beside you: the form adds the radio too. Already "
+            "registered? <a href=\"/radios/add\">Add your radio</a>.</li>"
+            "<li>Open the link we mail you and choose a password.</li>"
             "<li>On your page, press <strong>Operate</strong> beside the radio.</li></ol>"
             "<h3 id=\"app\">Install it on your phone</h3>"
             "<p>Open your radio's Operate page, then:</p>"
@@ -2027,7 +2135,8 @@ class Handler(BaseHTTPRequestHandler):
             "stays signed in.</p>"
             "<h3 id=\"offline\">My radio is off line</h3>"
             "<p>On the radio, open SET, then CONNECTIONS:</p>"
-            "<ul><li><strong>REMOTE</strong> should be on.</li>"
+            "<ul><li><strong>REMOTE</strong> and <strong>STREAMING</strong> should be "
+            "ON.</li>"
             "<li><strong>REMOTE_STATUS</strong> should say ONLINE. If it says ADD RADIO_KEY "
             "AT MY.SBITX.NET, the radio has not been added here yet, or it was given a new "
             "key: add it, or type RADIO_KEY's letters on its Manage page. If it says SET "
@@ -2150,7 +2259,10 @@ class Handler(BaseHTTPRequestHandler):
             "<script src=\"%s\"></script>"
             % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), static_address("upgrade.js"))))
 
-    def register_form(self, told="", is_wrong=False, callsign="", email=""):
+    def register_form(self, told="", is_wrong=False, callsign="", email="", suffix="home"):
+        """registration and the owner's radio together, on one form: the
+        author's wizard of 2026-10-17. The radio is added when the link
+        mailed out is followed"""
         s = self.service.settings
         if s.registration == "closed":
             self.send(200, self.page("Register", "<p>Registration is not open yet.</p>"))
@@ -2161,7 +2273,27 @@ class Handler(BaseHTTPRequestHandler):
                       "autocomplete=\"off\" required></label>")
         challenge, signature = self.service.pow_challenge()
         self.send(200, self.page("Register", said(told, is_wrong)
-                            + "<form method=\"post\" action=\"/register\" "
+                            + "<h2>Put your radio on line</h2>"
+                            "<ul class=\"reasons\">"
+                            "<li>Operate it from anywhere, on any computer or phone.</li>"
+                            "<li>It is on the <a href=\"/map\">map</a>, where others "
+                            "click on it and listen to you.</li>"
+                            "<li>Have QSOs with others over Wi-Fi and the internet.</li>"
+                            "</ul>"
+                            "<p>Already registered? <a href=\"/signin\">Sign in</a> and "
+                            "add your radio.</p>"
+                            "<h3>First, on the radio</h3>"
+                            "<ol class=\"steps\">"
+                            "<li>Open <strong>SET</strong>. Set <strong>MYCALLSIGN</strong> "
+                            "to your callsign, and <strong>MYGRID</strong>, such as MK97fj, "
+                            "to be on the map.</li>"
+                            "<li>Open <strong>CONNECTIONS</strong> and turn "
+                            "<strong>REMOTE</strong> ON and <strong>STREAMING</strong> "
+                            "ON.</li>"
+                            "<li><strong>RADIO_KEY</strong>, on the same screen, shows "
+                            "twelve letters. Type them below.</li></ol>"
+                            "<h3>Then here</h3>"
+                            "<form method=\"post\" action=\"/register\" "
                             "data-pow-bits=\"%d\">"
                             "<input type=\"hidden\" name=\"pow_challenge\" value=\"%s\">"
                             "<input type=\"hidden\" name=\"pow_signature\" value=\"%s\">"
@@ -2173,11 +2305,23 @@ class Handler(BaseHTTPRequestHandler):
                             "<label>Callsign <input type=\"text\" name=\"callsign\" value=\"%s\" "
                             "maxlength=\"10\" autocapitalize=\"characters\" required></label>"
                             "<label>Email address <input type=\"email\" name=\"email\" "
-                            "value=\"%s\" required></label>%s"
-                            "<button>Register</button></form>"
-                            "<p>We mail a link to the address; there you choose a password.</p>"
+                            "value=\"%s\" required></label>"
+                            "<label>The radio key, the twelve letters of RADIO_KEY "
+                            "<input type=\"text\" name=\"cookie\" class=\"code\" "
+                            "maxlength=\"20\" autocomplete=\"off\" autocapitalize=\"none\" "
+                            "autocorrect=\"off\" spellcheck=\"false\" "
+                            "placeholder=\"abcd-jklm-wxyz\" required></label>"
+                            "<label>A name for the radio, such as home or shack "
+                            "<input type=\"text\" name=\"suffix\" value=\"%s\" "
+                            "maxlength=\"10\" autocomplete=\"off\" autocapitalize=\"none\" "
+                            "required></label>%s%s"
+                            "<button>Register and add the radio</button></form>"
+                            "<p>We mail a link to the address. Open it and choose a "
+                            "password: your radio is added then, and comes on line within "
+                            "a quarter of a minute.</p>"
                             "<script src=\"/pow.js\"></script>"
-                            % (html.escape(callsign), html.escape(email), invite)))
+                            % (html.escape(callsign), html.escape(email), html.escape(suffix),
+                               invite, tick_boxes("my callsign"))))
 
     def signin_form(self, told="", is_wrong=False, callsign=""):
         self.send(200, self.page("Sign in", said(told, is_wrong)
@@ -2342,7 +2486,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, file.read(), STATIC[name],
                           keep="public, max-age=86400" if name == "land.json" else "no-cache")
         elif url.path == "/":
-            self.home(account)
+            if account is not None and query.get("key") == ["in-use"]:
+                self.home(account, KEY_IN_USE, True)
+            else:
+                self.home(account)
         elif url.path == "/register":
             self.register_form()
         elif url.path == "/signin":
@@ -2386,12 +2533,16 @@ class Handler(BaseHTTPRequestHandler):
         account = self.service.session_account(secret)
 
         if url.path == "/register":
-            if self.service.is_pow_done(form.get("pow_challenge", ""),
-                                        form.get("pow_signature", ""),
-                                        form.get("pow_answer", "")):
+            if form.get("cookie", "").strip() and not are_ticked(form):
+                ok, told = False, NOT_TICKED
+            elif self.service.is_pow_done(form.get("pow_challenge", ""),
+                                          form.get("pow_signature", ""),
+                                          form.get("pow_answer", "")):
                 ok, told = self.service.register(form.get("callsign", ""),
                                                  form.get("email", ""),
-                                                 form.get("invite", ""), self.address())
+                                                 form.get("invite", ""), self.address(),
+                                                 form.get("suffix", ""),
+                                                 form.get("cookie", ""))
             else:
                 ok, told = False, ("The form sat too long or was sent before the browser "
                                    "had finished its work. Wait for the button and send "
@@ -2399,7 +2550,8 @@ class Handler(BaseHTTPRequestHandler):
             if ok:
                 self.send(200, self.page("Register", said(told)))
             else:
-                self.register_form(told, True, form.get("callsign", ""), form.get("email", ""))
+                self.register_form(told, True, form.get("callsign", ""), form.get("email", ""),
+                                   form.get("suffix", "home"))
         elif url.path == "/signin":
             is_remembered = form.get("remember", "") == "on"
             secret, told = self.service.sign_in(form.get("callsign", ""),
@@ -2420,7 +2572,11 @@ class Handler(BaseHTTPRequestHandler):
             if secret is None:
                 self.password_form(form.get("t", ""), told, True)
             else:
-                self.redirect("/", [self.session_cookie(secret)])
+                # the radio from the registration form was not added, which
+                # for an account with no radios yet is only for its key being
+                # in use: the home page says so, and offers Add Radio
+                where = "/?key=in-use" if told else "/"
+                self.redirect(where, [self.session_cookie(secret)])
         elif account is None:
             self.signin_form("Sign in first.")
         elif not hmac.compare_digest(form.get("guard", ""), self.form_guard(secret)):
@@ -2429,8 +2585,10 @@ class Handler(BaseHTTPRequestHandler):
             self.service.sign_out(secret)
             self.redirect("/", [self.session_cookie("", 0)])
         elif url.path == "/radios/add":
-            ok, told = self.service.radio_add(account, form.get("suffix", ""),
-                                              form.get("cookie", ""))
+            ok, told = False, NOT_TICKED
+            if are_ticked(form):
+                ok, told = self.service.radio_add(account, form.get("suffix", ""),
+                                                  form.get("cookie", ""))
             if ok:
                 self.home(account, told)
             else:

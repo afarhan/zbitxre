@@ -296,7 +296,10 @@ class ServiceTest(unittest.TestCase):
                        (callsign, callsign.lower() + "@example.org"))
             account = db.execute("select * from accounts where callsign = ?",
                                  (callsign,)).fetchone()
-        cookie = "abcdefghjkmn"
+        # each radio has a key of its own: the service refuses one in use
+        letters = self.accounts.SECRET_LETTERS
+        cookie = "".join(letters[(ord(c) * 7 + i) % len(letters)]
+                         for i, c in enumerate((callsign * 12)[:12]))
         ok, told = service.radio_add(account, "home", cookie)
         self.assertTrue(ok, told)
         return cookie

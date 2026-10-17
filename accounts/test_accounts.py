@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import accounts
 
 PASSWORD = "correct horse battery"
+TICKED = {name: "on" for name, _ in accounts.TICKS}
 INVITE = "test-group"
 
 
@@ -93,15 +94,19 @@ class Browser:
     def hidden(self, text, name):
         return re.search(r'name="%s" value="([^"]*)"' % name, text).group(1)
 
-    def register(self, callsign, email, invite=INVITE):
+    def register(self, callsign, email, invite=INVITE, radio=None):
+        """radio, a dict of what the form says of it: suffix, cookie, and the
+        ticks"""
         _, text = self.get("/register")
         challenge = self.hidden(text, "pow_challenge")
-        return self.post("/register", {
+        form = {
             "callsign": callsign, "email": email, "invite": invite,
             "pow_challenge": challenge,
             "pow_signature": self.hidden(text, "pow_signature"),
             "pow_answer": solve(challenge, 8),
-        })
+        }
+        form.update(radio or {})
+        return self.post("/register", form)
 
 
 class AccountsTest(unittest.TestCase):
@@ -141,10 +146,88 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("Signed in as <strong>%s</strong>" % callsign, text)
         return browser
 
-    def add_radio(self, browser, suffix="home", cookie="abcd-efgh-jkmn"):
+    def add_radio(self, browser, suffix="home", cookie="abcd-efgh-jkmn", ticked=True):
         _, text = browser.get("/")
-        return browser.post("/radios/add", {"guard": browser.hidden(text, "guard"),
-                                            "suffix": suffix, "cookie": cookie})[1]
+        form = {"guard": browser.hidden(text, "guard"), "suffix": suffix, "cookie": cookie}
+        form.update(TICKED if ticked else {})
+        return browser.post("/radios/add", form)[1]
+
+    def follow_link(self, browser):
+        return browser.post("/password", {"t": self.mail.last_link(),
+                                          "password": PASSWORD, "again": PASSWORD})[1]
+
+    # registering with the radio, on one form
+
+    def test_the_registration_form_says_why_and_adds_the_radio(self):
+        _, text = self.browser.get("/register")
+        self.assertIn("Put your radio on line", text)
+        self.assertIn("on the map", text)
+        self.assertIn("QSOs with others", text)
+        for name, _ in accounts.TICKS:
+            self.assertRegex(text, r'name="%s" required' % name)
+        self.assertIn("STREAMING</strong> ON", text)
+        radio = dict(TICKED, suffix="Home", cookie="abcd-efgh-jkmn")
+        _, text = self.browser.register("VU2ESE", "farhan@example.org", radio=radio)
+        self.assertIn("your radio is added", text)
+        # nothing is added until the address is confirmed
+        self.assertEqual(self.service.radios_of("VU2ESE"), [])
+        text = self.follow_link(self.browser)
+        self.assertIn("Signed in as <strong>VU2ESE</strong>", text)
+        self.assertIn("vu2ese-home", text)
+        self.assertEqual(self.service.radio_called("vu2ese-home")["cookie"], "abcdefghjkmn")
+
+    def test_the_boxes_must_be_ticked(self):
+        radio = dict(suffix="home", cookie="abcd-efgh-jkmn", tick_remote="on")
+        _, text = self.browser.register("VU2ESE", "farhan@example.org", radio=radio)
+        self.assertIn(accounts.NOT_TICKED, text)
+        self.assertIn("value=\"VU2ESE\"", text)
+        self.assertEqual(self.mail.sent, [])
+        browser = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        _, text = browser.get("/radios/add")
+        self.assertIn("MYCALLSIGN on the radio is VU2XYZ", text)
+        self.assertIn(accounts.NOT_TICKED, self.add_radio(browser, ticked=False))
+        self.assertEqual(self.service.radios_of("VU2XYZ"), [])
+
+    def test_a_key_in_use_is_refused_and_a_new_one_asked_for(self):
+        first = self.make_account()
+        self.add_radio(first, "home", "abcd-efgh-jkmn")
+        # at Add Radio, by another account
+        other = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
+        text = self.add_radio(other, "home", "ABCD EFGH JKMN")
+        self.assertIn("already in use", text)
+        self.assertIn("NEW KEY", text)
+        self.assertNotIn("VU2ESE", text.split("</nav>")[1])
+        # by the same account, under another name
+        self.assertIn("Your radio vu2ese-home has that key already",
+                      self.add_radio(first, "shack", "abcd-efgh-jkmn"))
+        # as a new key on the Manage page
+        self.add_radio(other, "home", "pqrs-tuvw-xyza")
+        radio = self.service.radio_called("vu2xyz-home")
+        _, page = other.get("/radios/manage?radio=%d" % radio["id"])
+        _, text = other.post("/radios/cookie", {"guard": other.hidden(page, "guard"),
+                                                "radio": radio["id"],
+                                                "cookie": "abcd-efgh-jkmn"})
+        self.assertIn("already in use", text)
+        self.assertEqual(self.service.radio_called("vu2xyz-home")["cookie"], "pqrstuvwxyza")
+        # on the registration form, before anything is mailed
+        sent = len(self.mail.sent)
+        radio = dict(TICKED, suffix="home", cookie="abcd-efgh-jkmn")
+        _, text = Browser(self.port).register("VU3AAA", "a@example.org", radio=radio)
+        self.assertIn("already in use", text)
+        self.assertEqual(len(self.mail.sent), sent)
+
+    def test_a_key_taken_before_the_link_is_followed_is_not_added(self):
+        browser = Browser(self.port)
+        radio = dict(TICKED, suffix="home", cookie="abcd-efgh-jkmn")
+        browser.register("VU3AAA", "a@example.org", radio=radio)
+        link = self.mail.last_link()
+        self.add_radio(self.make_account(), "home", "abcd-efgh-jkmn")
+        _, text = browser.post("/password", {"t": link, "password": PASSWORD,
+                                             "again": PASSWORD})
+        self.assertIn("Signed in as <strong>VU3AAA</strong>", text)
+        self.assertIn("already in use", text)
+        self.assertIn("href=\"/radios/add\"", text)
+        self.assertEqual(self.service.radios_of("VU3AAA"), [])
 
     # registering
 
@@ -433,13 +516,14 @@ class AccountsTest(unittest.TestCase):
 
     def test_a_name_is_used_once_and_there_is_room_for_five(self):
         browser = self.make_account()
+        # each a radio of its own, with a key of its own
         for suffix in ("a", "b", "c", "d", "e"):
-            self.assertIn("is added", self.add_radio(browser, suffix))
-        self.assertIn("room for 5 radios", self.add_radio(browser, "f"))
+            self.assertIn("is added", self.add_radio(browser, suffix, "abcd-efgh-jkm" + suffix))
+        self.assertIn("room for 5 radios", self.add_radio(browser, "f", "abcd-efgh-jkmf"))
         self.assertEqual(len(self.service.radios_of("VU2ESE")), 5)
         other = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
-        self.add_radio(other, "home")
-        self.assertIn("called home already", self.add_radio(other, "home"))
+        self.add_radio(other, "home", "pqrs-tuvw-xyza")
+        self.assertIn("called home already", self.add_radio(other, "home", "pqrs-tuvw-xyzb"))
 
     def test_the_accounts_client_key_follows_its_password(self):
         """what the owner's programs sign in with is the account's password
