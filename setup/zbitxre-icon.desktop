@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=zbitxre
+Comment=Opens the radio's window, and starts the radio if it is not running
+Exec=/home/pi/zbitxre/setup/open.sh
+Icon=/home/pi/zbitxre/setup/zbitxre.png
+Terminal=false
+Categories=Network;HamRadio;

@@ -16,7 +16,8 @@
 say() { echo "zbitxre: $*"; }
 
 autostart=$HOME/.config/autostart
-rm -f "$autostart/zbitxre.desktop"
+rm -f "$autostart/zbitxre.desktop" "$HOME/Desktop/zbitxre.desktop" \
+	"$HOME/.local/share/applications/zbitxre.desktop"
 for kept in "$autostart"/*.desktop.disabled; do
 	[ -f "$kept" ] || continue
 	mv "$kept" "${kept%.disabled}"

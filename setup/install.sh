@@ -44,7 +44,8 @@
 #     came through broken. Which were turned off is kept, for
 #     undo_install.sh to turn back on for the old program's panel.
 #  7. Starts zbitxre with the desktop in place of the old program, whose
-#     start file is renamed and kept.
+#     start file is renamed and kept, and puts the zbitxre icon on the
+#     desktop and in the menu, to open the window again (desktop_icon.sh).
 #  8. Asks whether to put the radio on my.sbitx.net. If so, it asks for the
 #     callsign and the grid when the old settings had none, turns REMOTE on,
 #     makes the radio's key, and prints the address that adds the radio
@@ -260,6 +261,7 @@ for old in "$HOME"/.config/autostart/*.desktop; do
 	fi
 done
 sed "s|/home/pi/zbitxre|$DEST|" setup/zbitxre.desktop > "$HOME/.config/autostart/zbitxre.desktop"
+setup/desktop_icon.sh
 
 # 8. my.sbitx.net
 setting() { sed -n "s/^$1=//p" data/user_settings.ini 2>/dev/null | tail -1; }

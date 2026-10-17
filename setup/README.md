@@ -215,6 +215,16 @@ To stop zbitxre starting by itself, rename the entry to
 
 On the sbitx it was put in on 8 October 2026.
 
+### The icon
+
+The **zbitxre** icon, on the desktop and in the menu among the Internet
+programs, opens the window again once it has been closed: `open.sh` starts
+the window if it is not there, and when the radio program is not running
+either, runs `start.sh` in a terminal as at login. `desktop_icon.sh` puts
+the icon where it is missing; `install.sh` runs it, and so does every
+update, so a radio set up before there was an icon has one after its next
+update. The picture is `zbitxre.png`, the website's.
+
 ## Updating a radio from GitHub
 
 A radio is brought up to GitHub's main from SET, by Update: the radio runs

@@ -128,6 +128,9 @@ else
 	say "fetched $after"
 	git log --oneline "$before..$after" | sed 's/^/    /'
 fi
+# a radio set up before there was an icon on the desktop is given one,
+# whatever else the update finds to do
+setup/desktop_icon.sh > /dev/null
 built=$(cat "$BUILT_FROM" 2>/dev/null)
 if [ "$if_new" = 1 ] && [ "$built" = "$after" ]; then
 	done_with "already up to date, at $after"
