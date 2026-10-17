@@ -719,6 +719,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define UPDATE_CONTROL "UPDATE"
 #define UPDATE_STATUS_CONTROL "UPDATE_STATUS"
 #define CALLSIGN_CONTROL "MYCALLSIGN"
+// what the sbitx's control knob changes while the frequency is selected
+#define VOLUME_CONTROL "AUDIO"
 #define WINDOW_NAME "zbitx"
 #define TITLE_MAX 160
 #define PAGE_MAIN "main"
@@ -2428,6 +2430,7 @@ static gboolean on_frequency_click(GtkWidget *widget, GdkEventButton *event, gpo
 }
 
 static void turn_selected(int up, int down);
+static int row_of(const char *control);
 static void act_on_row(int index);
 
 // the wheel over a control turns, as the knob does; a wheel that scrolls
@@ -3932,14 +3935,18 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 	return TRUE;
 }
 
-static int has_row(const char *control) {
+static int row_of(const char *control) {
 	int i;
 
 	for (i = 0; i < row_count; i++) {
 		if (!strcmp(rows[i].control, control))
-			return 1;
+			return i;
 	}
-	return 0;
+	return NOT_FOUND;
+}
+
+static int has_row(const char *control) {
+	return row_of(control) != NOT_FOUND;
 }
 
 static void place(const struct placed *it) {
