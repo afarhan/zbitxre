@@ -476,7 +476,11 @@ static void confirm_create(){
 	lv_obj_t *box;
 	int buttons_top = CONFIRM_HEIGHT - CONFIRM_BUTTON_HEIGHT - 2 * PAD;
 
-	confirm_layer = lv_obj_create(lv_layer_top());
+	// on the active screen, with the panel's screens, and brought in front
+	// of them when it is shown: on LVGL's top layer it was made and never
+	// painted, on 16 October 2026, until something else repainted the
+	// whole screen
+	confirm_layer = lv_obj_create(lv_screen_active());
 	lv_obj_remove_style_all(confirm_layer);
 	lv_obj_set_size(confirm_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
 	lv_obj_align(confirm_layer, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -510,6 +514,7 @@ static void confirm_ask(const char *question, const char *detail, const char *ye
 	confirm_done = done;
 	confirm_is_on_yes = false;
 	confirm_show();
+	lv_obj_move_foreground(confirm_layer);
 	lv_obj_remove_flag(confirm_layer, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1970,7 +1975,8 @@ static void update_create(){
 	lv_obj_t *box;
 	lv_obj_t *title;
 
-	update_layer = lv_obj_create(lv_layer_top());
+	// on the active screen, as the question box is, and for its reason
+	update_layer = lv_obj_create(lv_screen_active());
 	lv_obj_remove_style_all(update_layer);
 	lv_obj_set_size(update_layer, SCREEN_WIDTH, SCREEN_HEIGHT);
 	lv_obj_align(update_layer, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -2031,6 +2037,7 @@ void screens_update_status(const char *text){
 		update_is_cancelling = false;
 		lv_label_set_text(update_outcome_label, "");
 		waterfall_set_painting(false);
+		lv_obj_move_foreground(update_layer);
 		lv_obj_remove_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
 	}
 	if (is_done)
