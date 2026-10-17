@@ -363,8 +363,12 @@
 // The sbitx has two knobs on its front, wired to the Pi it runs this window
 // on, and the window reads them, as zbitxv2's window did. One tunes and
 // does nothing else: a notch is a turn of the wheel on the frequency,
-// whatever is selected. The other works the lists, as SELECTING, TURNING
-// AND PRESSING below says. The tuning knob's button does nothing yet.
+// whatever is selected. The other, on the main screen, changes the
+// selected control, the volume while the frequency is selected, and its
+// button moves to the next control, as it always did; in SET and
+// CONNECTIONS it steps through the rows and its button acts, as SELECTING,
+// TURNING AND PRESSING below says. The tuning knob's button does nothing
+// yet.
 //
 // The knobs are the window's alone. The radio program, which runs with no
 // screen, knows nothing of them and has none of this in it. All the window
@@ -402,8 +406,9 @@
 // tap acted on what it selected, and the wheel changed the value of
 // whatever row it was over, so that trying to scroll a list changed it.
 //
-// Turning is the control knob on an sbitx, the mouse's wheel, or the
-// arrow keys; pressing is the knob's button, the mouse's middle button,
+// Turning is the mouse's wheel or the arrow keys, and the sbitx's control
+// knob in SET and CONNECTIONS; pressing is that knob's button there, the
+// mouse's middle button,
 // Enter, or a second tap on the row, a double tap. A press on a choice
 // takes it to its next; on a number it starts changing it, the row edged
 // in green, turning then changing the value until a press or a tap ends
@@ -3424,10 +3429,31 @@ static gboolean take_up_knobs(gpointer unused) {
 		}
 		return G_SOURCE_CONTINUE;
 	}
-	if (turned != 0)
-		turn_selected(turned, turned);
-	for (; pressed > 0; pressed--)
-		press_selected();
+	// in SET and CONNECTIONS turning steps through the rows and a press acts
+	if (shown_page_list() != NULL) {
+		if (turned != 0)
+			turn_selected(turned, turned);
+		for (; pressed > 0; pressed--)
+			press_selected();
+		return G_SOURCE_CONTINUE;
+	}
+	// on the main screen the sbitx's knob works as it always has, which the
+	// author found had gone wrong on 17 October 2026, when it was made to
+	// select and press as the wheel does: turning changes the selected
+	// control, the volume while the frequency is selected, and a press
+	// moves to the next control, or answers a marked FT8 message
+	if (turned != 0) {
+		int row = focus == ON_FREQUENCY ? row_of(VOLUME_CONTROL) : focus;
+
+		if (row != NOT_FOUND)
+			step_row(row, turned);
+	}
+	for (; pressed > 0; pressed--) {
+		if (marked_message != NULL)
+			answer_marked();
+		else
+			move_focus(1);
+	}
 	return G_SOURCE_CONTINUE;
 }
 
