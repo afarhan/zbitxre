@@ -1,11 +1,57 @@
 # accounts: logins for sbitx and zbitx owners
 
-The service behind `https://my.sbitx.net`. An owner registers a callsign with
-an email address, confirms the address through a mailed link, and chooses a
-password. Signed in, they add their radios, five at most, each by a name and
-the cookie the radio shows in its settings; the radio is then `vu2ese-home`.
-Beside each radio the site shows its client password, which with the radio's
-name is what a client is given to reach the radio from afar.
+The service behind `https://my.sbitx.net`. It puts an owner's radio on line,
+so that they can operate it from anywhere, on any computer or phone; it is on
+the map, where others click on it and listen; and its owner can have QSOs
+with others over the internet, VoIP, where the dial is the room.
+
+## Putting a radio on line
+
+One form does it, `/register`, with the radio switched on beside the owner.
+It asks for:
+
+1. the callsign and an email address, and the invitation code while
+   registration is by invitation;
+2. three boxes ticked, each a check on the radio. On the radio, tap **SET**:
+   - **Callsign is set to your callsign entered above** (MYCALLSIGN; MYGRID
+     too, to be on the map);
+
+   then tap **CONNECTIONS** and turn on **REMOTE** and **STREAMING**:
+   - **Confirmed that REMOTE is ON**
+   - **Confirmed that STREAMING is ON**
+3. the radio key: the twelve letters RADIO_KEY shows, at the top of
+   CONNECTIONS, `abcd-jklm-wxyz`; and a name for the radio, `home` unless
+   changed.
+
+The boxes are there because people do not read steps, and a radio whose
+callsign is not the account's, or whose REMOTE is off, never comes on line.
+The radio signs in with the callsign set on it and its key. REMOTE and
+STREAMING start ON on a radio that has never had them set.
+
+A link is mailed to the address. Following it, the owner chooses a password,
+the radio is added, and they are signed in. Their page waits for the radio,
+looking again every five seconds; it comes on line within a quarter of a
+minute and is then `vu2ese-home`, with **Operate** beside it. If two minutes
+go by and it has not come, the page says what to check on the radio.
+
+An owner already registered signs in and uses **Add Radio**, which asks for
+the same three boxes, the key and a name. An account has room for five
+radios.
+
+**A key already in use** at my.sbitx.net is refused, on the form, when the
+link is followed, at Add Radio and on a radio's Manage page: "That radio key
+is already in use on my.sbitx.net. On the radio, tap RADIO_KEY, choose NEW
+KEY, and type the new twelve letters here." Whose radio has it is not said.
+A key seen twice is a copied card, or a radio sold and not removed.
+
+The form asks the browser for a little work before it is sent, a proof of
+work, to keep spammers out; it needs scripts turned on.
+
+A program on another computer, the window started as `zbitx_gui remote
+vu2ese-home` among them, signs in to the owner's radios with the account's
+callsign and password.
+
+## The programs
 
 There are two programs, and each one's header says how it works:
 
@@ -67,15 +113,14 @@ and likewise `show CALLSIGN`, `suspend`, `restore`, `set-email CALLSIGN EMAIL`,
 
 Neither asks the website anything. The radio's daemon,
 `clients/remote/zbitx_remote`, and a client both connect to `remote.py` on
-port 8081 and answer its challenge, the radio with its cookie and a client
-with the radio's client password. `PROTOCOL.md` has every line of it, and
+port 8081 and answer its challenge, the radio with its key and a client with
+the account's password. `PROTOCOL.md` has every line of it, and
 `remote_client.py` is a client in a page:
 
     python3 accounts/remote_client.py vu2ese-home
 
 ## Not built yet
 
-Payment; a page for customer service; reaching a radio from the GTK window
-(only `remote_client.py` does it yet); sound; the whole logbook, of which the
+Payment; a page for customer service; the whole logbook, of which the
 radio's protocol gives the newest hundred entries; putting a kept copy of the
 settings back into a radio.

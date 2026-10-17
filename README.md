@@ -115,6 +115,23 @@ step, as the radio's knob would:
     make gui
     ./zbitx_gui 192.168.1.76
 
+## Putting the radio on line
+
+At [my.sbitx.net](https://my.sbitx.net) an owner registers and adds their
+radio on one form, `/register`, with the radio beside them: the callsign and
+an email address, three boxes ticked as checks on the radio (MYCALLSIGN is
+theirs, REMOTE is ON, STREAMING is ON), and the twelve letters RADIO_KEY
+shows at the top of the radio's CONNECTIONS. The radio is added when the
+mailed link is followed and a password chosen, and comes on line within a
+quarter of a minute. Then it can be operated from a browser or a phone, is
+on the map for others to listen to, and is reached over VoIP. A key that
+another radio there has already is refused, and the owner taps RADIO_KEY
+for NEW KEY. `accounts/README.md` says it all.
+
+VoIP's switches are in the list of the mode VOIP: **VOIP**, ONLINE to be in
+the room the dial is in, and **BREAK_IN**, ON unless turned off, for others'
+speech to be heard in every mode and not in VOIP alone.
+
 ## The front panel
 
 The zbitx's front panel is a Raspberry Pi Pico W with a touch screen and a

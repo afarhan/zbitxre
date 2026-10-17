@@ -207,11 +207,15 @@ it, and is known by the callsign with that after it: `vu2ese-home`,
 
 **The cookie** is the radio's own. The radio makes it, the first time remote
 access is turned on, and shows it among its settings. The owner, signed in at
-the website, adds a radio by giving it a name and typing the cookie. Nothing is
-typed on the radio, and no file on it is edited: the author's design, a zbitx
-having no keyboard. The radio answers the service's challenge with the cookie
-from then on, and no longer shows it. It is twelve letters written in fours,
-`abcd-jklm-wxyz`.
+the website, adds a radio by giving it a name and typing the cookie, shown as
+RADIO_KEY, the first of the radio's CONNECTIONS; a new owner does it on the
+registration form itself, and the radio is added when the mailed link is
+followed. Nothing is typed on the radio, and no file on it is edited: the
+author's design, a zbitx having no keyboard. The radio answers the service's
+challenge with the cookie from then on. It is twelve letters written in fours,
+`abcd-jklm-wxyz`. No two radios at my.sbitx.net may have the same cookie: one
+already in use is refused, and the owner makes the radio a new one, NEW KEY
+on a tap of RADIO_KEY.
 
 **The owner's password**, the account's, the one the website is signed in
 with, is what a client on another computer answers with, the window started
