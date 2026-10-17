@@ -165,7 +165,7 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("QSOs with others", text)
         for name, _ in accounts.TICKS:
             self.assertRegex(text, r'name="%s" required' % name)
-        self.assertIn("STREAMING</strong> ON", text)
+        self.assertIn("Callsign is set to your callsign entered above", text)
         radio = dict(TICKED, suffix="Home", cookie="abcd-efgh-jkmn")
         _, text = self.browser.register("VU2ESE", "farhan@example.org", radio=radio)
         self.assertIn("your radio is added", text)
@@ -184,7 +184,7 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(self.mail.sent, [])
         browser = self.make_account("VU2XYZ", "xyz@example.org", Browser(self.port))
         _, text = browser.get("/radios/add")
-        self.assertIn("MYCALLSIGN on the radio is VU2XYZ", text)
+        self.assertIn("Callsign is set to <strong>VU2XYZ</strong>", text)
         self.assertIn(accounts.NOT_TICKED, self.add_radio(browser, ticked=False))
         self.assertEqual(self.service.radios_of("VU2XYZ"), [])
 
@@ -474,7 +474,7 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("Three steps to operate your radio", text)
         self.assertIn("<a class=\"action\" href=\"/radios/add\">Add Radio</a>", text)
         _, text = browser.get("/radios/add")
-        self.assertIn("MYCALLSIGN</strong> is <strong>VU2ESE", text)
+        self.assertIn("Callsign is set to <strong>VU2ESE</strong>", text)
         self.assertIn("action=\"/radios/add\"", text)
         # a mistake is shown on the same page, with the name kept
         text = self.add_radio(browser, "shack", "abcd")

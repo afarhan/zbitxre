@@ -274,9 +274,9 @@ STRETCH_ROUNDS = 50000
 # steps, and a radio added with REMOTE or STREAMING off is not seen on line.
 # The radio signs in with the callsign set on it, so MYCALLSIGN has to be
 # the account's
-TICKS = (("tick_callsign", "MYCALLSIGN on the radio is %s"),
-         ("tick_remote", "REMOTE is ON"),
-         ("tick_streaming", "STREAMING is ON"))
+TICKS = (("tick_callsign", "Callsign is set to %s"),
+         ("tick_remote", "Confirmed that REMOTE is ON"),
+         ("tick_streaming", "Confirmed that STREAMING is ON"))
 NOT_TICKED = "Tick the three boxes once the radio is set that way."
 # a key that another radio here has already: the two cannot both be
 # trusted, and a key seen twice is a copied card or a radio sold and not
@@ -1163,6 +1163,8 @@ a.action { background: #10181f; color: #fff; padding: 0.45em 1em; border-radius:
 .steps li { margin-bottom: 0.5em; }
 .command { font-family: monospace; }
 .tick { display: flex; align-items: center; gap: 0.5em; }
+p.on-radio { margin: 1.4em 0 0; }
+form .small { margin-top: 0.3em; }
 button.danger { background: #fbeeee; border: 1px solid #c33; color: #a22; }
 h1 { font-size: 1.5em; }
 h1 a { color: inherit; text-decoration: none; }
@@ -1879,13 +1881,32 @@ def said(text, is_wrong=False):
     return "<p class=\"%s\">%s</p>" % ("wrong" if is_wrong else "said", html.escape(text))
 
 
-def tick_boxes(callsign):
-    """the three boxes ticked before a radio is added, callsign already
-    made safe for the page"""
-    return "".join("<label class=\"tick\"><input type=\"checkbox\" name=\"%s\" "
-                   "required> %s</label>" % (name, words % callsign if "%s" in words
-                                             else words)
-                   for name, words in TICKS)
+def tick_box(name, words):
+    return ("<label class=\"tick\"><input type=\"checkbox\" name=\"%s\" required> "
+            "%s</label>" % (name, words))
+
+
+def radio_part(callsign, suffix):
+    """the part of a form that adds a radio: what to check on it, ticked
+    one by one in the author's words of 2026-10-17, then its key and a
+    name. The callsign is already made safe for the page"""
+    return ("<p class=\"on-radio\">On your sBitx or zBitx, tap <strong>SET</strong> and "
+            "check the following:</p>"
+            + tick_box(TICKS[0][0], TICKS[0][1] % callsign)
+            + "<p class=\"small\">Set <strong>MYGRID</strong> too, such as MK97fj, to be "
+            "on the map.</p>"
+            "<p class=\"on-radio\">Tap <strong>CONNECTIONS</strong> and turn on "
+            "<strong>REMOTE</strong> and <strong>STREAMING</strong>:</p>"
+            + tick_box(*TICKS[1]) + tick_box(*TICKS[2])
+            + "<p class=\"on-radio\"><strong>RADIO_KEY</strong>, at the top of CONNECTIONS, "
+            "shows twelve letters.</p>"
+            "<label>The radio key <input type=\"text\" name=\"cookie\" class=\"code\" "
+            "maxlength=\"20\" autocomplete=\"off\" autocapitalize=\"none\" "
+            "autocorrect=\"off\" spellcheck=\"false\" placeholder=\"abcd-jklm-wxyz\" "
+            "required></label>"
+            "<label>A name for the radio, such as home or shack <input type=\"text\" "
+            "name=\"suffix\" value=\"%s\" maxlength=\"10\" autocomplete=\"off\" "
+            "autocapitalize=\"none\" required></label>" % html.escape(suffix))
 
 
 def are_ticked(form):
@@ -2051,31 +2072,15 @@ class Handler(BaseHTTPRequestHandler):
         callsign = html.escape(account["callsign"])
         self.send(200, self.page("Add Radio", said(told, is_wrong)
             + "<p><a href=\"/\">&larr; Your radios</a></p><h2>Add your radio</h2>"
-            "<p>Have the radio switched on beside you. On the radio:</p>"
-            "<ol class=\"steps\">"
-            "<li>Open <strong>SET</strong>. Check that <strong>MYCALLSIGN</strong> is "
-            "<strong>%s</strong>, and set <strong>MYGRID</strong>, such as MK97fj, to be on "
-            "the map.</li>"
-            "<li>Open <strong>CONNECTIONS</strong> and turn <strong>REMOTE</strong> ON and "
-            "<strong>STREAMING</strong> ON.</li>"
-            "<li><strong>RADIO_KEY</strong>, on the same screen, shows twelve letters. "
-            "Type them below.</li>"
-            "</ol>"
+            "<p>Have the radio switched on beside you.</p>"
             "<form method=\"post\" action=\"/radios/add\">"
-            "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
-            "<label>The radio key, the twelve letters of RADIO_KEY <input type=\"text\" name=\"cookie\" "
-            "class=\"code\" maxlength=\"20\" autocomplete=\"off\" "
-            "autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\" "
-            "placeholder=\"abcd-jklm-wxyz\" required></label>"
-            "<label>A name for the radio, such as home or shack <input type=\"text\" "
-            "name=\"suffix\" value=\"%s\" maxlength=\"10\" autocomplete=\"off\" "
-            "autocapitalize=\"none\" required></label>%s"
+            "<input type=\"hidden\" name=\"guard\" value=\"%s\">%s"
             "<button>Add the radio</button></form>"
             "<p class=\"small\">Within a quarter of a minute REMOTE_STATUS on the radio says "
             "ONLINE, and the radio is on your page, ready to operate. "
             "<a href=\"/help#cookie\">What is the radio key?</a></p>"
-            % (callsign, self.form_guard(self.session_secret()), html.escape(suffix),
-               tick_boxes(callsign))))
+            % (self.form_guard(self.session_secret()),
+               radio_part("<strong>%s</strong>" % callsign, suffix))))
 
     def keys_page(self, account, number, told="", is_wrong=False):
         """a radio's Manage page: the two things seldom wanted, each under
@@ -2282,17 +2287,7 @@ class Handler(BaseHTTPRequestHandler):
                             "</ul>"
                             "<p>Already registered? <a href=\"/signin\">Sign in</a> and "
                             "add your radio.</p>"
-                            "<h3>First, on the radio</h3>"
-                            "<ol class=\"steps\">"
-                            "<li>Open <strong>SET</strong>. Set <strong>MYCALLSIGN</strong> "
-                            "to your callsign, and <strong>MYGRID</strong>, such as MK97fj, "
-                            "to be on the map.</li>"
-                            "<li>Open <strong>CONNECTIONS</strong> and turn "
-                            "<strong>REMOTE</strong> ON and <strong>STREAMING</strong> "
-                            "ON.</li>"
-                            "<li><strong>RADIO_KEY</strong>, on the same screen, shows "
-                            "twelve letters. Type them below.</li></ol>"
-                            "<h3>Then here</h3>"
+                            "<p>Have the radio switched on beside you.</p>"
                             "<form method=\"post\" action=\"/register\" "
                             "data-pow-bits=\"%d\">"
                             "<input type=\"hidden\" name=\"pow_challenge\" value=\"%s\">"
@@ -2305,23 +2300,14 @@ class Handler(BaseHTTPRequestHandler):
                             "<label>Callsign <input type=\"text\" name=\"callsign\" value=\"%s\" "
                             "maxlength=\"10\" autocapitalize=\"characters\" required></label>"
                             "<label>Email address <input type=\"email\" name=\"email\" "
-                            "value=\"%s\" required></label>"
-                            "<label>The radio key, the twelve letters of RADIO_KEY "
-                            "<input type=\"text\" name=\"cookie\" class=\"code\" "
-                            "maxlength=\"20\" autocomplete=\"off\" autocapitalize=\"none\" "
-                            "autocorrect=\"off\" spellcheck=\"false\" "
-                            "placeholder=\"abcd-jklm-wxyz\" required></label>"
-                            "<label>A name for the radio, such as home or shack "
-                            "<input type=\"text\" name=\"suffix\" value=\"%s\" "
-                            "maxlength=\"10\" autocomplete=\"off\" autocapitalize=\"none\" "
-                            "required></label>%s%s"
+                            "value=\"%s\" required></label>%s%s"
                             "<button>Register and add the radio</button></form>"
                             "<p>We mail a link to the address. Open it and choose a "
                             "password: your radio is added then, and comes on line within "
                             "a quarter of a minute.</p>"
                             "<script src=\"/pow.js\"></script>"
-                            % (html.escape(callsign), html.escape(email), html.escape(suffix),
-                               invite, tick_boxes("my callsign"))))
+                            % (html.escape(callsign), html.escape(email), invite,
+                               radio_part("your callsign entered above", suffix))))
 
     def signin_form(self, told="", is_wrong=False, callsign=""):
         self.send(200, self.page("Sign in", said(told, is_wrong)
