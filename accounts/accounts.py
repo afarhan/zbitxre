@@ -1022,6 +1022,7 @@ STATIC = {
     "operate.css": "text/css; charset=utf-8",
     "sound.js": "text/javascript; charset=utf-8",
     "sound_worklet.js": "text/javascript; charset=utf-8",
+    "upgrade.js": "text/javascript; charset=utf-8",
     "icon-192.png": "image/png",
     "icon-512.png": "image/png",
 }
@@ -1157,6 +1158,15 @@ td button { margin: 0; padding: 0.2em 0.8em; }
 /* keys are shown as the radio shows them, in small letters; the author found
    them in capitals here and small on the radio. Either is taken when typed */
 .code { font-family: monospace; letter-spacing: 0.1em; }
+/* the one line that upgrades a radio, on /upgrade: large, whole, and not
+   broken across lines, since the author's tester typed only a part of it */
+.oneline { display: flex; align-items: center; gap: 0.8em; max-width: 40em;
+    background: #10181f; color: #fff; border-radius: 6px; padding: 0.8em 1em; }
+.oneline code { font-size: 1.25em; white-space: nowrap; overflow-x: auto; flex: 1; }
+.oneline button { margin: 0; }
+.check { background: #fff8e6; border-left: 4px solid #e0a000; padding: 0.6em 0.8em;
+    max-width: 38em; }
+.spelled { font-family: monospace; }
 .foot { margin-top: 3em; color: #777; font-size: 0.9em; }
 """
 
@@ -1756,7 +1766,8 @@ def nav_bar(account=None, guard=None):
                       "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                       "<button>Sign out</button></form>" % guard)
     return ("<nav class=\"bar\"><a class=\"site\" href=\"/\">my.sbitx.net</a>"
-            "<a href=\"/\">Home</a><a href=\"/map\">Map</a><a href=\"/help\">Help</a>"
+            "<a href=\"/\">Home</a><a href=\"/map\">Map</a><a href=\"/upgrade\">Upgrade</a>"
+            "<a href=\"/help\">Help</a>"
             "<span class=\"who\">%s</span></nav>" % right)
 
 
@@ -2036,6 +2047,110 @@ class Handler(BaseHTTPRequestHandler):
             "it asks for the password you sign in here with. Changing that password "
             "signs it out.</p>"))
 
+    def upgrade_page(self):
+        """how an owner puts zbitxre on a zbitx or an sbitx v3, by the one
+        line that runs setup/install.sh. Written with the author on
+        2026-10-17 from what went wrong for the first tester: the radio was
+        not on the Wi-Fi, he typed only the address and not the whole line,
+        his computer could not reach the radio by SSH, and the panel needed
+        its firmware by the USB cable"""
+        self.send(200, self.page("Upgrade your radio",
+            "<h2>Upgrade your radio to zbitxre</h2>"
+            "<p>For a <strong>zBitx</strong> or an <strong>sBitx v3</strong>. Your "
+            "settings and logbook come across, and the old software is kept: you can "
+            "go back to it.</p>"
+
+            "<h3>Before you start</h3>"
+            "<ul class=\"steps\">"
+            "<li>The radio is switched on, <strong>not transmitting</strong>, and "
+            "connected to <strong>your Wi-Fi</strong>, with the internet. Step 2 "
+            "checks this.</li>"
+            "<li>Allow about <strong>20 minutes</strong> on a zBitx, less on an "
+            "sBitx. Do not switch the radio off while it runs.</li></ul>"
+
+            "<h3>1. Open a terminal on the radio</h3>"
+            "<p><strong>sBitx:</strong> with a keyboard and mouse on the radio, open "
+            "the <em>Terminal</em> from the menu.</p>"
+            "<p><strong>zBitx:</strong> from a computer on the same Wi-Fi, open a "
+            "terminal (on Windows, <em>Command Prompt</em>) and type:</p>"
+            "<p class=\"command\">ssh pi@sbitx.local</p>"
+            "<p>When it asks for a password, type the radio's password. You are in "
+            "when the line ends in <span class=\"command\">pi@sbitx:~ $</span>.</p>"
+            "<div class=\"check\"><strong>If ssh does not get in:</strong><ul>"
+            "<li><em>Could not resolve hostname</em>: your computer cannot find the "
+            "radio by name. Use its address instead, such as "
+            "<span class=\"command\">ssh pi@192.168.1.87</span>; your Wi-Fi router "
+            "lists it among its devices.</li>"
+            "<li><em>Connection timed out</em> or <em>No route to host</em>: the radio "
+            "is not on the same Wi-Fi as the computer. Check both are on your home "
+            "Wi-Fi, not a phone's hotspot.</li>"
+            "<li><em>Connection refused</em>: SSH is turned off on the radio. Take "
+            "out its SD card, put it in your computer, make an empty file named "
+            "<span class=\"command\">ssh</span> on it (no extension), put the card "
+            "back and switch the radio on again.</li>"
+            "<li><em>Remote host identification has changed</em>: type "
+            "<span class=\"command\">ssh-keygen -R sbitx.local</span> and try "
+            "again.</li></ul></div>"
+
+            "<h3>2. Check the radio is on the internet</h3>"
+            "<p>In the radio's terminal type:</p>"
+            "<p class=\"command\">ping -c 3 my.sbitx.net</p>"
+            "<p>You should see three lines with <em>bytes from</em>. If it says "
+            "<em>unknown host</em>, <em>unreachable</em> or nothing for a while, the "
+            "radio is not on the internet: connect it to your Wi-Fi first.</p>"
+
+            "<h3>3. Type the whole line</h3>"
+            "<p>In the radio's terminal, type this <strong>whole line, exactly as it "
+            "is</strong>, then press Enter:</p>"
+            "<div class=\"oneline\"><code id=\"line\">curl -fsSL "
+            "https://my.sbitx.net/install | bash</code>"
+            "<button id=\"copy\" type=\"button\">Copy</button></div>"
+            "<div class=\"check\"><strong>Check it letter by letter before you press "
+            "Enter.</strong> The address alone does nothing: it must be the whole "
+            "line.<ul>"
+            "<li>All small letters, except a <strong>capital S</strong> and a "
+            "<strong>capital L</strong> in <span class=\"spelled\">-fsSL</span>.</li>"
+            "<li>A space after <span class=\"spelled\">curl</span>, after "
+            "<span class=\"spelled\">-fsSL</span>, and on each side of "
+            "<span class=\"spelled\">|</span>.</li>"
+            "<li><span class=\"spelled\">|</span> is the upright bar, usually "
+            "Shift and the backslash key; not a capital I or a small l.</li>"
+            "<li><span class=\"spelled\">my.sbitx.net</span>: s-b-i-t-x, with a "
+            "dot on each side.</li></ul>"
+            "<p>If you are using ssh from a computer, press <strong>Copy</strong> "
+            "and paste it into the terminal instead of typing it.</p></div>"
+
+            "<h3>4. Answer its questions</h3>"
+            "<p>It says what it will do and asks before it changes anything. It "
+            "builds the new software, which takes most of the time, then asks to "
+            "restart the radio. At the end it offers to put the radio on "
+            "my.sbitx.net.</p>"
+
+            "<h3>5. zBitx only, if it asks: the front panel's firmware</h3>"
+            "<p>Older front panels need their firmware put on once with a USB cable; "
+            "the line in step 3 says so if yours does. Later updates reach the "
+            "panel by themselves.</p>"
+            "<ol class=\"steps\">"
+            "<li>Download <a href=\"/zbitx/front_panel.uf2\" download>"
+            "front_panel.uf2</a> on your computer.</li>"
+            "<li>Switch the radio off.</li>"
+            "<li>Hold the <strong>tuning knob pressed in</strong>, and while holding "
+            "it, connect the panel's USB socket to your computer. Let go when a "
+            "drive called <strong>RPI-RP2</strong> appears.</li>"
+            "<li>Copy <span class=\"command\">front_panel.uf2</span> onto that "
+            "drive. The drive goes away by itself and the panel restarts.</li>"
+            "<li>Unplug the cable and switch the radio on.</li></ol>"
+
+            "<h3>Afterwards</h3>"
+            "<ul class=\"steps\">"
+            "<li>To use the radio from your phone or computer, "
+            "<a href=\"/radios/add\">add it here</a>.</li>"
+            "<li>Later updates: on the radio, <em>SET</em>, then <em>Update</em>.</li>"
+            "<li>To go back to the old software, type "
+            "<span class=\"command\">~/zbitxre/setup/undo_install.sh</span> in the "
+            "radio's terminal and restart it.</li></ul>"
+            "<script src=\"%s\"></script>" % static_address("upgrade.js")))
+
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
         if s.registration == "closed":
@@ -2246,6 +2361,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.keys_page(account, query.get("radio", [""])[0])
         elif url.path == "/help":
             self.help_page()
+        elif url.path == "/upgrade":
+            self.upgrade_page()
         elif url.path in ("/radios/settings", "/radios/log"):
             if account is None:
                 self.signin_form("Sign in first.")

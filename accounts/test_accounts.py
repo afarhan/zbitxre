@@ -300,7 +300,7 @@ class AccountsTest(unittest.TestCase):
 
     def test_every_page_has_the_bar_saying_who_is_signed_in(self):
         browser = self.make_account()
-        for path in ("/", "/map", "/help", "/signin", "/register", "/no-such-page"):
+        for path in ("/", "/map", "/help", "/upgrade", "/signin", "/register", "/no-such-page"):
             _, text = browser.get(path)
             self.assertIn("<nav class=\"bar\">", text, path)
             self.assertIn("Signed in as <strong>VU2ESE</strong>", text, path)
@@ -311,6 +311,25 @@ class AccountsTest(unittest.TestCase):
             _, text = Browser(self.port).get(path)
             self.assertIn("<nav class=\"bar\">", text, path)
             self.assertIn("href=\"/signin\">Sign in</a>", text, path)
+
+    def test_upgrade_page_gives_the_whole_line_and_the_panel_firmware(self):
+        # what went wrong for the first tester, on 2026-10-17: the line typed
+        # in part, a radio off the Wi-Fi, ssh that did not get in, and the
+        # panel's firmware wanted by the USB cable
+        status, text = Browser(self.port).get("/upgrade")
+        self.assertEqual(status, 200)
+        self.assertIn("curl -fsSL https://my.sbitx.net/install | bash", text)
+        self.assertIn("capital S", text)
+        self.assertIn("ping -c 3 my.sbitx.net", text)
+        self.assertIn("ssh pi@sbitx.local", text)
+        self.assertIn("href=\"/zbitx/front_panel.uf2\"", text)
+        self.assertIn("/static/upgrade.js?v=", text)
+        self.assertIn("href=\"/upgrade\">Upgrade</a>", text)
+        # the script it names is served, from this site, as a script must be
+        address = text.split("src=\"")[-1].split("\"")[0]
+        status, script = Browser(self.port).get(address)
+        self.assertEqual(status, 200)
+        self.assertIn("clipboard", script)
 
     def test_forgot_mails_a_link_that_sets_a_new_password(self):
         self.make_account()
