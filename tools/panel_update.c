@@ -13,8 +13,12 @@
 // side and says how the image is kept and put in place; link.h has the
 // messages.
 //
-// The radio program must not be running: it polls the panel on the same
-// bus. setup/update.sh stops it first, as it does for any update.
+// No other radio program may be running: it polls the panel on the same
+// bus. Since 17 October 2026 the radio program runs this itself, through
+// setup/panel_firmware.sh, as it starts after an update and before it opens
+// the panel; that one is this program's own ancestor and is not counted.
+// Until the author found the panel left on its old firmware that day, it
+// was, and this refused every update the radio asked of it.
 //
 // Each part of the image is sent, then the panel's answer is read until it
 // says it has written the part, READY with the next offset it wants; while
@@ -41,6 +45,10 @@
 #define READS_BEFORE_A_NUDGE 10
 #define RESTART_WAIT_MS 60000
 #define SIZE_MOST (1024 * 1024)
+// what this ends with when the panel's firmware is from before updates over
+// I2C, apart from every other failure, so that setup/panel_firmware.sh
+// gives the cable's steps for that alone
+#define OLDER_PANEL 3
 
 struct answer {
 	int state;
@@ -61,6 +69,34 @@ static void sleep_ms(int ms) {
 }
 
 // whether a program called sdr is running: it polls the panel
+// the process that started a process, from its /proc/<pid>/stat, or 0
+static long parent_of(long pid) {
+	char path[64];
+	long parent = 0;
+	FILE *file;
+
+	snprintf(path, sizeof(path), "/proc/%ld/stat", pid);
+	file = fopen(path, "r");
+	if (file == NULL)
+		return 0;
+	// "pid (name) state ppid": the name may have spaces, so after its ')'
+	if (fscanf(file, "%*d (%*[^)]) %*c %ld", &parent) != 1)
+		parent = 0;
+	fclose(file);
+	return parent;
+}
+
+static int is_ancestor(long pid) {
+	long p;
+
+	for (p = parent_of(getpid()); p > 1; p = parent_of(p)) {
+		if (p == pid)
+			return 1;
+	}
+	return 0;
+}
+
+// a radio program other than the one that ran this
 static int is_radio_running(void) {
 	DIR *proc = opendir("/proc");
 	struct dirent *entry;
@@ -73,6 +109,8 @@ static int is_radio_running(void) {
 		return 0;
 	while (!found && (entry = readdir(proc)) != NULL) {
 		if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
+			continue;
+		if (is_ancestor(atol(entry->d_name)))
 			continue;
 		snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
 		file = fopen(path, "r");
@@ -282,7 +320,7 @@ int main(int argc, char **argv) {
 	if (ask(&a) < 0) {
 		fprintf(stderr, "panel_update: the panel does not take updates over I2C; "
 			"its firmware is older, and goes on with the USB cable\n");
-		return 1;
+		return OLDER_PANEL;
 	}
 	if (!strcmp(argv[1], "--version")) {
 		printf("%s\n", a.version);

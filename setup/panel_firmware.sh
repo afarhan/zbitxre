@@ -40,16 +40,24 @@ fi
 make --quiet panel_update || exit 1
 
 want=$(cat "$release/VERSION")
-have=$(./panel_update --version 2>/dev/null)
-if [ -z "$have" ]; then
-	say "the front panel has its older firmware, which is updated with the USB cable, once:"
-	say "  1. With the radio off, hold the Pico's BOOTSEL button while plugging its USB"
-	say "     cable into a computer, as for earlier updates of the panel."
-	say "  2. A drive called RPI-RP2 appears on the computer. Copy onto it the file"
-	say "     $UF2_ADDRESS"
-	say "     downloaded on that computer."
+# panel_update ends with OLDER_PANEL when the panel's firmware is from
+# before updates over I2C; anything else that fails is said as it is, and
+# not taken for an old panel, as it was until 17 October 2026
+OLDER_PANEL=3
+have=$(./panel_update --version 2>/tmp/panel_update.err)
+asked=$?
+if [ "$asked" = "$OLDER_PANEL" ]; then
+	say "the front panel has its older firmware, which is updated with the USB cable, once,"
+	say "as https://my.sbitx.net/upgrade shows:"
+	say "  1. Switch the radio off. Hold the tuning knob in while switching it on, then let go."
+	say "  2. Plug the panel's USB cable into a computer. A drive called RPI-RP2 appears."
+	say "  3. Copy onto it $UF2_ADDRESS, downloaded on that computer."
 	say "  The panel restarts with it, and later updates come over I2C by themselves."
 	exit 0
+fi
+if [ "$asked" != 0 ] || [ -z "$have" ]; then
+	say "the panel's firmware could not be asked: $(head -1 /tmp/panel_update.err)"
+	exit 1
 fi
 if [ "$have" = "$want" ]; then
 	say "the front panel's firmware, $have, is up to date"
