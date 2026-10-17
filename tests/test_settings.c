@@ -41,6 +41,15 @@ static struct control wpm = {
 static struct control callsign = {
 	.group = "STATION", .name = "MYCALLSIGN", .kind = CONTROL_TEXT,
 };
+// the switch VOIP is kept, in its group VOIP, and what the gateway says
+// of VoIP is not
+static struct control voip = {
+	.group = "VOIP", .name = "VOIP", .kind = CONTROL_CHOICE, .choices = "OFFLINE/ONLINE",
+	.value = "OFFLINE",
+};
+static struct control voip_status = {
+	.group = "VOIP", .name = "VOIP_STATUS", .kind = CONTROL_TEXT,
+};
 static struct control macro = {
 	.group = "CW", .name = "MACRO", .kind = CONTROL_ACTION, .choices = "CQ/RST",
 };
@@ -68,6 +77,8 @@ int main(void) {
 	control_register(&wpm);
 	control_register(&callsign);
 	control_register(&macro);
+	control_register(&voip);
+	control_register(&voip_status);
 	remove(SETTINGS_PATH);
 
 	settings_load(SETTINGS_PATH);
@@ -79,6 +90,9 @@ int main(void) {
 	settings_changed(&callsign, 1500);
 	control_set("FREQ", "14074000", ORIGIN_NONE, why, sizeof(why));
 	settings_changed(&freq, 1600);
+	control_set("VOIP", "ONLINE", ORIGIN_NONE, why, sizeof(why));
+	control_set("VOIP_STATUS", "7074 KHZ, 3 HERE", ORIGIN_NONE, why, sizeof(why));
+	settings_changed(&voip, 1600);
 	settings_poll(3500);
 	expect(!file_has("WPM="), "a change is not written while changes are still coming");
 	settings_poll(3700);
@@ -87,6 +101,8 @@ int main(void) {
 	expect(file_has("FREQ=14074000"), "the frequency is kept too");
 	expect(!file_has("BAND=") && !file_has("MACRO="),
 		"the band, which follows from the frequency, is not, and an action has nothing to keep");
+	expect(file_has("VOIP=ONLINE") && !file_has("VOIP_STATUS="),
+		"the switch VOIP is kept, and what the gateway says of VoIP is not");
 
 	control_set("WPM", "12", ORIGIN_NONE, why, sizeof(why));
 	control_set("MYCALLSIGN", "", ORIGIN_NONE, why, sizeof(why));

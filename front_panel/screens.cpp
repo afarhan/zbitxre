@@ -1659,12 +1659,14 @@ static void connections_rows_make(){
 
 	lv_obj_clean(connections_list);
 	connections_count = 0;
+	//the key first, the author's order: it is what an owner comes here
+	//for, to add the radio at my.sbitx.net
+	connection_add(controls_find("RADIO_KEY"), false, true);
 	for (int i = 0; i < controls_count(); i++){
 		c = controls_at(i);
 		if (!strcmp(c->d.group, "CONNECTIONS") && c->d.kind == LINK_KIND_CHOICE)
 			connection_add(c, true, false);
 	}
-	connection_add(controls_find("RADIO_KEY"), false, true);
 	for (int i = 0; i < CONNECTION_STATUSES; i++)
 		connection_add(controls_find(connection_statuses[i]), false, false);
 	if (connections_mark >= connections_count)

@@ -219,7 +219,8 @@
 //
 // VOIP
 //
-// The sixth of the CONNECTIONS is VOIP, ONLINE or OFFLINE: my.sbitx.net's
+// The switch VOIP, ONLINE or OFFLINE, in the list of the mode VOIP since
+// 17 October 2026 and among the CONNECTIONS before: my.sbitx.net's
 // repeater, where the dial is the room. accounts/voip.py has what the
 // author asked for, and the packet. With VOIP online this program is on
 // line as it is for REMOTE, says "voip" among what the owner allows, and is

@@ -53,13 +53,14 @@
 #define QUIET_FOR_MS 2000
 #define NOT_WAITING (-1L)
 
+// and of VoIP's, what the gateway says, who is heard and the owner's
+// speaking; the switch VOIP itself is kept, the author's ruling
 static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET", "NEW_COOKIE",
-	"UPDATE", "UPDATE_STATUS", "RADIO_KEY" };
+	"UPDATE", "UPDATE_STATUS", "RADIO_KEY", "VOIP_STATUS", "VOIP_SPEAKER", "VOIP_TX" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
 // what the panel measures, the entry being written for the logbook, and
-// what was last said of reaching the radio from afar, and of VoIP: who is
-// heard, what the gateway says, and the owner's speaking
-static const char *const groups_not_kept[] = { "METER", "LOGGER", "REMOTE", "VOIP" };
+// what was last said of reaching the radio from afar
+static const char *const groups_not_kept[] = { "METER", "LOGGER", "REMOTE" };
 #define GROUPS_NOT_KEPT ((int)(sizeof(groups_not_kept) / sizeof(groups_not_kept[0])))
 
 static char file_path[PATH_MAX_LENGTH];

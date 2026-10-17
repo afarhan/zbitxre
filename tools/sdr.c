@@ -496,8 +496,11 @@ static struct control vfo_b = {
 //   BLUETOOTH  whether its sound is played into a paired Bluetooth
 //              earphone; it is with the other two below
 //
-// Both are off until the owner turns them on, and are kept from one start
-// to the next. They are here as STEP is: the radio program keeps them and
+// Both are on until the owner turns them off, the author's ruling of 17
+// October 2026: a radio added at my.sbitx.net should be seen on line, and
+// the registration form asks the owner to tick that both are ON. They are
+// kept from one start to the next, so a radio whose owner had them off
+// keeps them off. They are here as STEP is: the radio program keeps them and
 // does nothing with them. The program that does, the gateway,
 // clients/remote/zbitx_remote.c, is a client like any other: it is told
 // when one changes, and it sets REMOTE_STATUS, which is what there is to
@@ -506,13 +509,13 @@ static struct control vfo_b = {
 static struct control remote = {
 	.group = "CONNECTIONS", .name = "REMOTE", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
-	.value = "OFF",
+	.value = "ON",
 };
 
 static struct control streaming = {
 	.group = "CONNECTIONS", .name = "STREAMING", .kind = CONTROL_CHOICE,
 	.choices = "OFF/ON",
-	.value = "OFF",
+	.value = "ON",
 };
 
 static struct control remote_status = {
@@ -558,7 +561,7 @@ static struct control cat_status = {
 	.group = "REMOTE", .name = "CAT_STATUS", .kind = CONTROL_TEXT,
 };
 
-// VOIP is the sixth: whether the radio is on VoIP at my.sbitx.net, where
+// VOIP: whether the radio is on VoIP at my.sbitx.net, where
 // the dial is the room. ONLINE, another's speech on the radio's frequency
 // is heard in any mode; and in the mode VOIP, the PTT sends the
 // owner's speech there and not to the transmitter. modems/modem_voip.c
@@ -566,9 +569,11 @@ static struct control cat_status = {
 // his ruling: it is how a radio is reached when its owner is not at it.
 // The gateway does the talking to my.sbitx.net, and VOIP_STATUS is what
 // it says: the channel and how many radios are in it, "7074 KHZ, 3 HERE",
-// or why the owner's speech was not passed, "BUSY VU3XYZ"
+// or why the owner's speech was not passed, "BUSY VU3XYZ". It was among
+// the CONNECTIONS until the author moved it, on 17 October 2026, to the
+// list of the mode VOIP, where the owner is when they want it
 static struct control voip = {
-	.group = "CONNECTIONS", .name = "VOIP", .kind = CONTROL_CHOICE,
+	.group = "VOIP", .name = "VOIP", .kind = CONTROL_CHOICE,
 	.choices = "OFFLINE/ONLINE",
 	.value = "OFFLINE",
 };
@@ -1907,6 +1912,9 @@ int main(int argc, char **argv) {
 	control_register(&vfo);
 	control_register(&vfo_a);
 	control_register(&vfo_b);
+	// RADIO_KEY is the first of the CONNECTIONS, the author's order: it
+	// is what an owner comes to the screen for, to add the radio
+	control_register(&radio_key);
 	control_register(&remote);
 	control_register(&streaming);
 	control_register(&remote_status);
@@ -1915,11 +1923,10 @@ int main(int argc, char **argv) {
 	control_register(&sound_card_status);
 	control_register(&cat);
 	control_register(&cat_status);
-	control_register(&voip);
-	control_register(&radio_key);
 	control_register(&new_cookie);
 	control_register(&update);
 	control_register(&update_status);
+	control_register(&voip);
 	control_register(&voip_status);
 	control_register(&voip_tx);
 	control_register(&voip_speaker);
