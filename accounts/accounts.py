@@ -2084,15 +2084,14 @@ class Handler(BaseHTTPRequestHandler):
             "radio is not on the internet: connect it to your Wi-Fi first.</p>"
 
             "<h3>3. Check the radio's date</h3>"
-            "<p>Type:</p>"
-            "<p class=\"command\">date</p>"
-            "<p>It must show <strong>today's date</strong>. A radio that has not "
+            "<p>Click the <strong>clock at the top right</strong> of the radio's "
+            "screen: it shows the date. It must be <strong>today's date</strong>. A radio that has not "
             "been on the internet since it was switched on can think it is the year "
             "2000; then my.sbitx.net's security certificate looks not yet valid, and "
             "step 4 fails with <em>SSL certificate problem</em>. If the date is wrong, "
             "set it by typing this line, which has today's date and time in it:</p>"
             "<p class=\"command\">sudo date -u -s \"%s\"</p>"
-            "<p>and check with <span class=\"command\">date</span> again.</p>"
+            "<p>and click the clock again to check.</p>"
 
             "<h3>4. Type the whole line</h3>"
             "<p>In the terminal, type this <strong>whole line, exactly as it "
