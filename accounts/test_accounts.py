@@ -314,14 +314,16 @@ class AccountsTest(unittest.TestCase):
 
     def test_upgrade_page_gives_the_whole_line_and_the_panel_firmware(self):
         # what went wrong for the first tester, on 2026-10-17: the line typed
-        # in part, a radio off the Wi-Fi, ssh that did not get in, and the
-        # panel's firmware wanted by the USB cable
+        # in part, a radio off the Wi-Fi, a clock at 2000 that refused the
+        # certificate, and the panel's firmware wanted by the USB cable
         status, text = Browser(self.port).get("/upgrade")
         self.assertEqual(status, 200)
         self.assertIn("curl -fsSL https://my.sbitx.net/install | bash", text)
         self.assertIn("capital S", text)
         self.assertIn("ping -c 3 my.sbitx.net", text)
-        self.assertIn("ssh pi@sbitx.local", text)
+        self.assertNotIn("ssh", text.split("</nav>")[1])
+        # a clock that says 2000 refuses the certificate: today, to type
+        self.assertIn("sudo date -u -s \"%s" % time.strftime("%Y-%m-%d", time.gmtime()), text)
         self.assertIn("href=\"/zbitx/front_panel.uf2\"", text)
         self.assertIn("/static/upgrade.js?v=", text)
         self.assertIn("href=\"/upgrade\">Upgrade</a>", text)

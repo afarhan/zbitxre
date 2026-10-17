@@ -2052,8 +2052,10 @@ class Handler(BaseHTTPRequestHandler):
         line that runs setup/install.sh. Written with the author on
         2026-10-17 from what went wrong for the first tester: the radio was
         not on the Wi-Fi, he typed only the address and not the whole line,
-        his computer could not reach the radio by SSH, and the panel needed
-        its firmware by the USB cable"""
+        the radio's clock said 2000, so that my.sbitx.net's certificate was
+        refused, and the panel needed its firmware by the USB cable. The
+        line that sets the clock is given with the time the page was served,
+        in UTC, which is near enough for a certificate"""
         self.send(200, self.page("Upgrade your radio",
             "<h2>Upgrade your radio to zbitxre</h2>"
             "<p>For a <strong>zBitx</strong> or an <strong>sBitx v3</strong>. Your "
@@ -2063,44 +2065,35 @@ class Handler(BaseHTTPRequestHandler):
             "<h3>Before you start</h3>"
             "<ul class=\"steps\">"
             "<li>The radio is switched on, <strong>not transmitting</strong>, and "
-            "connected to <strong>your Wi-Fi</strong>, with the internet. Step 2 "
-            "checks this.</li>"
+            "connected to <strong>your Wi-Fi</strong>, with the internet. Steps 2 "
+            "and 3 check this.</li>"
             "<li>Allow about <strong>20 minutes</strong> on a zBitx, less on an "
             "sBitx. Do not switch the radio off while it runs.</li></ul>"
 
             "<h3>1. Open a terminal on the radio</h3>"
-            "<p><strong>sBitx:</strong> with a keyboard and mouse on the radio, open "
-            "the <em>Terminal</em> from the menu.</p>"
-            "<p><strong>zBitx:</strong> from a computer on the same Wi-Fi, open a "
-            "terminal (on Windows, <em>Command Prompt</em>) and type:</p>"
-            "<p class=\"command\">ssh pi@sbitx.local</p>"
-            "<p>When it asks for a password, type the radio's password. You are in "
-            "when the line ends in <span class=\"command\">pi@sbitx:~ $</span>.</p>"
-            "<div class=\"check\"><strong>If ssh does not get in:</strong><ul>"
-            "<li><em>Could not resolve hostname</em>: your computer cannot find the "
-            "radio by name. Use its address instead, such as "
-            "<span class=\"command\">ssh pi@192.168.1.87</span>; your Wi-Fi router "
-            "lists it among its devices.</li>"
-            "<li><em>Connection timed out</em> or <em>No route to host</em>: the radio "
-            "is not on the same Wi-Fi as the computer. Check both are on your home "
-            "Wi-Fi, not a phone's hotspot.</li>"
-            "<li><em>Connection refused</em>: SSH is turned off on the radio. Take "
-            "out its SD card, put it in your computer, make an empty file named "
-            "<span class=\"command\">ssh</span> on it (no extension), put the card "
-            "back and switch the radio on again.</li>"
-            "<li><em>Remote host identification has changed</em>: type "
-            "<span class=\"command\">ssh-keygen -R sbitx.local</span> and try "
-            "again.</li></ul></div>"
+            "<p>On the radio's screen, with a keyboard and mouse, open the "
+            "<em>Terminal</em> from the menu.</p>"
 
             "<h3>2. Check the radio is on the internet</h3>"
-            "<p>In the radio's terminal type:</p>"
+            "<p>In the terminal type:</p>"
             "<p class=\"command\">ping -c 3 my.sbitx.net</p>"
             "<p>You should see three lines with <em>bytes from</em>. If it says "
             "<em>unknown host</em>, <em>unreachable</em> or nothing for a while, the "
             "radio is not on the internet: connect it to your Wi-Fi first.</p>"
 
-            "<h3>3. Type the whole line</h3>"
-            "<p>In the radio's terminal, type this <strong>whole line, exactly as it "
+            "<h3>3. Check the radio's date</h3>"
+            "<p>Type:</p>"
+            "<p class=\"command\">date</p>"
+            "<p>It must show <strong>today's date</strong>. A radio that has not "
+            "been on the internet since it was switched on can think it is the year "
+            "2000; then my.sbitx.net's security certificate looks not yet valid, and "
+            "step 4 fails with <em>SSL certificate problem</em>. If the date is wrong, "
+            "set it by typing this line, which has today's date and time in it:</p>"
+            "<p class=\"command\">sudo date -u -s \"%s\"</p>"
+            "<p>and check with <span class=\"command\">date</span> again.</p>"
+
+            "<h3>4. Type the whole line</h3>"
+            "<p>In the terminal, type this <strong>whole line, exactly as it "
             "is</strong>, then press Enter:</p>"
             "<div class=\"oneline\"><code id=\"line\">curl -fsSL "
             "https://my.sbitx.net/install | bash</code>"
@@ -2117,18 +2110,19 @@ class Handler(BaseHTTPRequestHandler):
             "Shift and the backslash key; not a capital I or a small l.</li>"
             "<li><span class=\"spelled\">my.sbitx.net</span>: s-b-i-t-x, with a "
             "dot on each side.</li></ul>"
-            "<p>If you are using ssh from a computer, press <strong>Copy</strong> "
-            "and paste it into the terminal instead of typing it.</p></div>"
+            "<p>If you are reading this page on the radio itself, press "
+            "<strong>Copy</strong> and paste it into the terminal instead of typing "
+            "it.</p></div>"
 
-            "<h3>4. Answer its questions</h3>"
+            "<h3>5. Answer its questions</h3>"
             "<p>It says what it will do and asks before it changes anything. It "
             "builds the new software, which takes most of the time, then asks to "
             "restart the radio. At the end it offers to put the radio on "
             "my.sbitx.net.</p>"
 
-            "<h3>5. zBitx only, if it asks: the front panel's firmware</h3>"
+            "<h3>6. zBitx only, if it asks: the front panel's firmware</h3>"
             "<p>Older front panels need their firmware put on once with a USB cable; "
-            "the line in step 3 says so if yours does. Later updates reach the "
+            "the line in step 4 says so if yours does. Later updates reach the "
             "panel by themselves.</p>"
             "<ol class=\"steps\">"
             "<li>Download <a href=\"/zbitx/front_panel.uf2\" download>"
@@ -2149,7 +2143,8 @@ class Handler(BaseHTTPRequestHandler):
             "<li>To go back to the old software, type "
             "<span class=\"command\">~/zbitxre/setup/undo_install.sh</span> in the "
             "radio's terminal and restart it.</li></ul>"
-            "<script src=\"%s\"></script>" % static_address("upgrade.js")))
+            "<script src=\"%s\"></script>"
+            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), static_address("upgrade.js"))))
 
     def register_form(self, told="", is_wrong=False, callsign="", email=""):
         s = self.service.settings
