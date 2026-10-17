@@ -438,6 +438,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
+#include <sys/stat.h>
 
 #include <sys/random.h>
 
@@ -459,6 +461,10 @@
 #define STRETCH_ROUNDS 50000
 #define SALT_BEGINS "zbitx-1 "
 #define RETRY_EVERY_MS 3000
+// a radio says something many times a second, its spectrum and its
+// meters; a connection that has said nothing for this long is dead
+#define SILENT_AT_MOST_MS 10000
+#define SILENCE_LOOKED_AT_EVERY_MS 2000
 #define HZ_PER_MHZ 1000000
 #define HZ_PER_KHZ 1000
 #define LINE_MAX_LENGTH 128
@@ -836,6 +842,7 @@ static const struct radio_knobs radios_with_knobs[] = {
 
 static GtkWidget *main_window;
 static guint retry_timer;
+static gint64 heard_us;
 static int is_connecting;
 
 // reaching a radio through my.sbitx.net: how far the few lines before the
@@ -2159,6 +2166,7 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 		disconnect("gone");
 		return;
 	}
+	heard_us = g_get_monotonic_time();
 	if (is_remote && through != THROUGH) {
 		take_through_line(line);
 		g_free(line);
@@ -2196,6 +2204,7 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 		return;
 	}
 	connection = made;
+	heard_us = g_get_monotonic_time();
 	reader = g_data_input_stream_new(
 		g_io_stream_get_input_stream(G_IO_STREAM(connection)));
 	writer = g_io_stream_get_output_stream(G_IO_STREAM(connection));
@@ -2210,6 +2219,21 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 	show_status(text);
 	g_data_input_stream_read_line_async(reader, G_PRIORITY_DEFAULT, NULL,
 		on_line, NULL);
+}
+
+// a connection on which the radio has fallen silent is let go and made
+// again: on 17 October 2026, after an update, the window was connected to
+// a port that another program held and nobody answered, and it waited
+// there, its screen still, until the radio was restarted. The author
+// expected it to try again. While a remote window is still saying who it
+// is, the silence is its own, and is not counted
+static gboolean on_silence_looked_at(gpointer unused) {
+	(void)unused;
+	if (connection == NULL || (is_remote && through != THROUGH))
+		return G_SOURCE_CONTINUE;
+	if (g_get_monotonic_time() - heard_us > SILENT_AT_MOST_MS * 1000LL)
+		disconnect("the radio does not answer");
+	return G_SOURCE_CONTINUE;
 }
 
 static void try_to_connect(void) {
@@ -2698,6 +2722,49 @@ static void ask_for_a_new_key(void) {
    restarts the radio closes this window with it; the window that starts
    after is told the end by the radio, and shows it. */
 
+/* the window's own program: an update builds a new one, and the window
+   becomes it, by exec, when the view of the update is closed, so that the
+   new window runs and not only the new radio. The author asked on 17
+   October 2026 for the radio to restart itself in place after an update,
+   and not be started again in a new terminal; this is the window's part
+   of it. The new one is told what the view showed, SEEN_ENV, and does not
+   open it again for the same end */
+
+#define SEEN_ENV "ZBITXRE_UPDATE_SEEN"
+#define OPEN_FILES_MOST 1024
+
+static char **own_argv;
+static char own_path[PATH_MAX];
+static struct timespec own_built;
+
+static void own_program_note(char **argv) {
+	struct stat about;
+
+	own_argv = argv;
+	if (realpath(argv[0], own_path) == NULL || stat(own_path, &about) < 0) {
+		own_path[0] = 0;
+		return;
+	}
+	own_built = about.st_mtim;
+}
+
+static int own_program_is_new(void) {
+	struct stat about;
+
+	if (own_path[0] == 0 || stat(own_path, &about) < 0)
+		return 0;
+	return about.st_mtim.tv_sec != own_built.tv_sec
+		|| about.st_mtim.tv_nsec != own_built.tv_nsec;
+}
+
+static void become_own_program(const char *seen) {
+	setenv(SEEN_ENV, seen, 1);
+	for (int fd = 3; fd < OPEN_FILES_MOST; fd++)
+		close(fd);
+	execv(own_path, own_argv);
+	_exit(1);
+}
+
 #define DONE_MARK "DONE: "
 #define FAILED_MARK "FAILED: "
 #define CANCELLED_MARK "CANCELLED: "
@@ -2718,9 +2785,14 @@ static void on_update_view_closed(GtkWidget *widget, gpointer unused) {
 }
 
 static void on_update_close(GtkButton *button, gpointer unused) {
+	char seen[CONTROL_VALUE_MAX];
+
 	(void)button;
 	(void)unused;
+	snprintf(seen, sizeof(seen), "%s", update_last);
 	gtk_widget_destroy(update_view);
+	if (own_program_is_new())
+		become_own_program(seen);
 }
 
 static void on_update_cancel(GtkButton *button, gpointer unused) {
@@ -2798,6 +2870,10 @@ static void update_view_take(const char *status) {
 	// opened for an update that is not going on
 	if (status[0] == 0 || !strcmp(status, update_last))
 		return;
+	// a new update after one that has ended is listed afresh
+	if (update_view != NULL && gtk_widget_get_sensitive(update_close)
+			&& !is_done && !is_failed && !is_cancelled)
+		gtk_widget_destroy(update_view);
 	snprintf(update_last, sizeof(update_last), "%s", status);
 	if (update_view == NULL)
 		update_view_open();
@@ -4425,7 +4501,17 @@ static GtkWidget *create_window(void) {
 
 int main(int argc, char **argv) {
 	GtkWidget *window;
+	const char *seen = getenv(SEEN_ENV);
+	static char *started_with[64];
 
+	// as it was started, before GTK takes its own words out of it
+	for (int i = 0; i < argc && i < 63; i++)
+		started_with[i] = argv[i];
+	own_program_note(started_with);
+	if (seen != NULL) {
+		snprintf(update_last, sizeof(update_last), "%s", seen);
+		unsetenv(SEEN_ENV);
+	}
 	gtk_init(&argc, &argv);
 	if (argc > 1 && !strcmp(argv[1], REMOTE_WORD)) {
 		if (argc < 3) {
@@ -4456,6 +4542,7 @@ int main(int argc, char **argv) {
 	open_knobs();
 	connector = g_socket_client_new();
 	try_to_connect();
+	g_timeout_add(SILENCE_LOOKED_AT_EVERY_MS, on_silence_looked_at, NULL);
 	gtk_main();
 	return 0;
 }

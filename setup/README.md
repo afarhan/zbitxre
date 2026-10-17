@@ -217,17 +217,21 @@ On the sbitx it was put in on 8 October 2026.
 
 ## Updating a radio from GitHub
 
-A radio away from the bench, with a tester of the development team, follows
-GitHub's main and is brought up to it by one command on the radio:
+A radio is brought up to GitHub's main from SET, by Update: the radio runs
+`setup/update.sh --if-new`, shows each step in a view of the update, and,
+when something new was built, waits until it is not transmitting, restarts
+itself with it in the same terminal and gives the front panel its firmware.
+CANCEL in the view stops it and leaves the radio as it was.
+
+The same can be done by hand, in a terminal on the radio:
 
     ~/zbitxre/setup/update.sh
 
-It pulls main, fetches RADE's weights if any are missing, builds the radio
-program, the window and zbitx_remote, waits until the radio is not
-transmitting, and starts it again on its screen. `--build-only` builds and
-leaves the running radio alone. The script's header says what it will not
-do: it does not overwrite work of the radio's own, a failed build leaves the
-programs that were there, and nothing in `data/` is reached.
+which pulls main, fetches RADE's weights if any are missing, and builds the
+radio program, the window and zbitx_remote; the radio uses them when it is
+next started. The script's header says what it will not do: it does not
+overwrite work of the radio's own, a failed build leaves the programs that
+were there, and nothing in `data/` is reached.
 
 The repository is private, so each such radio reads it with a key of its
 own, which can read this repository and nothing else, and cannot push.

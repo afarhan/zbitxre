@@ -281,7 +281,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <limits.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -1147,6 +1149,45 @@ static void decode_pass_on(const char *message) {
 	send_text(line_fd, line);
 }
 
+/* this program's own file: an update builds a new one, and the radio
+   restarts itself with its new build, which this program finds gone for a
+   moment. Before it looks for the radio again it becomes its own new build,
+   by exec, if there is one, so that the new gateway runs and not only the
+   new radio: the author asked on 17 October 2026 for the radio to restart
+   in place after an update, and not in a new terminal */
+
+#define OPEN_FILES_MOST 1024
+
+static char **own_argv;
+static char own_path[PATH_MAX];
+static struct timespec own_built;
+
+static void own_program_note(char **argv) {
+	struct stat about;
+
+	own_argv = argv;
+	if (realpath(argv[0], own_path) == NULL || stat(own_path, &about) < 0) {
+		own_path[0] = 0;
+		return;
+	}
+	own_built = about.st_mtim;
+}
+
+static void own_program_if_new(void) {
+	struct stat about;
+
+	if (own_path[0] == 0 || stat(own_path, &about) < 0)
+		return;
+	if (about.st_mtim.tv_sec == own_built.tv_sec && about.st_mtim.tv_nsec == own_built.tv_nsec)
+		return;
+	printf("a new build of this program is here; starting it\n");
+	fflush(stdout);
+	for (int fd = 3; fd < OPEN_FILES_MOST; fd++)
+		close(fd);
+	execv(own_path, own_argv);
+	_exit(1);
+}
+
 static void radio_poll(long now) {
 	char line[LINE_ROOM];
 	char said[STATUS_ROOM];
@@ -1158,6 +1199,7 @@ static void radio_poll(long now) {
 		if (now < radio_retry_ms)
 			return;
 		radio_retry_ms = now + RADIO_RETRY_MS;
+		own_program_if_new();
 		radio_fd = dial(LOCAL_HOST, radio_port);
 		if (radio_fd == NOT_OPEN)
 			return;
@@ -1975,6 +2017,7 @@ static void wait_and_pass_on(void) {
 int main(int argc, char **argv) {
 	int i;
 
+	own_program_note(argv);
 	for (i = 1; i + 1 < argc; i += 2) {
 		if (!strcmp(argv[i], "--server"))
 			server = argv[i + 1];

@@ -2031,7 +2031,8 @@ void screens_update_status(const char *text){
 	snprintf(update_last, sizeof(update_last), "%s", text);
 	if (update_layer == NULL)
 		update_create();
-	if (!update_is_up()){
+	//a new update after one that has ended is listed afresh
+	if (!update_is_up() || (update_has_ended && !is_done && !is_failed && !is_cancelled)){
 		update_steps_count = 0;
 		update_has_ended = false;
 		update_is_cancelling = false;

@@ -226,6 +226,7 @@
 #include <math.h>
 #include <poll.h>
 #include <signal.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/wait.h>
@@ -617,36 +618,42 @@ static struct control radio_key = {
 // UPDATE brings the radio up to the newest zbitxre: the author asked on 16
 // October 2026 for it among the settings, to run the updates, the panel's
 // firmware with them, without a terminal. A tap on it in the window or on
-// the panel asks first, in a box, whether to update, since the radio
-// restarts; a yes sets it to UPDATING. It was two taps, TAP AGAIN and then
-// RUNNING, until the author found the radio's refusals of a wrong tap
-// cryptic and asked for the box instead, the same day. On UPDATING the
-// radio starts setup/update.sh --if-new on its own: that fetches the
-// newest from GitHub and, if there is anything new, builds it, waits until
-// the radio is not transmitting, stops this program, gives the panel its
-// firmware over I2C and starts the radio again. It says on the status line
-// how it goes, by the terminal's "say". It is in the STATION group, as the
-// settings are, so that the window lists it in SET.
+// the panel asks first, in a box, whether to update; a yes sets it to
+// UPDATING, and CANCEL, from the view of the update, stops it. It is in the
+// STATION group, as the settings are, so that the window lists it in SET.
+//
+// The radio runs setup/update.sh --if-new itself, as a child whose output
+// it reads through a pipe until the pipe closes: the author's way, on 17
+// October 2026, after the update had been started apart from the radio,
+// had stopped it and started it again in a new terminal, which was handed
+// the radio's port for clients and held it, so that the new radio program
+// could not have it and the window waited on a port nobody answered. The
+// script only fetches and builds. Each line it says is UPDATE_STATUS, which
+// the window and the panel show in a view of their own until the update
+// ends: the author asked the day before to see it happening and whether
+// it succeeded. Its last begins "DONE: ", "FAILED: " or "CANCELLED: ", or,
+// when something new was built and it ends with UPDATE_BUILT, the radio
+// waits until it is not transmitting, closes what it has open and becomes
+// the new radio program in its place, by exec, in the same terminal, with
+// UPDATED_ENV saying so. The new one gives the panel its firmware before
+// it opens the panel, and then says "DONE: updated to ..." for
+// UPDATE_SAID_FOR_MS, so that a window that connects after the restart is
+// told how it ended and one that connects later is not.
 #define UPDATE_SCRIPT "setup/update.sh"
-#define UPDATE_LOG "/tmp/update.log"
-
-// UPDATE_STATUS is how an update goes, step by step, for the window and the
-// panel to show in a view of their own until it ends: the author asked on
-// 16 October 2026 to see the update happening, and whether it succeeded,
-// when there had been only the status line. update.sh sets it through the
-// terminal's "update_status". Its last says how it ended, beginning
-// "DONE: ", "FAILED: " or "CANCELLED: ". An update that restarts the
-// radio stops this program on the way, so update.sh leaves the last in
-// UPDATE_RESULT and
-// the radio says it when it starts again, and lets it go after
-// UPDATE_RESULT_FOR_MS, so that a client that connects later is not shown
+#define PANEL_FIRMWARE_SCRIPT "setup/panel_firmware.sh --from-radio"
+#define BUILT_FROM_FILE "data/built_from"
+#define UPDATED_ENV "ZBITXRE_UPDATED"
+#define UPDATE_BUILT 0
+#define UPDATE_SAID_FOR_MS (5 * 60 * 1000L)
+// how long an update's end is kept when the radio did not restart, for
+// the views that are open to show it; one that opens later is not shown
 // an old update's end
+#define UPDATE_ENDED_SAID_FOR_MS 30000L
+#define UPDATE_LINE_ROOM 256
+#define OPEN_FILES_MOST 1024
+// what update.sh before this one left for the radio it started again,
+// read once, for the first update of a radio from the old way to this
 #define UPDATE_RESULT "data/update_result"
-// CANCEL, from the view's CANCEL button, stops update.sh, which leaves its
-// process's number here while it can still be stopped and puts the radio
-// back as it was; the author asked for it on 16 October 2026
-#define UPDATE_PID_FILE "/tmp/update.pid"
-#define UPDATE_RESULT_FOR_MS (5 * 60 * 1000L)
 
 static struct control update_status = {
 	.group = "UPDATE", .name = "UPDATE_STATUS", .kind = CONTROL_TEXT,
@@ -658,83 +665,204 @@ static struct control update = {
 	.value = "-",
 };
 
-// update.sh, started apart from this program, which it will stop: twice
-// forked, so that it is nobody's child here and leaves nothing to wait for
-static void update_start(void) {
-	pid_t child = fork();
-	int log;
+static void set_setting(const char *name, const char *value, int origin);
 
-	if (child < 0)
+static pid_t update_pid;
+static int update_fd = -1;
+static char update_line[UPDATE_LINE_ROOM];
+static int update_line_used;
+static int update_has_ended;
+static int is_restart_due;
+static int is_restarting;
+static int is_waiting_for_tx;
+static long update_said_until_ms;
+// set at the start of a radio program that an update started, by exec
+static char updated_said[CONTROL_VALUE_MAX];
+
+static void update_say(const char *text) {
+	printf("update: %s\n", text);
+	fflush(stdout);
+	set_setting("UPDATE_STATUS", text, ORIGIN_NONE);
+}
+
+// update.sh, as a child of this program in a session of its own, so that
+// CANCEL can stop it and all it has started; it is given nothing of this
+// program's but the pipe for what it says
+static void update_start(void) {
+	int ends[2];
+	pid_t child;
+
+	if (update_pid != 0 || is_restart_due || pipe(ends) < 0)
 		return;
+	child = fork();
+	if (child < 0) {
+		close(ends[0]);
+		close(ends[1]);
+		return;
+	}
 	if (child == 0) {
-		if (fork() != 0)
-			_exit(0);
 		setsid();
-		log = open(UPDATE_LOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
-		if (log >= 0) {
-			dup2(log, STDOUT_FILENO);
-			dup2(log, STDERR_FILENO);
-		}
+		dup2(ends[1], STDOUT_FILENO);
+		dup2(ends[1], STDERR_FILENO);
+		for (int fd = 3; fd < OPEN_FILES_MOST; fd++)
+			close(fd);
+		setenv("ZBITXRE_FROM_RADIO", "1", 1);
 		execl("/bin/bash", "bash", UPDATE_SCRIPT, "--if-new", (char *)NULL);
 		_exit(1);
 	}
-	waitpid(child, NULL, 0);
+	close(ends[1]);
+	fcntl(ends[0], F_SETFL, fcntl(ends[0], F_GETFL) | O_NONBLOCK);
+	update_fd = ends[0];
+	update_pid = child;
+	update_line_used = 0;
+	update_has_ended = 0;
+	update_say("looking for a newer version");
 }
 
-static void set_setting(const char *name, const char *value, int origin);
+// a line of update.sh's: its own steps, which it begins "update: ", are
+// shown, without that; anything else, a compiler's warnings or git's, is
+// for the terminal only
+static void update_heard(char *line) {
+	static const char *const own = "update: ";
 
-static long update_result_until_ms;
-
-// the end of an update that restarted the radio, as update.sh left it
-static void update_result_take(long now) {
-	char line[CONTROL_VALUE_MAX];
-	FILE *file = fopen(UPDATE_RESULT, "r");
-
-	if (file == NULL)
+	if (strncmp(line, own, strlen(own))) {
+		if (line[0] != 0)
+			printf("%s\n", line);
 		return;
-	if (fgets(line, sizeof(line), file) != NULL) {
-		line[strcspn(line, "\n")] = 0;
-		set_setting("UPDATE_STATUS", line, ORIGIN_NONE);
-		update_result_until_ms = now + UPDATE_RESULT_FOR_MS;
 	}
-	fclose(file);
-	unlink(UPDATE_RESULT);
+	line += strlen(own);
+	update_has_ended = !strncmp(line, "DONE: ", 6) || !strncmp(line, "FAILED: ", 8)
+		|| !strncmp(line, "CANCELLED: ", 11);
+	update_say(line);
+	if (update_has_ended)
+		update_said_until_ms = now_ms() + UPDATE_ENDED_SAID_FOR_MS;
 }
 
-// the update is sent TERM, its process group and so the build with it:
-// update.sh is started in a session of its own, so its group is its number
-static void update_cancel(void) {
-	FILE *file = fopen(UPDATE_PID_FILE, "r");
-	int pid = 0;
+static void update_ended(int status) {
+	if (WIFEXITED(status) && WEXITSTATUS(status) == UPDATE_BUILT && !update_has_ended) {
+		is_restart_due = 1;
+		return;
+	}
+	if (!update_has_ended) {
+		update_say("FAILED: the update stopped");
+		update_said_until_ms = now_ms() + UPDATE_ENDED_SAID_FOR_MS;
+	}
+}
 
-	if (file == NULL)
+// what update.sh has said since the last look, and its end when the pipe
+// closes
+static void update_read(void) {
+	char got[UPDATE_LINE_ROOM];
+	ssize_t count;
+	int status = 0;
+
+	if (update_fd < 0)
 		return;
-	if (fscanf(file, "%d", &pid) != 1)
-		pid = 0;
-	fclose(file);
-	if (pid <= 1)
+	while ((count = read(update_fd, got, sizeof(got))) > 0) {
+		for (ssize_t i = 0; i < count; i++) {
+			if (got[i] == '\n' || got[i] == '\r') {
+				update_line[update_line_used] = 0;
+				update_heard(update_line);
+				update_line_used = 0;
+			} else if (update_line_used < UPDATE_LINE_ROOM - 1)
+				update_line[update_line_used++] = got[i];
+		}
+	}
+	if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
 		return;
-	if (kill(-pid, SIGTERM) < 0)
-		kill(pid, SIGTERM);
-	set_setting("UPDATE_STATUS", "cancelling", ORIGIN_NONE);
+	close(update_fd);
+	update_fd = -1;
+	waitpid(update_pid, &status, 0);
+	update_pid = 0;
+	update_ended(status);
+}
+
+static void update_cancel(void) {
+	if (update_pid != 0) {
+		kill(-update_pid, SIGTERM);
+		update_say("cancelling");
+		return;
+	}
+	if (is_restart_due) {
+		is_restart_due = 0;
+		is_waiting_for_tx = 0;
+		update_say("CANCELLED: what was built is used at the next start");
+		update_said_until_ms = now_ms() + UPDATE_ENDED_SAID_FOR_MS;
+	}
 }
 
 static void follow_update(long now) {
-	if (update_result_until_ms != 0 && now > update_result_until_ms) {
-		update_result_until_ms = 0;
+	if (update_said_until_ms != 0 && now > update_said_until_ms) {
+		update_said_until_ms = 0;
 		set_setting("UPDATE_STATUS", "", ORIGIN_NONE);
 	}
+	update_read();
 	if (!strcmp(control_get("UPDATE"), "CANCEL")) {
 		set_setting("UPDATE", "-", ORIGIN_NONE);
 		update_cancel();
+	}
+	if (!strcmp(control_get("UPDATE"), "UPDATING")) {
+		set_setting("UPDATE", "-", ORIGIN_NONE);
+		update_said_until_ms = 0;
+		update_start();
+	}
+	if (!is_restart_due || is_restarting)
+		return;
+	if (!strcmp(control_get("TX"), "ON")) {
+		if (!is_waiting_for_tx)
+			update_say("waiting for TX OFF to restart");
+		is_waiting_for_tx = 1;
 		return;
 	}
-	if (strcmp(control_get("UPDATE"), "UPDATING"))
+	update_say("restarting the radio");
+	is_restarting = 1;
+	is_done = 1;
+}
+
+// this program becomes the one just built, in its place: the same process,
+// in the same terminal, with nothing open but what it was started with
+static void restart_as_built(char **argv) {
+	char built[CONTROL_VALUE_MAX] = "";
+	char said[CONTROL_VALUE_MAX];
+	FILE *file = fopen(BUILT_FROM_FILE, "r");
+
+	if (file != NULL) {
+		if (fgets(built, sizeof(built), file) == NULL)
+			built[0] = 0;
+		built[strcspn(built, "\n")] = 0;
+		fclose(file);
+	}
+	snprintf(said, sizeof(said), "updated to %s", built);
+	setenv(UPDATED_ENV, said, 1);
+	for (int fd = 3; fd < OPEN_FILES_MOST; fd++)
+		close(fd);
+	execv(argv[0], argv);
+	printf("update: the new radio program did not start: %s\n", strerror(errno));
+}
+
+// at the start of a radio program that an update started: the panel is
+// given its firmware, while nothing here has it open
+static void updated_take(void) {
+	const char *said = getenv(UPDATED_ENV);
+	FILE *file;
+
+	if (said == NULL) {
+		// the old way's end, once
+		file = fopen(UPDATE_RESULT, "r");
+		if (file == NULL)
+			return;
+		if (fgets(updated_said, sizeof(updated_said), file) != NULL)
+			updated_said[strcspn(updated_said, "\n")] = 0;
+		fclose(file);
+		unlink(UPDATE_RESULT);
 		return;
-	update_result_until_ms = 0;
-	set_setting("UPDATE", "-", ORIGIN_NONE);
-	set_setting("UPDATE_STATUS", "looking for a newer version", ORIGIN_NONE);
-	update_start();
+	}
+	if (system(PANEL_FIRMWARE_SCRIPT) == 0)
+		snprintf(updated_said, sizeof(updated_said), "DONE: %s", said);
+	else
+		snprintf(updated_said, sizeof(updated_said), "DONE: %s; the panel kept its firmware",
+			said);
+	unsetenv(UPDATED_ENV);
 }
 
 // NEW_COOKIE makes the radio a new key, for when the old one has gone where
@@ -1358,14 +1486,6 @@ static void handle_command(char *line) {
 		panel_say(line + strlen("say "));
 		return;
 	}
-	// "update_status <text>": update.sh saying how an update goes, which
-	// is put on the status line too, for a panel whose firmware does not
-	// know UPDATE_STATUS
-	if (begins_with(line, "update_status ")) {
-		set_setting("UPDATE_STATUS", line + strlen("update_status "), ORIGIN_TERMINAL);
-		panel_say(line + strlen("update_status "));
-		return;
-	}
 	if (begins_with(line, PLAY_FOR)) {
 		play_start(line + strlen(PLAY_FOR));
 		return;
@@ -1760,6 +1880,7 @@ int main(int argc, char **argv) {
 	if (argc > 3)
 		volume = argv[3];
 
+	updated_take();
 	started_at_s = monotonic_s();
 	start_check_at_ms = now_ms() + START_CHECK_AFTER_MS;
 	is_start_check_due = 1;
@@ -1807,7 +1928,10 @@ int main(int argc, char **argv) {
 	settings_set_extras(radio_save_bands, radio_load_band);
 	settings_load(SETTINGS_FILE);
 	control_on_change(on_control_changed);
-	update_result_take(now_ms());
+	if (updated_said[0] != 0) {
+		set_setting("UPDATE_STATUS", updated_said, ORIGIN_NONE);
+		update_said_until_ms = now_ms() + UPDATE_SAID_FOR_MS;
+	}
 	if (hz != NULL)
 		set_setting("FREQ", hz, ORIGIN_TERMINAL);
 	if (mode != NULL)
@@ -1834,5 +1958,9 @@ int main(int argc, char **argv) {
 	report();
 	server_close();
 	teardown();
+	if (is_restarting) {
+		restart_as_built(argv);
+		return 1;
+	}
 	return 0;
 }
