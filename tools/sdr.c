@@ -578,6 +578,16 @@ static struct control voip = {
 	.value = "OFFLINE",
 };
 
+// BREAK_IN: whether another's speech over VoIP breaks in on the other
+// modes, ON as the author ruled on 16 October 2026, or is heard in the mode
+// VOIP alone. He asked for it on 17 October 2026, in VOIP's list. It is
+// kept from one start to the next
+static struct control break_in = {
+	.group = "VOIP", .name = "BREAK_IN", .kind = CONTROL_CHOICE,
+	.choices = "OFF/ON",
+	.value = "ON",
+};
+
 static struct control voip_status = {
 	.group = "VOIP", .name = "VOIP_STATUS", .kind = CONTROL_TEXT,
 };
@@ -1644,9 +1654,9 @@ static int is_modem_wanting_tx(void) {
 }
 
 // VoIP: in the mode VOIP the PTT is VOIP_TX and not TX; another's speech
-// is heard while VOIP is ONLINE and the radio receives, in any mode: the
-// author ruled on 16 October 2026 that break-in is not for the voice modes
-// alone, and that it stays so with the sound devices for other programs
+// is heard while VOIP is ONLINE and the radio receives, in any mode while
+// BREAK_IN is ON: the author ruled on 16 October 2026 that break-in is not
+// for the voice modes alone, and that it stays so with the sound devices for other programs
 // always there. So a program such as WSJT-X or fldigi hears the speech in
 // place of the band while someone speaks, until there is a mixer, which
 // the author has put off. NEW_COOKIE's first tap is let go if the second
@@ -1676,7 +1686,8 @@ static void follow_voip(long now) {
 		is_speaking = 0;
 	}
 	rtp_voip_set_speaking(is_speaking);
-	rtp_voip_set_hearing(is_online && strcmp(control_get("TX"), "ON"));
+	rtp_voip_set_hearing(is_online && strcmp(control_get("TX"), "ON")
+		&& (is_voip_mode || !strcmp(control_get("BREAK_IN"), "ON")));
 	rtp_voip_heard_callsign(heard, sizeof(heard));
 	if (strcmp(heard, control_get("VOIP_SPEAKER")))
 		set_setting("VOIP_SPEAKER", heard, ORIGIN_NONE);
@@ -1927,6 +1938,7 @@ int main(int argc, char **argv) {
 	control_register(&update);
 	control_register(&update_status);
 	control_register(&voip);
+	control_register(&break_in);
 	control_register(&voip_status);
 	control_register(&voip_tx);
 	control_register(&voip_speaker);
