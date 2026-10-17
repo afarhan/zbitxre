@@ -7,6 +7,10 @@ The radio it comes from is [zbitxv2](https://github.com/afarhan/zbitxv2). That
 program works, and it stays the radio's daily software until this one can take
 over. Nothing here changes it.
 
+**The user manual** is in [`docs/manual/`](docs/manual/README.md): a quick
+start, each mode, putting the radio on line, every control, the protocol
+for clients, and working on zbitxre with Claude.
+
 ## Where it stands
 
 | Piece | State |
