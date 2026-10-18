@@ -28,7 +28,7 @@ the radio back to receive first.
 
 ## Voice: USB, LSB and AM
 
-![USB on 20 metres](images/window-usb.png)
+![LSB on the 40 metre net, 7.150 MHz](images/window-lsb.png)
 
 The list has **BW**, the width of what you hear: the low edge stays at
 300 Hz and BW moves the top edge, from 300 to 3000 Hz. The bottom row has

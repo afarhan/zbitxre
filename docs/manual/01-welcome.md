@@ -21,7 +21,7 @@ and the window are worked differently, it says how for each.
 ## What is in this manual
 
 1. **Welcome, and a quick start**: this chapter.
-2. [**Mode by mode, and the settings**](02-modes-and-settings.md): voice,
+2. [**Mode by mode, and the settings**](02-modes-and-settings.md): USB, LSB, AM,
    CW, FT8, RADE, VOIP and 2TONE, the logbook, SET and CONNECTIONS.
 3. [**On line, and operating from afar**](03-online.md): putting the radio
    on my.sbitx.net, operating it from a browser or a phone, the map, VoIP,
@@ -52,15 +52,15 @@ The line just above the spectrum is the status line. It says what the radio
 has to tell you: that it is connected, that someone is speaking over VoIP,
 or why something you asked for was refused.
 
-## Selecting, turning and pressing
+## This is important : Selecting, turning and pressing
 
 Every list on every screen works the same way:
 
-- a **tap** selects a row, and does nothing else;
-- **turning** (the panel's knob, the mouse wheel, or the arrow keys) steps
+- **Tappping on the screen** selects a row, and does nothing else;
+- **turning the knob** (the panel's knob, the mouse wheel, or the arrow keys) steps
   the selection up and down the list, so that rows off the screen can be
   reached;
-- a **press** acts on the selected row: the panel's knob pressed in, the
+- **Pressing on the knob** acts on the selected row: the panel's knob pressed in, the
   middle mouse button, **Enter**, or a second tap on the same row.
 
 A press on a **choice** (such as AGC) moves it to its next value. A press on
@@ -68,11 +68,10 @@ a **number** (such as WPM) starts changing it: the row is edged in green,
 turning changes the value, and another press or a tap ends it. A press on a
 **text** (such as MYCALLSIGN) opens a keyboard on the screen.
 
-On an **sBitx**, the knob on the right changes the selected control on the
-main screen directly, the volume while the frequency is selected, and its
-press moves to the next control. In SET and CONNECTIONS it steps through the
-rows and its press acts. The knob on the left always tunes.
-
+#### sBitx Users! ####
+- the smaller knob on the top-right changes the selected control on the
+main screen directly and its press moves to the next control. In lists (like the logbook) it steps through the rows and its press acts. 
+- The larger knob on the bottom-left always tunes.
 Anything that restarts the radio or takes it off line asks first, in a box.
 
 ## Quick start
@@ -134,10 +133,4 @@ talk over the internet, register at
 [my.sbitx.net/register](https://my.sbitx.net/register) with the radio
 beside you. Chapter 3 shows how. It takes five minutes.
 
-## Pictures in this manual
 
-The pictures of the window were taken on a desktop against a stand-in for
-the radio, which plays a made-up band, so the signals in them are not real
-stations. The logbook's entries are made up too. The front panel's
-pictures are still to come; until then, the panel's screens are laid out as
-the window's are, with the same names.
