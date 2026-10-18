@@ -1038,12 +1038,20 @@ MAP_PAGE = """<!doctype html>
 # what is served from static/, by its name, and as what
 # the files an owner fetches to upgrade a radio are GitHub's, where every
 # build comes from and nowhere else, the author's ruling of 18 October
-# 2026: the Upgrade page names them there. Copies of them were kept and
-# served here until then, a second source of builds, which gave out a
-# firmware not yet tried
+# 2026. Copies of them were kept and served here until then, a second
+# source of builds, which gave out a firmware not yet tried. What is
+# served here is only INSTALL_POINTER, at /install.sh, so that the line an
+# owner types is short, curl -fsSL https://my.sbitx.net/install.sh | bash:
+# it fetches setup/install.sh from GitHub and runs it, so an edit there is
+# what runs the next time
 GITHUB_FILES = "https://raw.githubusercontent.com/afarhan/zbitxre/main/"
 INSTALL_ADDRESS = GITHUB_FILES + "setup/install.sh"
 PANEL_FIRMWARE_ADDRESS = GITHUB_FILES + "release/panel/front_panel.uf2"
+INSTALL_POINTER = (
+    "#!/bin/bash\n"
+    "# fetches zbitxre's installer from GitHub, where it is kept, and runs it\n"
+    "curl -fsSL %s \\\n"
+    "    -o /tmp/zbitxre_install.sh && exec bash /tmp/zbitxre_install.sh\n" % INSTALL_ADDRESS)
 
 STATIC = {
     "land.json": "application/json",
@@ -2241,7 +2249,7 @@ class Handler(BaseHTTPRequestHandler):
             "<p>In the terminal, type this <strong>whole line, exactly as it "
             "is</strong>, then press Enter:</p>"
             "<div class=\"oneline\"><code id=\"line\">curl -fsSL "
-            "%s | bash</code>"
+            "%s/install.sh | bash</code>"
             "<button id=\"copy\" type=\"button\">Copy</button></div>"
             "<div class=\"check\"><strong>Check it letter by letter before you press "
             "Enter.</strong> The address alone does nothing: it must be the whole "
@@ -2253,9 +2261,8 @@ class Handler(BaseHTTPRequestHandler):
             "<span class=\"spelled\">|</span>.</li>"
             "<li><span class=\"spelled\">|</span> is the upright bar, usually "
             "Shift and the backslash key; not a capital I or a small l.</li>"
-            "<li>The address is GitHub's: <span class=\"spelled\">raw.githubusercontent"
-            ".com</span>, then <span class=\"spelled\">/afarhan/zbitxre/main/setup/"
-            "install.sh</span>, all small letters.</li></ul>"
+            "<li><span class=\"spelled\">my.sbitx.net</span>: s-b-i-t-x, with a "
+            "dot on each side.</li></ul>"
             "<p>If you are reading this page on the radio itself, press "
             "<strong>Copy</strong> and paste it into the terminal instead of typing "
             "it.</p></div>"
@@ -2293,7 +2300,7 @@ class Handler(BaseHTTPRequestHandler):
             "<span class=\"command\">~/zbitxre/setup/undo_install.sh</span> in the "
             "radio's terminal and restart it.</li></ul>"
             "<script src=\"%s\"></script>"
-            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), INSTALL_ADDRESS,
+            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), self.service.settings.base_url,
                PANEL_FIRMWARE_ADDRESS, static_address("upgrade.js"))))
 
     def register_form(self, told="", is_wrong=False, callsign="", email="", suffix="home"):
@@ -2512,6 +2519,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.keys_page(account, query.get("radio", [""])[0])
         elif url.path == "/help":
             self.help_page()
+        elif url.path == "/install.sh":
+            self.send(200, INSTALL_POINTER, "text/plain; charset=utf-8", keep="no-cache")
         elif url.path == "/upgrade":
             self.upgrade_page()
         elif url.path in ("/radios/settings", "/radios/log"):
