@@ -308,6 +308,8 @@ static const struct roller_place roller_places[ROLLERS] = {
 //CLOSE is in a smaller font than the other keys, to fit a key's width
 #define LOG_CLOSE_KEY "CLOSE"
 #define LOG_MACROS_MAX 12
+//a macro labelled so is a place left empty in the macros' file
+#define LOG_EMPTY_MACRO "-"
 #define LOG_TABLE_TOP LOG_MACROS_TOP
 #define LOG_TABLE_TOP_IN_CW (LOG_MACROS_TOP + LOG_MACROS_HEIGHT + LOG_GAP)
 #define LOG_SAID_MAX 64
@@ -350,7 +352,8 @@ static char log_said[LOG_SAID_MAX + 1];
 static int log_editing = NOT_EDITING;
 static lv_obj_t *log_keyboard;
 static bool log_is_save_waiting;
-static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX];
+//the macros' buttons, and ABORT after them
+static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX + 1];
 static char log_macro_labels[LOG_MACROS_MAX][CONTROL_TEXT_MAX];
 static int log_macros_shown;
 static int log_rows_in_view = LOG_ROWS_IN_VIEW;
@@ -1014,6 +1017,14 @@ static void on_log_key(lv_event_t *e){
 		lv_textarea_add_text(value, key);
 }
 
+//ABORT, at the end of the macros' row: the macro being sent is stopped,
+//the radio's CW_DO ESC, which the author asked for on 18 October 2026
+static void on_log_abort_touched(lv_event_t *e){
+	(void)e;
+	log_macro_waiting[0] = 0;
+	send_action("CW_DO", "ESC");
+}
+
 //a macro is sent once what is being typed has gone to the radio
 static void on_log_macro_touched(lv_event_t *e){
 	int which = (int)(intptr_t)lv_event_get_user_data(e);
@@ -1391,20 +1402,23 @@ static void log_macros_make(){
 		lv_obj_delete(log_macro_buttons[i]);
 	log_macros_shown = 0;
 	text_of("MODE", mode, sizeof(mode));
+	//the labels, but for the places left empty
 	if (macro != NULL && (!strcmp(mode, "CW") || !strcmp(mode, "CWR"))){
-		log_macros_shown = controls_choices(macro);
-		if (log_macros_shown > LOG_MACROS_MAX)
-			log_macros_shown = LOG_MACROS_MAX;
+		for (i = 0; i < controls_choices(macro) && log_macros_shown < LOG_MACROS_MAX; i++){
+			one = *macro;
+			one.value = i;
+			controls_value_text(&one, log_macro_labels[log_macros_shown],
+				sizeof(log_macro_labels[log_macros_shown]));
+			if (strcmp(log_macro_labels[log_macros_shown], LOG_EMPTY_MACRO))
+				log_macros_shown++;
+		}
 	}
 	log_rows_in_view = LOG_ROWS_IN_VIEW;
 	if (log_macros_shown > 0){
 		top = LOG_TABLE_TOP_IN_CW;
 		log_rows_in_view = LOG_ROWS_IN_VIEW_IN_CW;
-		width = (SCREEN_WIDTH - LOG_GAP) / log_macros_shown - LOG_GAP;
+		width = (SCREEN_WIDTH - LOG_GAP) / (log_macros_shown + 1) - LOG_GAP;
 		for (i = 0; i < log_macros_shown; i++){
-			one = *macro;
-			one.value = i;
-			controls_value_text(&one, log_macro_labels[i], sizeof(log_macro_labels[i]));
 			log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
 				LOG_MACROS_HEIGHT);
 			lv_obj_align(text_create(log_macro_buttons[i], log_macro_labels[i],
@@ -1413,6 +1427,14 @@ static void log_macros_make(){
 				LV_EVENT_CLICKED, (void *)(intptr_t)i);
 			x += width + LOG_GAP;
 		}
+		log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
+			LOG_MACROS_HEIGHT);
+		lv_obj_align(text_create(log_macro_buttons[i], "ABORT", &lv_font_montserrat_12,
+			COLOUR_VALUE), LV_ALIGN_CENTER, 0, 0);
+		lv_obj_add_event_cb(log_macro_buttons[i], on_log_abort_touched, LV_EVENT_CLICKED,
+			NULL);
+		//ABORT is deleted with the macros the next time
+		log_macros_shown++;
 	}
 	lv_table_set_row_count(log_table, log_rows_in_view + 1);
 	lv_obj_set_y(log_table, top);

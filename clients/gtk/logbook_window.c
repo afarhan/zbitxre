@@ -37,7 +37,8 @@
 // exchange from these same fields, so, as the author asked on 18 October
 // 2026, they stay as they are when the window is closed and opened again,
 // and are cleared only by WIPE or by SAVE; and in CW the macros' buttons
-// are a row of their own under the fields, to be sent from here. Each field
+// are a row of their own under the fields, to be sent from here, with
+// ABORT at its end, which stops the macro being sent. Each field
 // is one line high, and shows its name, dim, in place of a value while it
 // is empty.
 //
@@ -105,9 +106,12 @@
 #define MACRO_HEIGHT 28
 #define BUTTON_WIDTH 44
 #define BUTTON_PADDING 4
+// the macros' row is a dozen buttons across, in a smaller font than the rest
+#define MACRO_SIZE 9
 #define KEY_ROWS 4
 #define KEY_COLUMNS 11
 #define MACROS_MAX 12
+#define EMPTY_MACRO "-"
 #define MACRO_ROOM 16
 #define CHOICES_ROOM 256
 #define PAGE_LIST "list"
@@ -220,6 +224,7 @@ static void load_style(void) {
 		" font-size: %dpx; font-weight: bold; text-shadow: none; box-shadow: none;"
 		" min-width: 0; min-height: 0; padding: 0 %dpx; }"
 		".log-button:active { background-color: #604800; }"
+		".log-button.log-macro { font-size: %dpx; padding: 0; }"
 		".log-button.log-marked { background-color: #604800; }"
 		".log-headings { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #00FFFF; background-color: #101820; }"
@@ -234,7 +239,8 @@ static void load_style(void) {
 		" min-width: 0; min-height: 0; padding: 0; }"
 		".log-key:active { background-color: #604800; }",
 		px(TITLE_SIZE), px(TITLE_SIZE), px(1) + 1, px(VALUE_SIZE),
-		px(TITLE_SIZE), px(BUTTON_PADDING), px(ENTRY_SIZE), px(ENTRY_SIZE), px(VALUE_SIZE),
+		px(TITLE_SIZE), px(BUTTON_PADDING), px(MACRO_SIZE), px(ENTRY_SIZE), px(ENTRY_SIZE),
+		px(VALUE_SIZE),
 		px(KEY_SIZE));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
 }
@@ -611,6 +617,15 @@ static void on_key_pressed(GtkButton *button, gpointer key) {
 		type_a_character(c);
 }
 
+// ABORT, at the end of the macros' row: the macro being sent is stopped,
+// and what was waiting dropped, the radio's CW_DO ESC; the author asked
+// for it on 18 October 2026, where the sample macros' last, "-", had been
+static void on_abort_pressed(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	send("CW_DO", "ESC");
+}
+
 // a macro is sent with what is typed given to the radio first, so that the
 // callsign just typed is the one it sends
 static void on_macro_pressed(GtkButton *button, gpointer unused) {
@@ -868,6 +883,17 @@ static GtkWidget *create_keys_page(void) {
 	return keys;
 }
 
+// a button of the macros' row, whose label may be cut short with "...", so
+// that a dozen of them never make the window wider than the screen
+static void macro_button_add(const char *label, GCallback pressed) {
+	GtkWidget *button = button_new(label, "log-button", pressed, NULL);
+
+	gtk_style_context_add_class(gtk_widget_get_style_context(button), "log-macro");
+	gtk_label_set_ellipsize(GTK_LABEL(gtk_bin_get_child(GTK_BIN(button))),
+		PANGO_ELLIPSIZE_END);
+	gtk_box_pack_start(GTK_BOX(macro_row), button, TRUE, TRUE, 0);
+}
+
 static void drop_a_macro(GtkWidget *button, gpointer unused) {
 	(void)unused;
 	gtk_widget_destroy(button);
@@ -888,10 +914,14 @@ void logbook_window_set_macros(const char *choices) {
 	snprintf(copy, sizeof(copy), "%s", choices);
 	for (one = strtok_r(copy, "/", &saved); one != NULL && count < MACROS_MAX;
 			one = strtok_r(NULL, "/", &saved)) {
-		gtk_box_pack_start(GTK_BOX(macro_row), button_new(one, "log-button",
-			G_CALLBACK(on_macro_pressed), NULL), TRUE, TRUE, 0);
+		// a macro labelled "-" is a place left empty in the macros' file
+		if (!strcmp(one, EMPTY_MACRO))
+			continue;
+		macro_button_add(one, G_CALLBACK(on_macro_pressed));
 		count++;
 	}
+	if (count > 0)
+		macro_button_add("ABORT", G_CALLBACK(on_abort_pressed));
 	gtk_widget_show_all(macro_row);
 	gtk_widget_set_visible(macro_row, count > 0);
 }
