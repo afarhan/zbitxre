@@ -286,12 +286,18 @@
 // the same keyboard up over the lower part of the radio's own screen,
 // right of the column and under the status line, so that ESC in the column
 // and what CW is read off the air on the status line are still in view.
-// Each key touched is sent to the radio as it is touched, CW_TEXT, and is
-// added to the line above the keys, which is only a record of what was
-// sent. SPACE sends a space. Rubbing out takes the last character off the
-// line and does not call it back from the radio. ESC, in the column, stops
-// what the radio is still sending and empties the line; CLOSE, or KBD
-// again, puts the keyboard away. A key touched while a macro is being sent
+// What is typed goes into the box above the keys, and the button at its
+// right sends it or pauses, as the author asked on 18 October 2026, so
+// that a message can be made up while the band is listened to. It opens
+// paused. PLAY gives the box to the radio, CW_TEXT, and anything typed
+// while it plays goes as it is typed; PAUSE stops the radio, CW_DO ESC,
+// and what it had not begun stays in the box for the next PLAY. As the
+// radio begins each character it says so, CW_SENT, and the character is
+// taken off the front of the box, which so always holds what is still to
+// go, while the status line shows what went, among what is read. Rubbing
+// out takes the last character out of the box, and does not call back one
+// the radio has been given. ESC, in the column, stops the radio, empties
+// the box and pauses; CLOSE, or KBD again, puts the keyboard away. A key touched while a macro is being sent
 // stops the macro, which is the radio's doing. The author asked for it:
 // the radio's own screen is touched, and a keyboard is not always plugged
 // in.
@@ -709,7 +715,6 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 // a space on its own would be lost on the way; the radio takes this for one
 #define CW_TEXT_SPACE "_"
 // how much of what was sent the keyboard's box keeps in view
-#define CW_SENT_SHOWN 40
 #define CW_ESC_ROW 3
 #define TX_PITCH_CONTROL "TX_PITCH"
 #define LOG_ROW 0
@@ -731,8 +736,13 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define PAGE_MAIN "main"
 #define PAGE_SETTINGS "settings"
 #define PAGE_TEXT "text"
-// the line over KBD's keys, of what was sent
+// the box over KBD's keys, of what is typed and not yet sent, and the
+// button beside it that sends it or pauses
 #define CW_SENT_HEIGHT 24
+#define CW_BOX_ROOM 60
+#define CW_PLAY_WIDTH 64
+#define CW_PLAY_LABEL "\u25B6"
+#define CW_PAUSE_LABEL "\u275A\u275A"
 #define TYPED_SIZE 16
 
 static const char *radio_name = DEFAULT_RADIO;
@@ -872,11 +882,13 @@ static char through_key[SHA256_HEX_ROOM];
 static int has_through_key;
 static struct known password_asked;
 // in the place of a control to type a text for: the keyboard is sending CW
-// KBD's keyboard, over the lower part of the radio's own screen, and the
-// line of what was sent with it
+// KBD's keyboard, over the lower part of the radio's own screen, the box
+// of what is typed and not yet sent, and the button that sends or pauses
 static GtkWidget *cw_keys;
-static GtkWidget *cw_sent_label;
-static char cw_sent[CW_SENT_SHOWN + 1];
+static GtkWidget *cw_box_label;
+static GtkWidget *cw_play_button;
+static char cw_box[CW_BOX_ROOM + 1];
+static int is_cw_playing;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1243,6 +1255,7 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 }
 
 static void show_cw_keys(int is_shown);
+static void take_cw_sent(const char *text);
 
 // the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
 // nothing in the other modes: the logbook's window has a row of them
@@ -1908,6 +1921,10 @@ static void handle_line(const char *name, char *value) {
 	if (!strcmp(name, "CW")) {
 		set_class(status_label, "qso", 0);
 		take_cw_line(value);
+		return;
+	}
+	if (!strcmp(name, "CW_SENT")) {
+		take_cw_sent(value);
 		return;
 	}
 	if (!strcmp(name, "SAY")) {
@@ -2624,49 +2641,104 @@ static void open_text(struct known *k) {
 
 /* KBD in CW */
 
-static void show_cw_sent(void) {
-	char with_mark[CW_SENT_SHOWN + 2];
+static void show_cw_box(void) {
+	char with_mark[CW_BOX_ROOM + 2];
 
-	snprintf(with_mark, sizeof(with_mark), "%s_", cw_sent);
-	gtk_label_set_text(GTK_LABEL(cw_sent_label), with_mark);
+	snprintf(with_mark, sizeof(with_mark), "%s_", cw_box);
+	gtk_label_set_text(GTK_LABEL(cw_box_label), with_mark);
+	gtk_button_set_label(GTK_BUTTON(cw_play_button), is_cw_playing ? CW_PAUSE_LABEL
+		: CW_PLAY_LABEL);
+	set_class(cw_play_button, "in-use", is_cw_playing);
 }
 
-// a character, touched on KBD or struck on a keyboard plugged in, goes to
-// the radio at once, and the line keeps the newest of what was sent
-static void send_cw_character(char c) {
-	char text[2] = { c, 0 };
-	size_t length = strlen(cw_sent);
+// text for CW_TEXT, a space as "_", which a value cannot begin or end with
+static void send_cw_text(const char *text) {
+	char marked[CW_BOX_ROOM + 1];
+	int i;
 
-	if (c == ' ')
-		send_line(CW_TEXT_CONTROL, CW_TEXT_SPACE);
-	else if (c != '_')
-		send_line(CW_TEXT_CONTROL, text);
-	else
-		return;
-	if (length >= CW_SENT_SHOWN) {
-		memmove(cw_sent, cw_sent + 1, length);
-		length--;
+	snprintf(marked, sizeof(marked), "%s", text);
+	for (i = 0; marked[i] != 0; i++) {
+		if (marked[i] == ' ')
+			marked[i] = '_';
 	}
-	cw_sent[length] = c;
-	cw_sent[length + 1] = 0;
-	show_cw_sent();
+	if (marked[0] != 0)
+		send_line(CW_TEXT_CONTROL, marked);
 }
 
-// ESC: what the radio is still sending is stopped, and the line emptied
+// a character typed: into the box, and to the radio at once while sending
+static void type_cw_character(char c) {
+	size_t length = strlen(cw_box);
+	char one[2] = { c, 0 };
+
+	if (length >= CW_BOX_ROOM)
+		return;
+	cw_box[length] = c;
+	cw_box[length + 1] = 0;
+	if (is_cw_playing)
+		send_cw_text(one);
+	show_cw_box();
+}
+
+// a character struck on a keyboard plugged in, in CW: into the box while
+// KBD is up, and else to the radio at once, as it always went
+static void send_cw_character(char c) {
+	char one[2] = { c, 0 };
+
+	if (gtk_widget_get_visible(cw_keys))
+		type_cw_character(c);
+	else
+		send_cw_text(one);
+}
+
+// the radio says it has begun to send these: each, if it is the first of
+// the box, is taken out of it, the rest of the box being what is still to go
+static void take_cw_sent(const char *text) {
+	const char *at;
+	char c;
+
+	for (at = text; *at != 0; at++) {
+		c = *at;
+		if (c == '_')
+			c = ' ';
+		if (cw_box[0] != 0 && g_ascii_toupper(cw_box[0]) == g_ascii_toupper(c))
+			memmove(cw_box, cw_box + 1, strlen(cw_box));
+	}
+	show_cw_box();
+}
+
+// PLAY: what is in the box goes to the radio, and what is typed after it
+// goes as it is typed; PAUSE: the radio stops, and what it had not begun
+// stays in the box, to go at the next PLAY
+static void on_cw_play(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	is_cw_playing = !is_cw_playing;
+	if (is_cw_playing)
+		send_cw_text(cw_box);
+	else
+		send_line(CW_DO_CONTROL, "ESC");
+	show_cw_box();
+}
+
+// ESC: what the radio is still sending is stopped, the box emptied, and
+// the keyboard paused
 static void stop_cw_sending(void) {
 	send_line(CW_DO_CONTROL, "ESC");
-	cw_sent[0] = 0;
-	show_cw_sent();
+	cw_box[0] = 0;
+	is_cw_playing = 0;
+	show_cw_box();
 }
 
 static void show_cw_keys(int is_shown) {
 	if (is_shown)
-		show_cw_sent();
+		show_cw_box();
 	gtk_widget_set_visible(cw_keys, is_shown);
 }
 
+// the rub-out takes the last character out of the box; one the radio has
+// been given already, while sending, it does not call back
 static void on_cw_key(char key) {
-	size_t length = strlen(cw_sent);
+	size_t length = strlen(cw_box);
 
 	if (key == KEYBOARD_CLOSE) {
 		show_cw_keys(0);
@@ -2674,11 +2746,11 @@ static void on_cw_key(char key) {
 	}
 	if (key == KEYBOARD_RUB_OUT) {
 		if (length > 0)
-			cw_sent[length - 1] = 0;
-		show_cw_sent();
+			cw_box[length - 1] = 0;
+		show_cw_box();
 		return;
 	}
-	send_cw_character(key);
+	type_cw_character(key);
 }
 
 /* a text of the settings, typed */
@@ -4483,12 +4555,22 @@ static GtkWidget *create_text_page(void) {
 // line of what was sent over its keys; made after the wheel, so that it
 // lies over everything there, and not shown until KBD is touched
 static void create_cw_keys(void) {
+	GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+
 	cw_keys = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	cw_sent_label = gtk_label_new("");
-	add_label_class(cw_sent_label, "typed");
-	gtk_label_set_xalign(GTK_LABEL(cw_sent_label), 1);
-	gtk_widget_set_size_request(cw_sent_label, -1, px_down(CW_SENT_HEIGHT));
-	gtk_box_pack_start(GTK_BOX(cw_keys), cw_sent_label, FALSE, FALSE, 0);
+	cw_box_label = gtk_label_new("");
+	add_label_class(cw_box_label, "typed");
+	gtk_label_set_xalign(GTK_LABEL(cw_box_label), 0);
+	gtk_label_set_ellipsize(GTK_LABEL(cw_box_label), PANGO_ELLIPSIZE_START);
+	gtk_widget_set_size_request(cw_box_label, -1, px_down(CW_SENT_HEIGHT));
+	cw_play_button = gtk_button_new_with_label(CW_PLAY_LABEL);
+	gtk_style_context_add_class(gtk_widget_get_style_context(cw_play_button), "key");
+	gtk_widget_set_can_focus(cw_play_button, FALSE);
+	gtk_widget_set_size_request(cw_play_button, px_across(CW_PLAY_WIDTH), -1);
+	g_signal_connect(cw_play_button, "clicked", G_CALLBACK(on_cw_play), NULL);
+	gtk_box_pack_start(GTK_BOX(line), cw_box_label, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(line), cw_play_button, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(cw_keys), line, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(cw_keys), keyboard_new("key", on_cw_key), TRUE, TRUE, 0);
 	// its keys are shown now, and the whole hidden, and left so when the
 	// window is shown, until KBD shows it

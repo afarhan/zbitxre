@@ -101,6 +101,9 @@ static volatile bool is_qso_said;
 //screen takes it is added on, and what does not fit is lost
 static char cw_text[LINK_SAY_MAX + 1];
 static volatile int cw_count;
+//what the radio has begun to send, for KBD's box
+static char cw_sent[LINK_SAY_MAX + 1];
+static volatile int cw_sent_count;
 
 static volatile unsigned long times_read;
 static volatile unsigned long times_written;
@@ -176,6 +179,12 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		for (int i = 0; i < count && cw_count < LINK_SAY_MAX; i++){
 			cw_text[cw_count] = (char)bytes[i];
 			cw_count = cw_count + 1;
+		}
+	}
+	if (control == LINK_CW_SENT){
+		for (int i = 0; i < count && cw_sent_count < LINK_SAY_MAX; i++){
+			cw_sent[cw_sent_count] = (char)bytes[i];
+			cw_sent_count = cw_sent_count + 1;
 		}
 	}
 	if (control == LINK_QSO && count <= LINK_SAY_MAX){
@@ -345,6 +354,14 @@ void i2c_link_slice(){
 		cw_count = 0;
 		interrupts();
 		main_cw_text(text);
+	}
+	if (cw_sent_count > 0){
+		noInterrupts();
+		memcpy(text, cw_sent, cw_sent_count);
+		text[cw_sent_count] = 0;
+		cw_sent_count = 0;
+		interrupts();
+		screens_cw_sent(text);
 	}
 	if (is_qso_said){
 		noInterrupts();

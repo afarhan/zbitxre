@@ -1978,6 +1978,7 @@ int main(int argc, char **argv) {
 	server_on_answer(answer_message);
 	panel_also_tell(server_say, server_warn, server_show_qso);
 	panel_cw_also_tell(server_send_cw);
+	panel_cw_also_tell_sent(server_send_cw_sent);
 	if (server_open(SERVER_PORT) < 0)
 		printf("clients cannot connect: port %d is not free\n", SERVER_PORT);
 	else

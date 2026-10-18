@@ -29,7 +29,12 @@
 //   of typed text, of macros and of what is keyed on a client's pads, as
 //   each begins to be sent, to the panel and to the clients in the same
 //   run of text as what is read. What is keyed on the radio's own paddle
-//   is not among it: the keyer makes dots and dashes, not letters.
+//   is not among it: the keyer makes dots and dashes, not letters. The
+//   same goes on its own too, to whoever panel_cw_also_tell_sent() names,
+//   the clients over the network, and to the panel as LINK_CW_SENT: KBD keeps what has been
+//   typed and not yet sent in a box, and takes each character out of it as
+//   the radio says it has begun to send it, the author's asking of 18
+//   October 2026.
 //
 // For the thread that owns the controls.
 
@@ -47,6 +52,10 @@
 #define WAITING_MAX LINK_SAY_MAX
 
 static uint8_t part[WAITING_MAX];
+// what has been sent, waiting for the panel to take the value before
+static uint8_t sent_part[WAITING_MAX];
+static char sent_waiting[WAITING_MAX];
+static int sent_waiting_count;
 static char waiting[WAITING_MAX + 1];
 static int waiting_count;
 static char line[LINE_MAX + 1];
@@ -54,9 +63,14 @@ static int line_count;
 static long last_read_ms;
 
 static void (*also_read)(const char *text);
+static void (*also_sent)(const char *text);
 
 void panel_cw_also_tell(void (*read)(const char *text)) {
 	also_read = read;
+}
+
+void panel_cw_also_tell_sent(void (*sent)(const char *text)) {
+	also_sent = sent;
 }
 
 static void print_the_line(void) {
@@ -83,9 +97,18 @@ void panel_cw_poll(long now_ms) {
 	// keys, goes where what is read goes, among it: the author asked to
 	// see what is sent in the window that shows what is read
 	count = cw_text_take_sent(read, sizeof(read) - 1);
-	if (count > 0 && also_read != NULL) {
+	if (count > 0)
 		read[count] = 0;
+	if (count > 0 && also_read != NULL)
 		also_read(read);
+	if (count > 0 && also_sent != NULL)
+		also_sent(read);
+	for (i = 0; i < count && sent_waiting_count < WAITING_MAX; i++)
+		sent_waiting[sent_waiting_count++] = read[i];
+	if (sent_waiting_count > 0 && !panel_is_waiting(LINK_CW_SENT)) {
+		memcpy(sent_part, sent_waiting, sent_waiting_count);
+		panel_set_kept_bytes(LINK_CW_SENT, sent_part, sent_waiting_count);
+		sent_waiting_count = 0;
 	}
 	for (i = 0; i < count && waiting_count < WAITING_MAX; i++)
 		waiting[waiting_count++] = read[i];

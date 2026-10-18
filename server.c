@@ -517,6 +517,22 @@ void server_send_cw(const char *text) {
 	tell_everyone("CW", text);
 }
 
+// what the radio has begun to send of a text, a macro or a client's keying:
+// "CW_SENT CQ_DE", a space as "_", which a line's value cannot begin or end
+// with otherwise. KBD takes each character out of its box of what is still
+// to go
+void server_send_cw_sent(const char *text) {
+	char marked[LINE_MAX_LENGTH];
+	int i;
+
+	snprintf(marked, sizeof(marked), "%s", text);
+	for (i = 0; marked[i] != 0; i++) {
+		if (marked[i] == ' ')
+			marked[i] = '_';
+	}
+	tell_everyone("CW_SENT", marked);
+}
+
 void server_on_answer(void (*answer)(const char *line)) {
 	answer_a_message = answer;
 }

@@ -30,3 +30,4 @@ void server_say(const char *text);
 void server_warn(const char *text);
 void server_show_qso(const char *text);
 void server_send_cw(const char *text);
+void server_send_cw_sent(const char *text);

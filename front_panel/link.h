@@ -94,6 +94,10 @@ extern "C" {
 #define LINK_POWER 15
 #define LINK_SWR 16
 #define LINK_BATTERY 17
+// what the radio has begun to send of a text, a macro or a client's keying
+// since the last value, a kept, counted value of its characters: KBD takes
+// each out of its box of what is still to go
+#define LINK_CW_SENT 18
 
 struct link_wifi_point {
 	int8_t signal_dbm;

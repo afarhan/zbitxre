@@ -1554,65 +1554,94 @@ static void log_create(){
    typed. It lies over the lower part of the main screen, right of the
    column and under the status line, so that ESC in the column and what
    CW is read off the air are still in view; the waterfall, which is
-   painted straight to the glass, is not painted while it is up. Each key
-   touched is sent at once, CW_TEXT, and is added to the line over the
-   keys, which is only a record of what was sent, the last of it in view.
-   SPACE sends a space, as "_", which a value of a control cannot begin or
-   end with otherwise. The rub-out takes the last character off the line,
-   and back from what is still to go to the radio, but not from what the
-   radio has been given. ESC in the column stops what the radio is sending
-   and empties the line. CLOSE, KBD again, or a long press of the knob puts
-   the keyboard away. What is typed goes to the radio as a text, a part at
-   a time; while one is on its way, what is typed after it waits and goes
-   next, all of it in one text. */
+   painted straight to the glass, is not painted while it is up.
 
-#define CW_SENT_SHOWN 40
+   What is typed goes into the box above the keys, and the button at its
+   right sends it or pauses, the author's asking of the same day, so that
+   a message can be made up while the band is listened to. It opens
+   paused. PLAY gives the box to the radio, CW_TEXT, and what is typed
+   while it plays goes as it is typed; PAUSE stops the radio, CW_DO ESC,
+   and what it had not begun stays in the box for the next PLAY. As the
+   radio begins each character it says so, LINK_CW_SENT, and the character
+   is taken off the front of the box, which so always holds what is still
+   to go. A space goes as "_", which a value of a control cannot begin or
+   end with otherwise. The rub-out takes the last character out of the
+   box, and back from what is still on its way to the radio, but not from
+   what the radio has been given. ESC in the column stops the radio,
+   empties the box and pauses. CLOSE, KBD again, or a long press of the
+   knob puts the keyboard away. What goes to the radio goes as a text, a
+   part at a time; while one is on its way, what is to go after it waits
+   and goes next, all of it in one text. */
+
+#define CW_BOX_ROOM 60
 #define CW_TEXT_SPACE '_'
-#define CW_LINE_HEIGHT 24
+#define CW_LINE_HEIGHT 28
+#define CW_PLAY_WIDTH 56
 //the room it lies in, as main.cpp has the screen: right of the column,
 //under the status line
 #define CW_KEYS_LEFT WATERFALL_LEFT
-#define CW_KEYS_TOP (STATUS_TOP + CW_STATUS_HEIGHT)
 #define CW_STATUS_HEIGHT 16
+#define CW_KEYS_TOP (STATUS_TOP + CW_STATUS_HEIGHT)
+#define CW_KEYS_WIDTH (SCREEN_WIDTH - CW_KEYS_LEFT)
 
 static lv_obj_t *cw_layer;
 static lv_obj_t *cw_line;
-static char cw_sent[CW_SENT_SHOWN + 1];
+static lv_obj_t *cw_play_label;
+//what is typed and not yet begun by the radio
+static char cw_box[CW_BOX_ROOM + 1];
+//what is to go to the radio, once nothing else is on its way
 static char cw_to_go[LINK_TEXT_MAX + 1];
+static bool is_cw_playing;
 
-static void cw_line_show(){
-	lv_label_set_text(cw_line, cw_sent);
+static void cw_box_show(){
+	char shown[CW_BOX_ROOM + 2];
+
+	if (cw_line == NULL)
+		return;
+	snprintf(shown, sizeof(shown), "%s_", cw_box);
+	lv_label_set_text(cw_line, shown);
+	if (is_cw_playing)
+		lv_label_set_text(cw_play_label, LV_SYMBOL_PAUSE);
+	else
+		lv_label_set_text(cw_play_label, LV_SYMBOL_PLAY);
+}
+
+//text to go to the radio: added to what waits, a space as "_"
+static void cw_to_go_add(const char *text){
+	size_t waiting = strlen(cw_to_go);
+	const char *at;
+
+	for (at = text; *at != 0 && waiting < sizeof(cw_to_go) - 1; at++){
+		if (*at == ' ')
+			cw_to_go[waiting++] = CW_TEXT_SPACE;
+		else
+			cw_to_go[waiting++] = *at;
+	}
+	cw_to_go[waiting] = 0;
 }
 
 static void cw_add(char c){
-	size_t had = strlen(cw_sent);
-	size_t waiting = strlen(cw_to_go);
-	char shown = c;
+	size_t had = strlen(cw_box);
+	char one[2] = { c, 0 };
 
-	if (c == CW_TEXT_SPACE)
-		shown = ' ';
-	if (had == CW_SENT_SHOWN){
-		memmove(cw_sent, cw_sent + 1, had);
-		had--;
-	}
-	cw_sent[had] = shown;
-	cw_sent[had + 1] = 0;
-	if (waiting < sizeof(cw_to_go) - 1){
-		cw_to_go[waiting] = c;
-		cw_to_go[waiting + 1] = 0;
-	}
-	cw_line_show();
+	if (had >= CW_BOX_ROOM)
+		return;
+	cw_box[had] = c;
+	cw_box[had + 1] = 0;
+	if (is_cw_playing)
+		cw_to_go_add(one);
+	cw_box_show();
 }
 
 static void cw_rub_out(){
-	size_t had = strlen(cw_sent);
+	size_t had = strlen(cw_box);
 	size_t waiting = strlen(cw_to_go);
 
 	if (had > 0)
-		cw_sent[had - 1] = 0;
+		cw_box[had - 1] = 0;
 	if (waiting > 0)
 		cw_to_go[waiting - 1] = 0;
-	cw_line_show();
+	cw_box_show();
 }
 
 bool screens_cw_keys_up(){
@@ -1626,12 +1655,41 @@ void screens_cw_keys_hide(){
 	waterfall_set_painting(true);
 }
 
-//ESC in the column has stopped what the radio was sending: the line goes
+//ESC in the column has stopped the radio: the box goes, and it is paused
 void screens_cw_stopped(){
-	cw_sent[0] = 0;
+	cw_box[0] = 0;
 	cw_to_go[0] = 0;
-	if (cw_line != NULL)
-		cw_line_show();
+	is_cw_playing = false;
+	cw_box_show();
+}
+
+//the radio has begun to send these: each, if it is the first of the box,
+//is taken out of it
+void screens_cw_sent(const char *text){
+	const char *at;
+	char c;
+
+	for (at = text; *at != 0; at++){
+		c = *at;
+		if (c == CW_TEXT_SPACE)
+			c = ' ';
+		if (cw_box[0] != 0 && toupper((unsigned char)cw_box[0]) == toupper((unsigned char)c))
+			memmove(cw_box, cw_box + 1, strlen(cw_box));
+	}
+	cw_box_show();
+}
+
+//PLAY gives the box to the radio; PAUSE stops it, and what was not begun
+//stays in the box
+static void on_cw_play(lv_event_t *e){
+	(void)e;
+	is_cw_playing = !is_cw_playing;
+	cw_to_go[0] = 0;
+	if (is_cw_playing)
+		cw_to_go_add(cw_box);
+	else
+		send_action("CW_DO", "ESC");
+	cw_box_show();
 }
 
 static void on_cw_key(lv_event_t *e){
@@ -1647,12 +1705,12 @@ static void on_cw_key(lv_event_t *e){
 	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
 		cw_rub_out();
 	else if (!strcmp(key, "SPACE"))
-		cw_add(CW_TEXT_SPACE);
+		cw_add(' ');
 	else
 		cw_add(key[0]);
 }
 
-//what has been typed goes, once nothing else is on its way to the radio
+//what is to go, goes, once nothing else is on its way to the radio
 static void cw_send_waiting(){
 	struct panel_control *c;
 
@@ -1668,23 +1726,27 @@ static void cw_send_waiting(){
 
 static void cw_create(){
 	lv_obj_t *box;
+	lv_obj_t *play;
 	lv_obj_t *keys;
 
 	cw_layer = lv_obj_create(lv_screen_active());
 	lv_obj_remove_style_all(cw_layer);
-	lv_obj_set_size(cw_layer, SCREEN_WIDTH - CW_KEYS_LEFT, SCREEN_HEIGHT - CW_KEYS_TOP);
+	lv_obj_set_size(cw_layer, CW_KEYS_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP);
 	lv_obj_align(cw_layer, LV_ALIGN_TOP_LEFT, CW_KEYS_LEFT, CW_KEYS_TOP);
 	lv_obj_set_style_bg_color(cw_layer, lv_color_hex(COLOUR_SCREEN), 0);
 	lv_obj_set_style_bg_opa(cw_layer, LV_OPA_COVER, 0);
 	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_SCROLLABLE);
-	box = box_create(cw_layer, LOG_GAP, 0, SCREEN_WIDTH - CW_KEYS_LEFT - 2 * LOG_GAP,
+	box = box_create(cw_layer, LOG_GAP, 0, CW_KEYS_WIDTH - CW_PLAY_WIDTH - 3 * LOG_GAP,
 		CW_LINE_HEIGHT);
 	cw_line = text_create(box, "", &lv_font_montserrat_16, COLOUR_VALUE);
-	lv_obj_align(cw_line, LV_ALIGN_RIGHT_MID, -LOG_GAP, 0);
+	lv_label_set_long_mode(cw_line, LV_LABEL_LONG_CLIP);
+	lv_obj_align(cw_line, LV_ALIGN_LEFT_MID, LOG_GAP, 0);
+	play = button_create(cw_layer, CW_KEYS_WIDTH - CW_PLAY_WIDTH - LOG_GAP, 0, CW_PLAY_WIDTH,
+		CW_LINE_HEIGHT, LV_SYMBOL_PLAY, on_cw_play);
+	cw_play_label = lv_obj_get_child(play, 0);
 	keys = keys_create(cw_layer, log_keys, on_cw_key);
-	lv_obj_set_size(keys, SCREEN_WIDTH - CW_KEYS_LEFT,
-		SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT);
+	lv_obj_set_size(keys, CW_KEYS_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT);
 	lv_obj_align(keys, LV_ALIGN_BOTTOM_MID, 0, 0);
 	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1698,7 +1760,7 @@ void screens_open_cw_keys(){
 	if (cw_layer == NULL)
 		cw_create();
 	waterfall_set_painting(false);
-	cw_line_show();
+	cw_box_show();
 	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_move_foreground(cw_layer);
 }

@@ -112,6 +112,7 @@ void screens_open_cw_keys();
 bool screens_cw_keys_up();
 void screens_cw_keys_hide();
 void screens_cw_stopped();
+void screens_cw_sent(const char *text);
 void screens_log_part(const uint8_t *bytes, int count);
 void screens_close();
 bool screens_is_open();
