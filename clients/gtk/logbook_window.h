@@ -9,7 +9,8 @@
 
 void logbook_window_open(GtkWindow *main_window,
 	void (*send_line)(const char *word, const char *rest),
-	const char *(*value_of)(const char *control));
+	const char *(*value_of)(const char *control), const char *macros);
+void logbook_window_set_macros(const char *choices);
 int logbook_window_is_open(void);
 void logbook_window_took(const char *name, const char *value);
 void logbook_window_turned(int notches);

@@ -33,15 +33,24 @@
 // Above the list is the entry being written, as zbitxv2's logger had it:
 // CALL, SENT, RECV, EXCH and NR, the radio's controls of those names, which
 // logger.c on the radio describes; and three buttons, "?" beside CALL, and
-// WIPE and SAVE at the end. A tap on a field brings the window's own
-// keyboard up where the list was, under the fields, so that it never covers
-// what is typed, and the field is typed into there on its row, its edge
-// marked. The radio has no other keyboard to count on, and the author asked
-// for one of few keys that comes up whenever a text is typed: the letters,
-// the digits, and the four marks a callsign, a report or an exchange has.
-// OK, or a tap on another field or on any of the three buttons, gives what
-// was typed to the radio, in capitals; CANCEL drops it. A keyboard plugged
-// into the radio works too: Enter is OK and Escape is CANCEL.
+// WIPE and SAVE at the end. The CW macros fill their callsign, reports and
+// exchange from these same fields, so, as the author asked on 18 October
+// 2026, they stay as they are when the window is closed and opened again,
+// and are cleared only by WIPE or by SAVE; and in CW the macros' buttons
+// are a row of their own under the fields, to be sent from here. Each field
+// is one line high, and shows its name, dim, in place of a value while it
+// is empty.
+//
+// A tap on a field brings the window's own keyboard up where the list was,
+// under the fields, so that it never covers what is typed, and the field is
+// typed into there on its row, its edge marked. The radio has no other
+// keyboard to count on, and the author asked for one of few keys that comes
+// up whenever a text is typed: the digits with the rub-out after the 0, the
+// letters in three rows with the space between V and B, and the four marks
+// a callsign, a report or an exchange has. What is typed goes to the radio,
+// in capitals, when the keyboard's CLOSE is touched, or another field, any
+// of the buttons, or a macro; there is nothing to cancel. A keyboard
+// plugged into the radio works too: Enter or Escape takes what is typed.
 //
 // "?" searches the logbook for the callsign in CALL, or the beginning of
 // one; an empty CALL lists every station. The author's rule is that the
@@ -53,8 +62,9 @@
 // it says is shown beside the title, a refusal in bold. The entry is logged
 // in the mode and on the frequency the radio is on, at the radio's time.
 //
-// CLOSE, or Escape, puts the window away; what was searched for, and what
-// was typed and given to the radio, are there when it is opened again.
+// CLOSE, or Escape, puts the window away, giving the radio what was being
+// typed; what was searched for, and the fields, are there when it is opened
+// again.
 //
 // The sizes follow the window's width, as the main window's do, so that it
 // is as readable on the sbitx's screen as on a desktop.
@@ -86,20 +96,20 @@
 #define DEFAULT_WIDTH 800
 #define DEFAULT_HEIGHT 480
 #define TITLE_SIZE 11
-#define NAME_SIZE 9
 #define VALUE_SIZE 13
 #define ENTRY_SIZE 10
 #define KEY_SIZE 14
 #define BAR_HEIGHT 24
-#define FIELD_HEIGHT 40
+#define FIELD_HEIGHT 24
+#define ANSWER_HEIGHT 40
+#define MACRO_HEIGHT 28
 #define BUTTON_WIDTH 44
 #define BUTTON_PADDING 4
 #define KEY_ROWS 4
-#define KEYS_A_ROW 10
-#define CANCEL_KEYS 3
-#define SPACE_KEYS 3
-#define RUB_OUT_KEYS 2
-#define OK_KEYS 2
+#define KEY_COLUMNS 11
+#define MACROS_MAX 12
+#define MACRO_ROOM 16
+#define CHOICES_ROOM 256
 #define PAGE_LIST "list"
 #define PAGE_KEYS "keys"
 #define PAGE_ASK "ask"
@@ -126,8 +136,14 @@ static struct field fields[FIELDS] = {
 	{ .control = "NR", .share = 2 },
 };
 
+// the keys, a row to a line: a character is its key, and the rest stand for
+// the keys that are not characters, each one column wide but the space
+#define RUB_OUT_KEY '<'
+#define SPACE_KEY '_'
+#define CLOSE_KEY '>'
+#define SPACE_COLUMNS 2
 static const char *const key_rows[KEY_ROWS] = {
-	"1234567890", "QWERTYUIOP", "ASDFGHJKL/", "ZXCVBNM.?-",
+	"1234567890<", "QWERTYUIOP/", "ASDFGHJKL?-", "ZXCV_BNM.>",
 };
 
 static void (*send)(const char *word, const char *rest);
@@ -138,6 +154,8 @@ static GtkWidget *pages;
 static GtkWidget *list;
 static GtkWidget *list_scroller;
 static GtkWidget *asked_entry;
+static GtkWidget *macro_row;
+static char macro_choices[CHOICES_ROOM];
 static GtkWidget *yes_button;
 static GtkWidget *no_button;
 static GtkCssProvider *css;
@@ -193,7 +211,8 @@ static void load_style(void) {
 		" color: #FFE000; }"
 		".log-field { background-color: #101820; box-shadow: inset 0 0 0 1px #405060; }"
 		".log-field.log-editing { box-shadow: inset 0 0 0 %dpx #FFC000; }"
-		".log-name { font-size: %dpx; color: #00FFFF; }"
+		".log-value.log-prompt { font-family: sans-serif; font-weight: normal;"
+		" color: #406070; }"
 		".log-value { font-family: monospace; font-size: %dpx; font-weight: bold;"
 		" color: #FFFFFF; }"
 		".log-button { background-image: none; background-color: #101820;"
@@ -214,7 +233,7 @@ static void load_style(void) {
 		" font-size: %dpx; font-weight: bold; text-shadow: none; box-shadow: none;"
 		" min-width: 0; min-height: 0; padding: 0; }"
 		".log-key:active { background-color: #604800; }",
-		px(TITLE_SIZE), px(TITLE_SIZE), px(1) + 1, px(NAME_SIZE), px(VALUE_SIZE),
+		px(TITLE_SIZE), px(TITLE_SIZE), px(1) + 1, px(VALUE_SIZE),
 		px(TITLE_SIZE), px(BUTTON_PADDING), px(ENTRY_SIZE), px(ENTRY_SIZE), px(VALUE_SIZE),
 		px(KEY_SIZE));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
@@ -226,6 +245,7 @@ static void size_the_fixed_parts(void) {
 	gtk_widget_set_size_request(title, -1, px(BAR_HEIGHT));
 	for (i = 0; i < FIELDS; i++)
 		gtk_widget_set_size_request(fields[i].box, -1, px(FIELD_HEIGHT));
+	gtk_widget_set_size_request(macro_row, -1, px(MACRO_HEIGHT));
 }
 
 // the sizes are made again, once the window has its new width
@@ -274,12 +294,17 @@ static void show_fields(void) {
 
 	for (i = 0; i < FIELDS; i++) {
 		set_class(fields[i].box, "log-editing", i == editing);
-		if (i != editing) {
-			gtk_label_set_text(GTK_LABEL(fields[i].shown), fields[i].value);
+		if (i == editing) {
+			snprintf(with_mark, sizeof(with_mark), "%s_", typed);
+			set_class(fields[i].shown, "log-prompt", 0);
+			gtk_label_set_text(GTK_LABEL(fields[i].shown), with_mark);
 			continue;
 		}
-		snprintf(with_mark, sizeof(with_mark), "%s_", typed);
-		gtk_label_set_text(GTK_LABEL(fields[i].shown), with_mark);
+		set_class(fields[i].shown, "log-prompt", fields[i].value[0] == 0);
+		if (fields[i].value[0] == 0)
+			gtk_label_set_text(GTK_LABEL(fields[i].shown), fields[i].control);
+		else
+			gtk_label_set_text(GTK_LABEL(fields[i].shown), fields[i].value);
 	}
 }
 
@@ -572,27 +597,26 @@ static void rub_out(void) {
 	show_fields();
 }
 
-static void on_key_pressed(GtkButton *button, gpointer character) {
+static void on_key_pressed(GtkButton *button, gpointer key) {
+	char c = (char)GPOINTER_TO_INT(key);
+
 	(void)button;
-	type_a_character((char)GPOINTER_TO_INT(character));
+	if (c == RUB_OUT_KEY)
+		rub_out();
+	else if (c == CLOSE_KEY)
+		done_editing();
+	else if (c == SPACE_KEY)
+		type_a_character(' ');
+	else
+		type_a_character(c);
 }
 
-static void on_rub_out_pressed(GtkButton *button, gpointer unused) {
-	(void)button;
-	(void)unused;
-	rub_out();
-}
-
-static void on_ok_pressed(GtkButton *button, gpointer unused) {
-	(void)button;
+// a macro is sent with what is typed given to the radio first, so that the
+// callsign just typed is the one it sends
+static void on_macro_pressed(GtkButton *button, gpointer unused) {
 	(void)unused;
 	done_editing();
-}
-
-static void on_cancel_pressed(GtkButton *button, gpointer unused) {
-	(void)button;
-	(void)unused;
-	end_editing();
+	send("MACRO", gtk_button_get_label(button));
 }
 
 // "?": the logbook is searched for the callsign in CALL, as it is typed if
@@ -646,7 +670,7 @@ static void on_no_pressed(GtkButton *button, gpointer unused) {
 static void on_close_pressed(GtkButton *button, gpointer unused) {
 	(void)button;
 	(void)unused;
-	end_editing();
+	done_editing();
 	gtk_widget_hide(window);
 }
 
@@ -692,10 +716,8 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	(void)widget;
 	(void)unused;
 	if (editing != NOT_EDITING) {
-		if (is_enter)
+		if (is_enter || event->keyval == GDK_KEY_Escape)
 			done_editing();
-		else if (event->keyval == GDK_KEY_Escape)
-			end_editing();
 		else if (event->keyval == GDK_KEY_BackSpace)
 			rub_out();
 		else if (character >= ' ' && character <= '~')
@@ -755,21 +777,16 @@ static GtkWidget *create_bar(void) {
 // SAVE at the end
 static GtkWidget *create_fields(void) {
 	GtkWidget *row = gtk_grid_new();
-	GtkWidget *inside;
 	int column = 0;
 	int i;
 
 	gtk_grid_set_column_homogeneous(GTK_GRID(row), TRUE);
 	for (i = 0; i < FIELDS; i++) {
-		inside = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 		fields[i].shown = label_new("", "log-value");
-		gtk_box_pack_start(GTK_BOX(inside), label_new(fields[i].control, "log-name"),
-			FALSE, FALSE, px(2));
-		gtk_box_pack_start(GTK_BOX(inside), fields[i].shown, TRUE, TRUE, 0);
 		fields[i].box = gtk_event_box_new();
 		gtk_style_context_add_class(gtk_widget_get_style_context(fields[i].box),
 			"log-field");
-		gtk_container_add(GTK_CONTAINER(fields[i].box), inside);
+		gtk_container_add(GTK_CONTAINER(fields[i].box), fields[i].shown);
 		tell_taps(fields[i].box, G_CALLBACK(on_field_tapped), GINT_TO_POINTER(i));
 		gtk_grid_attach(GTK_GRID(row), fields[i].box, column, 0, fields[i].share, 1);
 		column += fields[i].share;
@@ -810,39 +827,73 @@ static GtkWidget *create_list_page(void) {
 	return page;
 }
 
+static const char *key_label(char c, char *text) {
+	if (c == RUB_OUT_KEY)
+		return "⌫";
+	if (c == SPACE_KEY)
+		return "SPACE";
+	if (c == CLOSE_KEY)
+		return "CLOSE";
+	text[0] = c;
+	text[1] = 0;
+	return text;
+}
+
 // the keyboard, which has no more keys than are needed
 static GtkWidget *create_keys_page(void) {
 	GtkWidget *keys = gtk_grid_new();
 	GtkWidget *key;
-	char text[2] = "";
-	int column = 0;
+	char text[2];
+	const char *at;
+	int column;
+	int width;
 	int row;
-	int i;
 
 	gtk_grid_set_row_homogeneous(GTK_GRID(keys), TRUE);
 	gtk_grid_set_column_homogeneous(GTK_GRID(keys), TRUE);
 	for (row = 0; row < KEY_ROWS; row++) {
-		for (i = 0; i < KEYS_A_ROW; i++) {
-			text[0] = key_rows[row][i];
-			key = button_new(text, "log-key", G_CALLBACK(on_key_pressed),
-				GINT_TO_POINTER(text[0]));
+		column = 0;
+		for (at = key_rows[row]; *at != 0; at++) {
+			width = 1;
+			if (*at == SPACE_KEY)
+				width = SPACE_COLUMNS;
+			key = button_new(key_label(*at, text), "log-key", G_CALLBACK(on_key_pressed),
+				GINT_TO_POINTER(*at));
 			gtk_widget_set_hexpand(key, TRUE);
 			gtk_widget_set_vexpand(key, TRUE);
-			gtk_grid_attach(GTK_GRID(keys), key, i, row, 1, 1);
+			gtk_grid_attach(GTK_GRID(keys), key, column, row, width, 1);
+			column += width;
 		}
 	}
-	gtk_grid_attach(GTK_GRID(keys), button_new("CANCEL", "log-key",
-		G_CALLBACK(on_cancel_pressed), NULL), column, KEY_ROWS, CANCEL_KEYS, 1);
-	column += CANCEL_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), button_new("SPACE", "log-key",
-		G_CALLBACK(on_key_pressed), GINT_TO_POINTER(' ')), column, KEY_ROWS, SPACE_KEYS, 1);
-	column += SPACE_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), button_new("⌫", "log-key",
-		G_CALLBACK(on_rub_out_pressed), NULL), column, KEY_ROWS, RUB_OUT_KEYS, 1);
-	column += RUB_OUT_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), button_new("OK", "log-key",
-		G_CALLBACK(on_ok_pressed), NULL), column, KEY_ROWS, OK_KEYS, 1);
 	return keys;
+}
+
+static void drop_a_macro(GtkWidget *button, gpointer unused) {
+	(void)unused;
+	gtk_widget_destroy(button);
+}
+
+// the macros' buttons, in CW: made again when the radio's macros change,
+// and the row put away in the other modes, where a macro is refused
+void logbook_window_set_macros(const char *choices) {
+	char copy[CHOICES_ROOM];
+	char *saved = NULL;
+	char *one;
+	int count = 0;
+
+	if (window == NULL || !strcmp(choices, macro_choices))
+		return;
+	snprintf(macro_choices, sizeof(macro_choices), "%s", choices);
+	gtk_container_foreach(GTK_CONTAINER(macro_row), drop_a_macro, NULL);
+	snprintf(copy, sizeof(copy), "%s", choices);
+	for (one = strtok_r(copy, "/", &saved); one != NULL && count < MACROS_MAX;
+			one = strtok_r(NULL, "/", &saved)) {
+		gtk_box_pack_start(GTK_BOX(macro_row), button_new(one, "log-button",
+			G_CALLBACK(on_macro_pressed), NULL), TRUE, TRUE, 0);
+		count++;
+	}
+	gtk_widget_show_all(macro_row);
+	gtk_widget_set_visible(macro_row, count > 0);
 }
 
 // the question, the entry it is asked about, and YES and NO
@@ -854,8 +905,8 @@ static GtkWidget *create_ask_page(void) {
 	gtk_label_set_ellipsize(GTK_LABEL(asked_entry), PANGO_ELLIPSIZE_END);
 	yes_button = button_new("YES", "log-button", G_CALLBACK(on_yes_pressed), NULL);
 	no_button = button_new("NO", "log-button", G_CALLBACK(on_no_pressed), NULL);
-	gtk_widget_set_size_request(yes_button, px(2 * BUTTON_WIDTH), px(FIELD_HEIGHT));
-	gtk_widget_set_size_request(no_button, px(2 * BUTTON_WIDTH), px(FIELD_HEIGHT));
+	gtk_widget_set_size_request(yes_button, px(2 * BUTTON_WIDTH), px(ANSWER_HEIGHT));
+	gtk_widget_set_size_request(no_button, px(2 * BUTTON_WIDTH), px(ANSWER_HEIGHT));
 	gtk_box_pack_start(GTK_BOX(answers), yes_button, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(answers), no_button, FALSE, FALSE, 0);
 	gtk_widget_set_halign(answers, GTK_ALIGN_CENTER);
@@ -888,6 +939,9 @@ static void create_window(GtkWindow *main_window) {
 	gtk_stack_add_named(GTK_STACK(pages), create_ask_page(), PAGE_ASK);
 	gtk_box_pack_start(GTK_BOX(all), create_bar(), FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(all), create_fields(), FALSE, FALSE, 0);
+	macro_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_box_set_homogeneous(GTK_BOX(macro_row), TRUE);
+	gtk_box_pack_start(GTK_BOX(all), macro_row, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(all), pages, TRUE, TRUE, 0);
 	gtk_container_add(GTK_CONTAINER(window), all);
 	size_the_fixed_parts();
@@ -903,19 +957,26 @@ int logbook_window_is_open(void) {
 
 // the window is opened, or brought to the front, and the radio is asked for
 // the entries of what was last searched for, every station at first. The
-// fields are shown as the radio has them, which the caller says
+// first time, the fields are as the radio has them, which the caller says;
+// after that the window keeps them, and follows what the radio says of them
+// while it is put away. The caller's copy is not used again: the radio does
+// not tell a client of a change it made itself, so the caller has not seen
+// what was typed here, and opening the window had emptied the fields
 void logbook_window_open(GtkWindow *main_window,
 		void (*send_line)(const char *word, const char *rest),
-		const char *(*value_of)(const char *control)) {
+		const char *(*value_of)(const char *control), const char *macros) {
 	int i;
 
 	send = send_line;
-	if (window == NULL)
+	if (window == NULL) {
 		create_window(main_window);
-	for (i = 0; i < FIELDS; i++)
-		snprintf(fields[i].value, TEXT_ROOM, "%s", value_of(fields[i].control));
+		for (i = 0; i < FIELDS; i++)
+			snprintf(fields[i].value, TEXT_ROOM, "%s", value_of(fields[i].control));
+	}
 	editing = NOT_EDITING;
 	gtk_widget_show_all(window);
+	logbook_window_set_macros(macros);
+	gtk_widget_set_visible(macro_row, macro_choices[0] != 0);
 	gtk_stack_set_visible_child_name(GTK_STACK(pages), PAGE_LIST);
 	show_fields();
 	show_said("", 0);

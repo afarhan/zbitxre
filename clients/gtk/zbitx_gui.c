@@ -1242,6 +1242,16 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 	return 1;
 }
 
+// the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
+// nothing in the other modes: the logbook's window has a row of them
+static const char *macros_in_use(void) {
+	struct known *macros = find_known(MACRO_CONTROL);
+
+	if (macros == NULL || strcmp(mode_group(), MACRO_GROUP))
+		return "";
+	return macros->choices;
+}
+
 static void show_buttons(void) {
 	char label[CONTROL_VALUE_MAX];
 	char control[CONTROL_VALUE_MAX];
@@ -1253,6 +1263,7 @@ static void show_buttons(void) {
 
 	for (i = 0; i < BANDS; i++)
 		set_class(band_box[i], "in-use", !strcmp(value_of("BAND"), band_names[i]));
+	logbook_window_set_macros(macros_in_use());
 	for (i = 0; i < FOOTER_TILES; i++) {
 		is_a_button = footer_button_at(i, label, control, choice, sizeof(label));
 		gtk_widget_set_visible(footer_box[i], is_a_button);
@@ -3147,7 +3158,7 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 		return TRUE;
 	}
 	if (clicked == LOG_ROW) {
-		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of);
+		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of, macros_in_use());
 		return TRUE;
 	}
 	if (clicked == CW_KBD_ROW && !strcmp(mode_group(), MACRO_GROUP)) {
