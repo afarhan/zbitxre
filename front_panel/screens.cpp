@@ -86,10 +86,20 @@
 // Under the title is the entry being written, as zbitxv2's logger had it:
 // CALL, SENT, RECV, EXCH and NR, the radio's controls of those names, which
 // logger.c on the radio says what they are; and three buttons: "?" beside
-// CALL, and WIPE and SAVE at the end. A touch on a field brings a keyboard up over the list, at the
+// CALL, and WIPE and SAVE at the end. Each field is one line high and shows
+// its name, dim, while it is empty. The CW macros fill their callsign,
+// reports and exchange from these fields, so in CW the macros' buttons are
+// a row under them, to be sent from here, as the author asked on 18
+// October 2026 of the window and the panel alike; the fields stay as they
+// are when the screen is left and opened again, and only WIPE and SAVE
+// clear them. A touch on a field brings a keyboard up over the list, at the
 // author's asking, and the field is typed into there on its row, with its
-// edge marked; the keyboard's tick, or a touch on another field, or on any
-// of the three buttons, takes what was typed, and its cross drops it. "?" searches
+// edge marked. It has the digits with the rub-out after the 0, the letters
+// in three rows with the space between V and B, and the four marks a
+// callsign, a report or an exchange has. Its CLOSE, a click of the knob, a
+// touch on another field, on any of the three buttons or on a macro, or the
+// arrow back, gives what was typed to the radio; there is nothing to
+// cancel. "?" searches
 // the logbook for the callsign in CALL, or the beginning of one, and the
 // radio sends the newest hundred entries with stations whose callsign
 // begins so; an empty CALL lists every station. The author's rule is that
@@ -285,11 +295,15 @@ static const struct roller_place roller_places[ROLLERS] = {
 //the entry being written: a row of fields and buttons under the title,
 //with a gap around each
 #define LOG_GAP 4
-#define LOG_FIELDS_HEIGHT 44
-#define LOG_FIELD_TITLE_TOP 2
-#define LOG_FIELD_VALUE_BOTTOM (-4)
+#define LOG_FIELDS_HEIGHT 28
 #define LOG_FIELD_MAX 12
-#define LOG_TABLE_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
+#define LOG_PROMPT_COLOUR 0x406070
+//the macros' row, in CW, under the fields
+#define LOG_MACROS_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
+#define LOG_MACROS_HEIGHT 28
+#define LOG_MACROS_MAX 12
+#define LOG_TABLE_TOP LOG_MACROS_TOP
+#define LOG_TABLE_TOP_IN_CW (LOG_MACROS_TOP + LOG_MACROS_HEIGHT + LOG_GAP)
 #define LOG_SAID_MAX 64
 
 static const char *const log_headings[LOG_COLUMNS] = {
@@ -330,6 +344,32 @@ static char log_said[LOG_SAID_MAX + 1];
 static int log_editing = NOT_EDITING;
 static lv_obj_t *log_keyboard;
 static bool log_is_save_waiting;
+static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX];
+static char log_macro_labels[LOG_MACROS_MAX][CONTROL_TEXT_MAX];
+static int log_macros_shown;
+//a macro touched waits, as SAVE does, until the field just typed has gone
+//to the radio, so that it sends what was typed
+static char log_macro_waiting[CONTROL_TEXT_MAX];
+
+//the logbook's keyboard, a row to a line: no more keys than are needed
+static const char *const log_keys[] = {
+	"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
+	"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "/", "\n",
+	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
+	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", "CLOSE", "",
+};
+#define LOG_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_1
+#define LOG_SPACE_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
+static const lv_buttonmatrix_ctrl_t log_key_widths[] = {
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_SPACE_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+};
 static lv_obj_t *log_table;
 static char log_lines[LINK_LOG_LINES_MAX][LINK_LOG_LINE_MAX + 1];
 static volatile int log_count;
@@ -930,8 +970,6 @@ static void log_editing_begin(int which){
 	show_mark(log_fields[which].box, true);
 	lv_obj_add_state(log_fields[which].value, LV_STATE_FOCUSED);
 	lv_textarea_set_cursor_pos(log_fields[which].value, LV_TEXTAREA_CURSOR_LAST);
-	lv_keyboard_set_textarea(log_keyboard, log_fields[which].value);
-	lv_keyboard_set_mode(log_keyboard, LV_KEYBOARD_MODE_TEXT_UPPER);
 	lv_obj_remove_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -939,16 +977,34 @@ static void on_log_field_touched(lv_event_t *e){
 	log_editing_begin((int)(intptr_t)lv_event_get_user_data(e));
 }
 
-static void on_log_keyboard_ready(lv_event_t *e){
-	(void)e;
-	log_editing_done();
+//a key of the logbook's keyboard: a character is typed into the field,
+//and CLOSE gives what was typed to the radio
+static void on_log_key(lv_event_t *e){
+	lv_obj_t *keys = (lv_obj_t *)lv_event_get_target(e);
+	uint32_t which = lv_buttonmatrix_get_selected_button(keys);
+	const char *key;
+	lv_obj_t *value;
+
+	if (which == LV_BUTTONMATRIX_BUTTON_NONE || log_editing == NOT_EDITING)
+		return;
+	key = lv_buttonmatrix_get_button_text(keys, which);
+	value = log_fields[log_editing].value;
+	if (!strcmp(key, "CLOSE"))
+		log_editing_done();
+	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
+		lv_textarea_delete_char(value);
+	else if (!strcmp(key, "SPACE"))
+		lv_textarea_add_char(value, ' ');
+	else
+		lv_textarea_add_text(value, key);
 }
 
-//the keyboard's cross: what was typed is dropped, and the field shows what
-//the radio has
-static void on_log_keyboard_cancel(lv_event_t *e){
-	(void)e;
-	log_editing_end();
+//a macro is sent once what is being typed has gone to the radio
+static void on_log_macro_touched(lv_event_t *e){
+	int which = (int)(intptr_t)lv_event_get_user_data(e);
+
+	log_editing_done();
+	snprintf(log_macro_waiting, sizeof(log_macro_waiting), "%s", log_macro_labels[which]);
 }
 
 //"?": the logbook is searched for the callsign in CALL, as it is typed if
@@ -1252,28 +1308,83 @@ static lv_obj_t *log_value_create(lv_obj_t *box, int width){
 	lv_obj_set_style_radius(value, 0, 0);
 	lv_obj_set_style_border_color(value, lv_color_hex(COLOUR_VALUE),
 		LV_PART_CURSOR | LV_STATE_FOCUSED);
+	lv_obj_set_style_text_color(value, lv_color_hex(LOG_PROMPT_COLOUR),
+		LV_PART_TEXTAREA_PLACEHOLDER);
 	lv_obj_remove_flag(value, LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_remove_flag(value, LV_OBJ_FLAG_SCROLLABLE);
 	return value;
 }
 
 //the keyboard for the fields, over the list and under the row of fields,
-//so that what is typed is seen where it goes
+//so that what is typed is seen where it goes; its place is set when the
+//screen is opened, under the macros in CW
 static void log_keyboard_create(){
-	log_keyboard = lv_keyboard_create(log_screen);
-	lv_obj_set_size(log_keyboard, SCREEN_WIDTH, SCREEN_HEIGHT - LOG_TABLE_TOP);
-	lv_obj_align(log_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-	lv_keyboard_set_textarea(log_keyboard, NULL);
-	lv_obj_add_event_cb(log_keyboard, on_log_keyboard_ready, LV_EVENT_READY, NULL);
-	lv_obj_add_event_cb(log_keyboard, on_log_keyboard_cancel, LV_EVENT_CANCEL, NULL);
+	log_keyboard = lv_buttonmatrix_create(log_screen);
+	lv_buttonmatrix_set_map(log_keyboard, log_keys);
+	lv_buttonmatrix_set_ctrl_map(log_keyboard, log_key_widths);
+	lv_obj_set_style_text_font(log_keyboard, &lv_font_montserrat_16, LV_PART_ITEMS);
+	lv_obj_set_style_radius(log_keyboard, 0, 0);
+	lv_obj_set_style_radius(log_keyboard, 0, LV_PART_ITEMS);
+	lv_obj_set_style_pad_all(log_keyboard, LOG_GAP, 0);
+	lv_obj_set_style_pad_gap(log_keyboard, LOG_GAP, 0);
+	lv_obj_set_style_bg_color(log_keyboard, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_border_width(log_keyboard, 0, 0);
+	lv_obj_set_style_bg_color(log_keyboard, lv_color_hex(COLOUR_BOX), LV_PART_ITEMS);
+	lv_obj_set_style_text_color(log_keyboard, lv_color_hex(COLOUR_VALUE), LV_PART_ITEMS);
+	lv_obj_set_style_border_color(log_keyboard, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
+	lv_obj_set_style_border_width(log_keyboard, 1, LV_PART_ITEMS);
+	lv_obj_add_event_cb(log_keyboard, on_log_key, LV_EVENT_VALUE_CHANGED, NULL);
 	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+//the macros' buttons, made afresh when the screen is opened, in CW only,
+//where a macro can be sent; the list and the keyboard move down under them
+static void log_macros_make(){
+	struct panel_control *macro = controls_find("MACRO");
+	struct panel_control one;
+	char mode[CONTROL_TEXT_MAX];
+	int top = LOG_TABLE_TOP;
+	int width;
+	int x = LOG_GAP;
+	int i;
+
+	for (i = 0; i < log_macros_shown; i++)
+		lv_obj_delete(log_macro_buttons[i]);
+	log_macros_shown = 0;
+	text_of("MODE", mode, sizeof(mode));
+	if (macro != NULL && (!strcmp(mode, "CW") || !strcmp(mode, "CWR"))){
+		log_macros_shown = controls_choices(macro);
+		if (log_macros_shown > LOG_MACROS_MAX)
+			log_macros_shown = LOG_MACROS_MAX;
+	}
+	if (log_macros_shown > 0){
+		top = LOG_TABLE_TOP_IN_CW;
+		width = (SCREEN_WIDTH - LOG_GAP) / log_macros_shown - LOG_GAP;
+		for (i = 0; i < log_macros_shown; i++){
+			one = *macro;
+			one.value = i;
+			controls_value_text(&one, log_macro_labels[i], sizeof(log_macro_labels[i]));
+			log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
+				LOG_MACROS_HEIGHT);
+			lv_obj_align(text_create(log_macro_buttons[i], log_macro_labels[i],
+				&lv_font_montserrat_12, COLOUR_VALUE), LV_ALIGN_CENTER, 0, 0);
+			lv_obj_add_event_cb(log_macro_buttons[i], on_log_macro_touched,
+				LV_EVENT_CLICKED, (void *)(intptr_t)i);
+			x += width + LOG_GAP;
+		}
+	}
+	lv_obj_set_y(log_table, top);
+	lv_obj_set_height(log_table, SCREEN_HEIGHT - top);
+	lv_obj_set_size(log_keyboard, SCREEN_WIDTH, SCREEN_HEIGHT - top);
+	lv_obj_align(log_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_obj_move_foreground(log_keyboard);
+	lv_obj_move_foreground(ask_layer);
 }
 
 //the fields and the buttons, left to right, each its width and a gap:
 //CALL, "?", SENT, RECV, EXCH, NR, WIPE, SAVE
 static void log_fields_create(){
 	lv_obj_t *box;
-	lv_obj_t *title;
 	int x = LOG_GAP;
 	int y = BAR_HEIGHT + LOG_GAP;
 	int i;
@@ -1283,11 +1394,9 @@ static void log_fields_create(){
 		log_fields[i].box = box;
 		lv_obj_add_event_cb(box, on_log_field_touched, LV_EVENT_CLICKED,
 			(void *)(intptr_t)i);
-		title = text_create(box, log_fields[i].control, &lv_font_montserrat_12, COLOUR_TITLE);
-		lv_obj_align(title, LV_ALIGN_TOP_LEFT, LOG_GAP, LOG_FIELD_TITLE_TOP);
 		log_fields[i].value = log_value_create(box, log_fields[i].width - 2 * LOG_GAP);
-		lv_obj_align(log_fields[i].value, LV_ALIGN_BOTTOM_LEFT, LOG_GAP,
-			LOG_FIELD_VALUE_BOTTOM);
+		lv_textarea_set_placeholder_text(log_fields[i].value, log_fields[i].control);
+		lv_obj_align(log_fields[i].value, LV_ALIGN_LEFT_MID, LOG_GAP, 0);
 		x += log_fields[i].width + LOG_GAP;
 		//"?" searches for what is in CALL, so it is beside it, the author's
 		//asking: the eye takes what is close together as belonging together
@@ -1881,6 +1990,7 @@ void screens_open_log(){
 	waterfall_set_painting(false);
 	main_hide();
 	lv_obj_remove_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
+	log_macros_make();
 	log_fields_show();
 	log_search_done("");
 }
@@ -2125,7 +2235,9 @@ void screens_knob_clicked(){
 		confirm_answered(confirm_is_on_yes);
 	else if (is_up(log_screen) && is_up(ask_layer))
 		ask_answered(ask_is_on_yes);
-	else if (is_up(log_screen) && !is_up(log_keyboard))
+	else if (is_up(log_screen) && is_up(log_keyboard))
+		log_editing_done();
+	else if (is_up(log_screen))
 		log_ask_to_delete();
 	else if (is_up(date_screen)){
 		roller_marked = (roller_marked + 1) % ROLLERS;
@@ -2161,6 +2273,10 @@ void screens_slice(){
 	if (log_is_save_waiting && !i2c_link_is_sending_text()){
 		log_is_save_waiting = false;
 		send_action("LOGGER", "SAVE");
+	}
+	if (log_macro_waiting[0] != 0 && !i2c_link_is_sending_text()){
+		send_action("MACRO", log_macro_waiting);
+		log_macro_waiting[0] = 0;
 	}
 }
 
@@ -2246,7 +2362,7 @@ void screens_close(){
 	if (connections_screen != NULL)
 		lv_obj_add_flag(connections_screen, LV_OBJ_FLAG_HIDDEN);
 	if (log_screen != NULL){
-		log_editing_end();
+		log_editing_done();
 		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
 	}
