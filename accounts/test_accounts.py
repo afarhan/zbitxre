@@ -421,13 +421,19 @@ class AccountsTest(unittest.TestCase):
         # certificate, and the panel's firmware wanted by the USB cable
         status, text = Browser(self.port).get("/upgrade")
         self.assertEqual(status, 200)
-        self.assertIn("curl -fsSL https://my.sbitx.net/install | bash", text)
+        self.assertIn("curl -fsSL https://raw.githubusercontent.com/afarhan/zbitxre/main/"
+                      "setup/install.sh | bash", text)
         self.assertIn("capital S", text)
         self.assertIn("ping -c 3 my.sbitx.net", text)
         self.assertNotIn("ssh", text.split("</nav>")[1])
         # a clock that says 2000 refuses the certificate: today, to type
         self.assertIn("sudo date -u -s \"%s" % time.strftime("%Y-%m-%d", time.gmtime()), text)
-        self.assertIn("href=\"/zbitx/front_panel.uf2\"", text)
+        self.assertIn("href=\"https://raw.githubusercontent.com/afarhan/zbitxre/main/"
+                      "release/panel/front_panel.uf2\"", text)
+        # the installer and the firmware are named where they are, on GitHub,
+        # and no copies are served here
+        for path in ("/install", "/zbitx/front_panel.uf2"):
+            self.assertEqual(Browser(self.port).get(path)[0], 404)
         # the knob held as the radio is switched on, and the cable after
         self.assertLess(text.index("switch the radio <strong>on</strong>"),
                         text.index("Connect the panel's USB socket"))

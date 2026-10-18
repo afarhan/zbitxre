@@ -1036,11 +1036,14 @@ MAP_PAGE = """<!doctype html>
 """
 
 # what is served from static/, by its name, and as what
-# the files an owner fetches to upgrade a radio, by their address
-RELEASED = {
-    "/install": ("install.sh", "text/plain; charset=utf-8"),
-    "/zbitx/front_panel.uf2": ("front_panel.uf2", "application/octet-stream"),
-}
+# the files an owner fetches to upgrade a radio are GitHub's, where every
+# build comes from and nowhere else, the author's ruling of 18 October
+# 2026: the Upgrade page names them there. Copies of them were kept and
+# served here until then, a second source of builds, which gave out a
+# firmware not yet tried
+GITHUB_FILES = "https://raw.githubusercontent.com/afarhan/zbitxre/main/"
+INSTALL_ADDRESS = GITHUB_FILES + "setup/install.sh"
+PANEL_FIRMWARE_ADDRESS = GITHUB_FILES + "release/panel/front_panel.uf2"
 
 STATIC = {
     "land.json": "application/json",
@@ -1186,11 +1189,14 @@ td button { margin: 0; padding: 0.2em 0.8em; }
 /* keys are shown as the radio shows them, in small letters; the author found
    them in capitals here and small on the radio. Either is taken when typed */
 .code { font-family: monospace; letter-spacing: 0.1em; }
-/* the one line that upgrades a radio, on /upgrade: large, whole, and not
-   broken across lines, since the author's tester typed only a part of it */
+/* the one line that upgrades a radio, on /upgrade: large, and in one dark
+   box, so that it is taken as one line, since the author's tester typed
+   only a part of it */
 .oneline { display: flex; align-items: center; gap: 0.8em; max-width: 40em;
     background: #10181f; color: #fff; border-radius: 6px; padding: 0.8em 1em; }
-.oneline code { font-size: 1.25em; white-space: nowrap; overflow-x: auto; flex: 1; }
+/* it is long, GitHub's address in it, so it wraps, anywhere, and is seen
+   whole: a line cut short at the box's edge would be typed cut short */
+.oneline code { font-size: 1.1em; white-space: normal; overflow-wrap: anywhere; flex: 1; }
 .oneline button { margin: 0; }
 .check { background: #fff8e6; border-left: 4px solid #e0a000; padding: 0.6em 0.8em;
     max-width: 38em; }
@@ -2191,8 +2197,7 @@ class Handler(BaseHTTPRequestHandler):
         line that runs setup/install.sh. Written with the author on
         2026-10-17 from what went wrong for the first tester: the radio was
         not on the Wi-Fi, he typed only the address and not the whole line,
-        the radio's clock said 2000, so that my.sbitx.net's certificate was
-        refused, and the panel needed its firmware by the USB cable, which
+        the radio's clock said 2000, so that the certificate was refused, and the panel needed its firmware by the USB cable, which
         is put on by switching the radio on with the tuning knob held in and
         only then plugging the cable in, the author's order. The
         line that sets the clock is given with the time the page was served,
@@ -2226,7 +2231,7 @@ class Handler(BaseHTTPRequestHandler):
             "<p>Click the <strong>clock at the top right</strong> of the radio's "
             "screen: it shows the date. It must be <strong>today's date</strong>. A radio that has not "
             "been on the internet since it was switched on can think it is the year "
-            "2000; then my.sbitx.net's security certificate looks not yet valid, and "
+            "2000; then GitHub's security certificate looks not yet valid, and "
             "step 4 fails with <em>SSL certificate problem</em>. If the date is wrong, "
             "set it by typing this line, which has today's date and time in it:</p>"
             "<p class=\"command\">sudo date -u -s \"%s\"</p>"
@@ -2236,7 +2241,7 @@ class Handler(BaseHTTPRequestHandler):
             "<p>In the terminal, type this <strong>whole line, exactly as it "
             "is</strong>, then press Enter:</p>"
             "<div class=\"oneline\"><code id=\"line\">curl -fsSL "
-            "https://my.sbitx.net/install | bash</code>"
+            "%s | bash</code>"
             "<button id=\"copy\" type=\"button\">Copy</button></div>"
             "<div class=\"check\"><strong>Check it letter by letter before you press "
             "Enter.</strong> The address alone does nothing: it must be the whole "
@@ -2248,8 +2253,9 @@ class Handler(BaseHTTPRequestHandler):
             "<span class=\"spelled\">|</span>.</li>"
             "<li><span class=\"spelled\">|</span> is the upright bar, usually "
             "Shift and the backslash key; not a capital I or a small l.</li>"
-            "<li><span class=\"spelled\">my.sbitx.net</span>: s-b-i-t-x, with a "
-            "dot on each side.</li></ul>"
+            "<li>The address is GitHub's: <span class=\"spelled\">raw.githubusercontent"
+            ".com</span>, then <span class=\"spelled\">/afarhan/zbitxre/main/setup/"
+            "install.sh</span>, all small letters.</li></ul>"
             "<p>If you are reading this page on the radio itself, press "
             "<strong>Copy</strong> and paste it into the terminal instead of typing "
             "it.</p></div>"
@@ -2265,7 +2271,7 @@ class Handler(BaseHTTPRequestHandler):
             "the line in step 4 says so if yours does. Later updates reach the "
             "panel by themselves.</p>"
             "<ol class=\"steps\">"
-            "<li>Download <a href=\"/zbitx/front_panel.uf2\" download>"
+            "<li>Download <a href=\"%s\" download>"
             "front_panel.uf2</a> on your computer.</li>"
             "<li>Switch the radio <strong>off</strong>.</li>"
             "<li>Hold the <strong>tuning knob pressed in</strong>, and while holding "
@@ -2287,7 +2293,8 @@ class Handler(BaseHTTPRequestHandler):
             "<span class=\"command\">~/zbitxre/setup/undo_install.sh</span> in the "
             "radio's terminal and restart it.</li></ul>"
             "<script src=\"%s\"></script>"
-            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), static_address("upgrade.js"))))
+            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime()), INSTALL_ADDRESS,
+               PANEL_FIRMWARE_ADDRESS, static_address("upgrade.js"))))
 
     def register_form(self, told="", is_wrong=False, callsign="", email="", suffix="home"):
         """registration and the owner's radio together, on one form: the
@@ -2462,19 +2469,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, json.dumps([static_address(name) for name in
                                        ("operate.css", "sound.js", "operate.js")]),
                       "application/json")
-        elif url.path in RELEASED:
-            # what an owner fetches to upgrade a radio: the one-line
-            # installer, curl -fsSL https://my.sbitx.net/install | bash, and
-            # the panel's firmware for its one update with the USB cable.
-            # They are copies of setup/install.sh and release/panel, put in
-            # release/ beside this file when the service is deployed
-            name, kind = RELEASED[url.path]
-            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "release", name)
-            if not os.path.exists(path):
-                self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
-            else:
-                with open(path, "rb") as file:
-                    self.send(200, file.read(), kind, keep="no-cache")
         elif url.path == "/service-worker.js":
             # a worker obeys the policy its own script comes with: this one
             # fetches pages of the site, and nothing else
