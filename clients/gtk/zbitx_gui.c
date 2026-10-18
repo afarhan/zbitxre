@@ -365,7 +365,7 @@
 // does nothing else: a notch is a turn of the wheel on the frequency,
 // whatever is selected. The other, on the main screen, changes the
 // selected control, the volume while the frequency is selected, and its
-// button moves to the next control, as it always did; in SET and
+// button answers a marked FT8 message; in SET and
 // CONNECTIONS it steps through the rows and its button acts, as SELECTING,
 // TURNING AND PRESSING below says. The tuning knob's button does nothing
 // yet.
@@ -398,17 +398,20 @@
 //
 // SELECTING, TURNING AND PRESSING
 //
-// The author's rule of 16 October 2026, for every list in the window, the
-// controls of the main screen, SET and CONNECTIONS, as the panel has it:
-// a tap selects a row and does nothing else; turning steps the selection
-// through the rows, so that a row that is off the screen can be reached;
-// and a press acts on the row that is selected. They had been mixed: a
+// The author's rule of 16 October 2026, for the lists of SET and
+// CONNECTIONS, as the panel has it: a tap selects a row and does nothing
+// else; turning steps the selection through the rows, so that a row that
+// is off the screen can be reached; and a press acts on the row that is
+// selected. On the main screen, as he ruled on 18 October, a control is
+// selected only by a tap or a click: turning, the wheel, the arrow keys or
+// the sbitx's knob, changes the control that is selected, and tunes while
+// the frequency is. They had been mixed: a
 // tap acted on what it selected, and the wheel changed the value of
 // whatever row it was over, so that trying to scroll a list changed it.
 //
-// Turning is the mouse's wheel or the arrow keys, and the sbitx's control
-// knob in SET and CONNECTIONS; pressing is that knob's button there, the
-// mouse's middle button,
+// In the lists, turning is the mouse's wheel, the arrow keys, or the
+// sbitx's control knob; pressing is that knob's button, the mouse's middle
+// button,
 // Enter, or a second tap on the row, a double tap. A press on a choice
 // takes it to its next; on a number it starts changing it, the row edged
 // in green, turning then changing the value until a press or a tap ends
@@ -2433,8 +2436,8 @@ static void turn_selected(int up, int down);
 static int row_of(const char *control);
 static void act_on_row(int index);
 
-// the wheel over a control turns, as the knob does; a wheel that scrolls
-// smoothly, a touchpad's, is left to scroll the list
+// the wheel over a control changes the selected one, as the knob does; a
+// wheel that scrolls smoothly, a touchpad's, is left to scroll the list
 static gboolean on_row_wheel(GtkWidget *widget, GdkEventScroll *event, gpointer row) {
 	int up = wheel_steps(event);
 
@@ -3263,8 +3266,11 @@ static void act_on_row(int index) {
 }
 
 // a turn, of the knob, the wheel or the arrow keys, by as many notches up
-// in value or down the list: on a list page the selection moves; on the
-// main screen it moves too, unless a number is being changed
+// in value or down the list: on a list page the selection moves. On the
+// main screen the selected control changes, and the radio is tuned while
+// the frequency is selected: the author ruled on 18 October 2026 that a
+// control there is chosen only by a tap or a click, never by the wheel or
+// the knob, which had been moving to the next control
 static void turn_selected(int up, int down) {
 	GtkWidget *list = shown_page_list();
 
@@ -3274,14 +3280,10 @@ static void turn_selected(int up, int down) {
 	}
 	if (!is_page_shown(PAGE_MAIN))
 		return;
-	if (is_editing && focus != ON_FREQUENCY) {
+	if (focus == ON_FREQUENCY)
+		tune(up);
+	else
 		step_row(focus, up);
-		return;
-	}
-	for (; down > 0; down--)
-		move_focus(1);
-	for (; down < 0; down++)
-		move_focus(-1);
 }
 
 // a press, of the knob's button, Enter or the middle button: on a list page
@@ -3440,11 +3442,12 @@ static gboolean take_up_knobs(gpointer unused) {
 			press_selected();
 		return G_SOURCE_CONTINUE;
 	}
-	// on the main screen the sbitx's knob works as it always has, which the
-	// author found had gone wrong on 17 October 2026, when it was made to
-	// select and press as the wheel does: turning changes the selected
-	// control, the volume while the frequency is selected, and a press
-	// moves to the next control, or answers a marked FT8 message
+	// on the main screen the sbitx's knob changes the selected control, the
+	// volume while the frequency is selected, the other knob tuning; the
+	// author found on 17 October 2026 that it had been made to select as
+	// the wheel did. A press answers a marked FT8 message, and does not
+	// move to another control: on 18 October he ruled that a control is
+	// chosen only by a tap or a click
 	if (turned != 0) {
 		int row = focus == ON_FREQUENCY ? row_of(VOLUME_CONTROL) : focus;
 
@@ -3454,8 +3457,6 @@ static gboolean take_up_knobs(gpointer unused) {
 	for (; pressed > 0; pressed--) {
 		if (marked_message != NULL)
 			answer_marked();
-		else
-			move_focus(1);
 	}
 	return G_SOURCE_CONTINUE;
 }
