@@ -280,7 +280,9 @@ static const struct roller_place roller_places[ROLLERS] = {
 //the log's columns, left to right, their headings and their widths, which
 //add up to the screen's
 #define LOG_COLUMNS 7
+//entries in view: one fewer in CW, where the macros' row takes the room
 #define LOG_ROWS_IN_VIEW 8
+#define LOG_ROWS_IN_VIEW_IN_CW 7
 #define LOG_TABLE_ROWS (LOG_ROWS_IN_VIEW + 1)
 #define LOG_ROW_PAD 4
 #define LOG_FIELDS_BETWEEN '|'
@@ -300,7 +302,11 @@ static const struct roller_place roller_places[ROLLERS] = {
 #define LOG_PROMPT_COLOUR 0x406070
 //the macros' row, in CW, under the fields
 #define LOG_MACROS_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
-#define LOG_MACROS_HEIGHT 28
+//as high as a key of the keyboard under it, the author's asking: the
+//keyboard's four rows and the macros' share what is under the fields
+#define LOG_MACROS_HEIGHT 42
+//CLOSE is in a smaller font than the other keys, to fit a key's width
+#define LOG_CLOSE_KEY "CLOSE"
 #define LOG_MACROS_MAX 12
 #define LOG_TABLE_TOP LOG_MACROS_TOP
 #define LOG_TABLE_TOP_IN_CW (LOG_MACROS_TOP + LOG_MACROS_HEIGHT + LOG_GAP)
@@ -347,6 +353,7 @@ static bool log_is_save_waiting;
 static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX];
 static char log_macro_labels[LOG_MACROS_MAX][CONTROL_TEXT_MAX];
 static int log_macros_shown;
+static int log_rows_in_view = LOG_ROWS_IN_VIEW;
 //a macro touched waits, as SAVE does, until the field just typed has gone
 //to the radio, so that it sends what was typed
 static char log_macro_waiting[CONTROL_TEXT_MAX];
@@ -356,7 +363,7 @@ static const char *const log_keys[] = {
 	"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
 	"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "/", "\n",
 	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
-	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", "CLOSE", "",
+	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", LOG_CLOSE_KEY, "",
 };
 #define LOG_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_1
 #define LOG_SPACE_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
@@ -989,7 +996,7 @@ static void on_log_key(lv_event_t *e){
 		return;
 	key = lv_buttonmatrix_get_button_text(keys, which);
 	value = log_fields[log_editing].value;
-	if (!strcmp(key, "CLOSE"))
+	if (!strcmp(key, LOG_CLOSE_KEY))
 		log_editing_done();
 	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
 		lv_textarea_delete_char(value);
@@ -1088,7 +1095,7 @@ static void log_fill_row(int table_row, const char *line){
 static void log_fill(){
 	int row;
 
-	for (row = 0; row < LOG_ROWS_IN_VIEW; row++){
+	for (row = 0; row < log_rows_in_view; row++){
 		if (log_is_whole && log_top + row < log_count)
 			log_fill_row(row + 1, log_lines[log_top + row]);
 		else
@@ -1117,7 +1124,7 @@ static void log_show(){
 			log_mark = log_count - 1;
 		if (log_mark < 0)
 			log_mark = 0;
-		log_top = log_mark - log_mark % LOG_ROWS_IN_VIEW;
+		log_top = log_mark - log_mark % log_rows_in_view;
 	}
 	log_fill();
 	lv_obj_invalidate(log_table);
@@ -1127,10 +1134,10 @@ static void log_show(){
 //rows are all of one height, a line of text each
 static void log_row_repaint(int which){
 	lv_area_t area;
-	int row_height = lv_obj_get_self_height(log_table) / LOG_TABLE_ROWS;
+	int row_height = lv_obj_get_self_height(log_table) / (log_rows_in_view + 1);
 	int table_row = which - log_top + 1;
 
-	if (table_row < 1 || table_row >= LOG_TABLE_ROWS)
+	if (table_row < 1 || table_row > log_rows_in_view)
 		return;
 	lv_obj_get_coords(log_table, &area);
 	area.y1 += table_row * row_height;
@@ -1152,9 +1159,9 @@ static void log_mark_at(int which){
 		which = log_count - 1;
 	log_mark = which;
 	while (log_mark < top)
-		top -= LOG_ROWS_IN_VIEW;
-	while (log_mark >= top + LOG_ROWS_IN_VIEW)
-		top += LOG_ROWS_IN_VIEW;
+		top -= log_rows_in_view;
+	while (log_mark >= top + log_rows_in_view)
+		top += log_rows_in_view;
 	if (top < 0)
 		top = 0;
 	if (top != log_top){
@@ -1315,6 +1322,19 @@ static lv_obj_t *log_value_create(lv_obj_t *box, int width){
 	return value;
 }
 
+//CLOSE's label is drawn in a smaller font, to fit its key
+static void on_log_key_drawn(lv_event_t *e){
+	lv_draw_task_t *task = lv_event_get_draw_task(e);
+	lv_draw_label_dsc_t *label = lv_draw_task_get_label_dsc(task);
+	const char *key;
+
+	if (label == NULL || label->base.part != LV_PART_ITEMS)
+		return;
+	key = lv_buttonmatrix_get_button_text(log_keyboard, label->base.id1);
+	if (key != NULL && !strcmp(key, LOG_CLOSE_KEY))
+		label->font = &lv_font_montserrat_10;
+}
+
 //the keyboard for the fields, over the list and under the row of fields,
 //so that what is typed is seen where it goes; its place is set when the
 //screen is opened, under the macros in CW
@@ -1334,6 +1354,8 @@ static void log_keyboard_create(){
 	lv_obj_set_style_border_color(log_keyboard, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
 	lv_obj_set_style_border_width(log_keyboard, 1, LV_PART_ITEMS);
 	lv_obj_add_event_cb(log_keyboard, on_log_key, LV_EVENT_VALUE_CHANGED, NULL);
+	lv_obj_add_event_cb(log_keyboard, on_log_key_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
+	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1357,8 +1379,10 @@ static void log_macros_make(){
 		if (log_macros_shown > LOG_MACROS_MAX)
 			log_macros_shown = LOG_MACROS_MAX;
 	}
+	log_rows_in_view = LOG_ROWS_IN_VIEW;
 	if (log_macros_shown > 0){
 		top = LOG_TABLE_TOP_IN_CW;
+		log_rows_in_view = LOG_ROWS_IN_VIEW_IN_CW;
 		width = (SCREEN_WIDTH - LOG_GAP) / log_macros_shown - LOG_GAP;
 		for (i = 0; i < log_macros_shown; i++){
 			one = *macro;
@@ -1373,6 +1397,7 @@ static void log_macros_make(){
 			x += width + LOG_GAP;
 		}
 	}
+	lv_table_set_row_count(log_table, log_rows_in_view + 1);
 	lv_obj_set_y(log_table, top);
 	lv_obj_set_height(log_table, SCREEN_HEIGHT - top);
 	lv_obj_set_size(log_keyboard, SCREEN_WIDTH, SCREEN_HEIGHT - top);
