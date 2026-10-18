@@ -330,11 +330,13 @@ gui: $(GUI)
 # of hw/ it has the pins, and the boards for the radio's name
 # of clients/remote it has the keyed hash, to answer the service's
 # challenge with when it reaches a radio through my.sbitx.net
-GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c hw/gpio.c hw/board.c \
+GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c clients/gtk/keyboard.c \
+	hw/gpio.c hw/board.c \
 	clients/remote/sha256.c
 
 $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
-		clients/gtk/logbook_window.h hw/gpio.h hw/board.h clients/remote/sha256.h
+		clients/gtk/logbook_window.h clients/gtk/keyboard.h hw/gpio.h hw/board.h \
+		clients/remote/sha256.h
 	$(CC) $(CFLAGS) -Iclients/gtk -Iclients/remote $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread -lm
 

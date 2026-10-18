@@ -80,6 +80,7 @@
 
 #include <gtk/gtk.h>
 
+#include "keyboard.h"
 #include "logbook_window.h"
 
 #define ENTRIES_MAX 100
@@ -108,8 +109,6 @@
 #define BUTTON_PADDING 4
 // the macros' row is a dozen buttons across, in a smaller font than the rest
 #define MACRO_SIZE 9
-#define KEY_ROWS 4
-#define KEY_COLUMNS 11
 #define MACROS_MAX 12
 #define EMPTY_MACRO "-"
 #define MACRO_ROOM 16
@@ -140,15 +139,6 @@ static struct field fields[FIELDS] = {
 	{ .control = "NR", .share = 2 },
 };
 
-// the keys, a row to a line: a character is its key, and the rest stand for
-// the keys that are not characters, each one column wide but the space
-#define RUB_OUT_KEY '<'
-#define SPACE_KEY '_'
-#define CLOSE_KEY '>'
-#define SPACE_COLUMNS 2
-static const char *const key_rows[KEY_ROWS] = {
-	"1234567890<", "QWERTYUIOP/", "ASDFGHJKL?-", "ZXCV_BNM.>",
-};
 
 static void (*send)(const char *word, const char *rest);
 static GtkWidget *window;
@@ -603,18 +593,14 @@ static void rub_out(void) {
 	show_fields();
 }
 
-static void on_key_pressed(GtkButton *button, gpointer key) {
-	char c = (char)GPOINTER_TO_INT(key);
-
-	(void)button;
-	if (c == RUB_OUT_KEY)
+// a key of the keyboard, keyboard.c, which is the window's one
+static void on_key_pressed(char key) {
+	if (key == KEYBOARD_RUB_OUT)
 		rub_out();
-	else if (c == CLOSE_KEY)
+	else if (key == KEYBOARD_CLOSE)
 		done_editing();
-	else if (c == SPACE_KEY)
-		type_a_character(' ');
 	else
-		type_a_character(c);
+		type_a_character(key);
 }
 
 // STOP, at the end of the macros' row: the macro being sent is stopped,
@@ -842,46 +828,6 @@ static GtkWidget *create_list_page(void) {
 	return page;
 }
 
-static const char *key_label(char c, char *text) {
-	if (c == RUB_OUT_KEY)
-		return "⌫";
-	if (c == SPACE_KEY)
-		return "SPACE";
-	if (c == CLOSE_KEY)
-		return "CLOSE";
-	text[0] = c;
-	text[1] = 0;
-	return text;
-}
-
-// the keyboard, which has no more keys than are needed
-static GtkWidget *create_keys_page(void) {
-	GtkWidget *keys = gtk_grid_new();
-	GtkWidget *key;
-	char text[2];
-	const char *at;
-	int column;
-	int width;
-	int row;
-
-	gtk_grid_set_row_homogeneous(GTK_GRID(keys), TRUE);
-	gtk_grid_set_column_homogeneous(GTK_GRID(keys), TRUE);
-	for (row = 0; row < KEY_ROWS; row++) {
-		column = 0;
-		for (at = key_rows[row]; *at != 0; at++) {
-			width = 1;
-			if (*at == SPACE_KEY)
-				width = SPACE_COLUMNS;
-			key = button_new(key_label(*at, text), "log-key", G_CALLBACK(on_key_pressed),
-				GINT_TO_POINTER(*at));
-			gtk_widget_set_hexpand(key, TRUE);
-			gtk_widget_set_vexpand(key, TRUE);
-			gtk_grid_attach(GTK_GRID(keys), key, column, row, width, 1);
-			column += width;
-		}
-	}
-	return keys;
-}
 
 // a button of the macros' row, whose label may be cut short with "...", so
 // that a dozen of them never make the window wider than the screen
@@ -965,7 +911,7 @@ static void create_window(GtkWindow *main_window) {
 
 	pages = gtk_stack_new();
 	gtk_stack_add_named(GTK_STACK(pages), create_list_page(), PAGE_LIST);
-	gtk_stack_add_named(GTK_STACK(pages), create_keys_page(), PAGE_KEYS);
+	gtk_stack_add_named(GTK_STACK(pages), keyboard_new("log-key", on_key_pressed), PAGE_KEYS);
 	gtk_stack_add_named(GTK_STACK(pages), create_ask_page(), PAGE_ASK);
 	gtk_box_pack_start(GTK_BOX(all), create_bar(), FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(all), create_fields(), FALSE, FALSE, 0);

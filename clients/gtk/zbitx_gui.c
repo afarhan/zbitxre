@@ -246,16 +246,15 @@
 //
 // TYPING
 //
-// Wherever a text is to be typed, the window's own keyboard comes up, on a
-// screen with the text in a box in its upper part and the keyboard in its
-// lower part, as the author's rule for the panel has it, so that the
-// keyboard never covers what is typed. The radio has no other keyboard to
-// count on. It has only the keys a callsign, a grid or a short message
-// needs: the figures, the capital letters, the stroke, the stop, the
-// question mark and the dash, a space, and one to rub out. SAVE gives the
-// text to the radio and CANCEL drops it. A keyboard plugged into the
-// radio works too: what it types goes into the box, in capitals, Enter
-// saves and Escape cancels.
+// Wherever a text is to be typed, the window's own keyboard comes up,
+// keyboard.c, the one keyboard of the window and the panel alike, which the
+// author asked for on 18 October 2026 in place of three. A text of the
+// settings is typed on a screen with the text in a box in its upper part
+// and the keyboard in its lower part, as the author's rule for the panel
+// has it, so that the keyboard never covers what is typed. CLOSE gives
+// the text to the radio and goes back to the settings; the arrow goes back
+// without it. A keyboard plugged into the radio works too: what it types
+// goes into the box, in capitals, Enter saves and Escape goes back.
 //
 // LOG opens the logbook, in a window of its own, logbook_window.c, which
 // does what the panel's LOG screen does. While it is open the knob that
@@ -284,16 +283,18 @@
 // THE KEYBOARD FOR CW
 //
 // In CW the third button of the column, TERM elsewhere, is KBD. It brings
-// up the same screen and the same keys that texts are typed on, to send
-// with: each key touched is sent to the radio as it is touched, CW_TEXT,
-// and is added to the box at the top, which is only a record of what was
-// sent. SPACE sends a space. Rubbing out takes the last character out of
-// the box and does not call it back from the radio. Where SAVE is for a
-// text there is ESC, which stops what the radio is still sending and
-// empties the box, and where CANCEL is, DONE, which goes back to the
-// radio's own screen. A key touched while a macro is being sent stops the
-// macro, which is the radio's doing. The author asked for it: the radio's
-// own screen is touched, and a keyboard is not always plugged in.
+// the same keyboard up over the lower part of the radio's own screen,
+// right of the column and under the status line, so that ESC in the column
+// and what CW is read off the air on the status line are still in view.
+// Each key touched is sent to the radio as it is touched, CW_TEXT, and is
+// added to the line above the keys, which is only a record of what was
+// sent. SPACE sends a space. Rubbing out takes the last character off the
+// line and does not call it back from the radio. ESC, in the column, stops
+// what the radio is still sending and empties the line; CLOSE, or KBD
+// again, puts the keyboard away. A key touched while a macro is being sent
+// stops the macro, which is the radio's doing. The author asked for it:
+// the radio's own screen is touched, and a keyboard is not always plugged
+// in.
 //
 // In CW the keyboard also sends: every letter, figure and sign struck is
 // sent to the radio as it is struck, CW_TEXT, as zbitxv2 sent what was
@@ -454,6 +455,7 @@
 #include "board.h"
 #include "gpio.h"
 #include "knob.h"
+#include "keyboard.h"
 #include "logbook_window.h"
 #include "sha256.h"
 
@@ -729,12 +731,8 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define PAGE_MAIN "main"
 #define PAGE_SETTINGS "settings"
 #define PAGE_TEXT "text"
-#define KEY_ROWS 4
-#define KEYS_A_ROW 10
-#define CANCEL_KEYS 3
-#define SPACE_KEYS 3
-#define RUB_OUT_KEYS 2
-#define SAVE_KEYS 2
+// the line over KBD's keys, of what was sent
+#define CW_SENT_HEIGHT 24
 #define TYPED_SIZE 16
 
 static const char *radio_name = DEFAULT_RADIO;
@@ -874,9 +872,11 @@ static char through_key[SHA256_HEX_ROOM];
 static int has_through_key;
 static struct known password_asked;
 // in the place of a control to type a text for: the keyboard is sending CW
-static struct known cw_sending;
-static GtkWidget *cancel_key;
-static GtkWidget *save_key;
+// KBD's keyboard, over the lower part of the radio's own screen, and the
+// line of what was sent with it
+static GtkWidget *cw_keys;
+static GtkWidget *cw_sent_label;
+static char cw_sent[CW_SENT_SHOWN + 1];
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1242,6 +1242,8 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 	return 1;
 }
 
+static void show_cw_keys(int is_shown);
+
 // the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
 // nothing in the other modes: the logbook's window has a row of them
 static const char *macros_in_use(void) {
@@ -1264,6 +1266,9 @@ static void show_buttons(void) {
 	for (i = 0; i < BANDS; i++)
 		set_class(band_box[i], "in-use", !strcmp(value_of("BAND"), band_names[i]));
 	logbook_window_set_macros(macros_in_use());
+	// KBD's keyboard is CW's alone
+	if (cw_keys != NULL && strcmp(mode_group(), MACRO_GROUP))
+		show_cw_keys(0);
 	for (i = 0; i < FOOTER_TILES; i++) {
 		is_a_button = footer_button_at(i, label, control, choice, sizeof(label));
 		gtk_widget_set_visible(footer_box[i], is_a_button);
@@ -2613,40 +2618,74 @@ static void open_text(struct known *k) {
 	typed_for = k;
 	snprintf(typed, sizeof(typed), "%s", k->value);
 	gtk_label_set_text(GTK_LABEL(text_title), k->name);
-	gtk_button_set_label(GTK_BUTTON(cancel_key), k == &cw_sending ? "DONE" : "CANCEL");
-	gtk_button_set_label(GTK_BUTTON(save_key), k == &cw_sending ? "ESC" : "SAVE");
 	show_typed();
 	show_page(PAGE_TEXT);
 }
 
-// the same screen, to send CW with
-static void open_cw_keyboard(void) {
-	snprintf(cw_sending.name, sizeof(cw_sending.name), "SENDING CW");
-	cw_sending.value[0] = 0;
-	open_text(&cw_sending);
+/* KBD in CW */
+
+static void show_cw_sent(void) {
+	char with_mark[CW_SENT_SHOWN + 2];
+
+	snprintf(with_mark, sizeof(with_mark), "%s_", cw_sent);
+	gtk_label_set_text(GTK_LABEL(cw_sent_label), with_mark);
 }
 
-// a character touched while sending CW goes to the radio at once
+// a character, touched on KBD or struck on a keyboard plugged in, goes to
+// the radio at once, and the line keeps the newest of what was sent
 static void send_cw_character(char c) {
 	char text[2] = { c, 0 };
+	size_t length = strlen(cw_sent);
 
 	if (c == ' ')
 		send_line(CW_TEXT_CONTROL, CW_TEXT_SPACE);
 	else if (c != '_')
 		send_line(CW_TEXT_CONTROL, text);
+	else
+		return;
+	if (length >= CW_SENT_SHOWN) {
+		memmove(cw_sent, cw_sent + 1, length);
+		length--;
+	}
+	cw_sent[length] = c;
+	cw_sent[length + 1] = 0;
+	show_cw_sent();
 }
+
+// ESC: what the radio is still sending is stopped, and the line emptied
+static void stop_cw_sending(void) {
+	send_line(CW_DO_CONTROL, "ESC");
+	cw_sent[0] = 0;
+	show_cw_sent();
+}
+
+static void show_cw_keys(int is_shown) {
+	if (is_shown)
+		show_cw_sent();
+	gtk_widget_set_visible(cw_keys, is_shown);
+}
+
+static void on_cw_key(char key) {
+	size_t length = strlen(cw_sent);
+
+	if (key == KEYBOARD_CLOSE) {
+		show_cw_keys(0);
+		return;
+	}
+	if (key == KEYBOARD_RUB_OUT) {
+		if (length > 0)
+			cw_sent[length - 1] = 0;
+		show_cw_sent();
+		return;
+	}
+	send_cw_character(key);
+}
+
+/* a text of the settings, typed */
 
 static void type_a_character(char c) {
 	size_t length = strlen(typed);
 
-	if (typed_for == &cw_sending) {
-		send_cw_character(c);
-		// the box keeps the newest of what was sent
-		if (length >= CW_SENT_SHOWN) {
-			memmove(typed, typed + 1, length);
-			length--;
-		}
-	}
 	if (length + 1 >= sizeof(typed))
 		return;
 	typed[length] = c;
@@ -2665,14 +2704,6 @@ static void rub_out(void) {
 // what was typed goes to the radio, if it is something and is new, and the
 // settings come back
 static void save_typed(void) {
-	// while sending CW the key is ESC: what the radio is still sending is
-	// stopped, and the record of it cleared
-	if (typed_for == &cw_sending) {
-		send_line(CW_DO_CONTROL, "ESC");
-		typed[0] = 0;
-		show_typed();
-		return;
-	}
 	if (typed_for == &password_asked) {
 		take_typed_password(typed);
 		return;
@@ -2685,30 +2716,19 @@ static void save_typed(void) {
 	show_page(PAGE_SETTINGS);
 }
 
-static void on_key_pressed(GtkButton *button, gpointer character) {
-	(void)button;
-	type_a_character((char)GPOINTER_TO_INT(character));
+// a key of the keyboard while a text is typed: CLOSE gives it to the radio
+static void on_text_key(char key) {
+	if (key == KEYBOARD_RUB_OUT)
+		rub_out();
+	else if (key == KEYBOARD_CLOSE)
+		save_typed();
+	else
+		type_a_character(key);
 }
 
-static void on_rub_out_pressed(GtkButton *button, gpointer unused) {
-	(void)button;
-	(void)unused;
-	rub_out();
-}
-
-static void on_save_pressed(GtkButton *button, gpointer unused) {
-	(void)button;
-	(void)unused;
-	save_typed();
-}
-
-// back from a screen to the one it was reached from; from the keyboard
-// that is the settings, unless it was sending CW, which is reached from the
-// radio's own screen
+// back from a screen to the one it was reached from
 static void on_back_pressed(GtkButton *button, gpointer page) {
 	(void)button;
-	if (is_page_shown(PAGE_TEXT) && typed_for == &cw_sending)
-		page = PAGE_MAIN;
 	show_page(page);
 }
 
@@ -3162,11 +3182,11 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 		return TRUE;
 	}
 	if (clicked == CW_KBD_ROW && !strcmp(mode_group(), MACRO_GROUP)) {
-		open_cw_keyboard();
+		show_cw_keys(!gtk_widget_get_visible(cw_keys));
 		return TRUE;
 	}
 	if (clicked == CW_ESC_ROW && !strcmp(mode_group(), MACRO_GROUP))
-		send_line(CW_DO_CONTROL, "ESC");
+		stop_cw_sending();
 	if (strcmp(mode_group(), MESSAGES_GROUP))
 		return TRUE;
 	if (clicked == FT8_CQ_ROW)
@@ -3330,12 +3350,7 @@ static gboolean on_key_while_typing(const GdkEventKey *event) {
 	guint32 character = gdk_keyval_to_unicode(typed_for == &password_asked
 		? event->keyval : gdk_keyval_to_upper(event->keyval));
 
-	if (typed_for == &cw_sending && (event->keyval == GDK_KEY_Return
-			|| event->keyval == GDK_KEY_KP_Enter))
-		type_a_character(' ');
-	else if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
-		save_typed();
-	else if (event->keyval == GDK_KEY_Escape && typed_for == &cw_sending)
+	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
 		save_typed();
 	else if (event->keyval == GDK_KEY_Escape)
 		show_page(PAGE_SETTINGS);
@@ -3346,22 +3361,21 @@ static gboolean on_key_while_typing(const GdkEventKey *event) {
 	return TRUE;
 }
 
-// in CW a key struck is sent: the radio is told the character
+// in CW a key struck is sent: the radio is told the character, as KBD's
+// keys tell it
 static gboolean on_key_in_cw(const GdkEventKey *event) {
-	char text[2] = { 0, 0 };
-	guint32 letter = gdk_keyval_to_unicode(event->keyval);
+	guint32 letter = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
 
 	if (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK))
 		return FALSE;
 	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter
 			|| event->keyval == GDK_KEY_space) {
-		send_line(CW_TEXT_CONTROL, CW_TEXT_SPACE);
+		send_cw_character(' ');
 		return TRUE;
 	}
 	if (letter <= ' ' || letter >= 127 || letter == '_')
 		return FALSE;
-	text[0] = (char)letter;
-	send_line(CW_TEXT_CONTROL, text);
+	send_cw_character((char)letter);
 	return TRUE;
 }
 
@@ -3396,7 +3410,7 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	}
 	if (event->keyval == GDK_KEY_Escape) {
 		if (!strcmp(mode_group(), MACRO_GROUP))
-			send_line(CW_DO_CONTROL, "ESC");
+			stop_cw_sending();
 		focus = ON_FREQUENCY;
 		is_editing = 0;
 		show_values();
@@ -4219,7 +4233,8 @@ static void load_style(void) {
 		".message-row.marked { background-color: #604800; }"
 		".key { font-size: %dpx; font-weight: bold; color: #FFFFFF;"
 		" background-image: none; background-color: #101820;"
-		" border: 1px solid #405060; border-radius: 0; box-shadow: none; }"
+		" border: 1px solid #405060; border-radius: 0; box-shadow: none;"
+		" padding: 0; min-width: 0; min-height: 0; }"
 		".key:active { background-color: #604800; }"
 		".key:disabled { color: #405060; }"
 		".typed { font-family: monospace; font-size: %dpx; font-weight: bold;"
@@ -4450,17 +4465,9 @@ static GtkWidget *create_list_page(const char *name, const char *back_to, GtkWid
 }
 
 // the screen a text is typed on: what is typed in the upper part, and in
-// the lower part the keyboard, which has no more keys than are needed
+// the lower part the keyboard, keyboard.c
 static GtkWidget *create_text_page(void) {
-	static const char *const key_rows[KEY_ROWS] = {
-		"1234567890", "QWERTYUIOP", "ASDFGHJKL/", "ZXCVBNM.?-",
-	};
 	GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	GtkWidget *keys = gtk_grid_new();
-	char text[2] = "";
-	int column = 0;
-	int row;
-	int i;
 
 	gtk_box_pack_start(GTK_BOX(page), create_top_bar(PAGE_SETTINGS, &text_title), FALSE,
 		FALSE, 0);
@@ -4468,29 +4475,28 @@ static GtkWidget *create_text_page(void) {
 	add_label_class(typed_label, "typed");
 	gtk_widget_set_size_request(typed_label, -1, px_down(ROW_HEIGHT));
 	gtk_box_pack_start(GTK_BOX(page), typed_label, FALSE, FALSE, 0);
-
-	gtk_grid_set_row_homogeneous(GTK_GRID(keys), TRUE);
-	gtk_grid_set_column_homogeneous(GTK_GRID(keys), TRUE);
-	for (row = 0; row < KEY_ROWS; row++) {
-		for (i = 0; i < KEYS_A_ROW; i++) {
-			text[0] = key_rows[row][i];
-			gtk_grid_attach(GTK_GRID(keys), key_new(text, G_CALLBACK(on_key_pressed),
-				GINT_TO_POINTER(text[0])), i, row, 1, 1);
-		}
-	}
-	cancel_key = key_new("CANCEL", G_CALLBACK(on_back_pressed), PAGE_SETTINGS);
-	gtk_grid_attach(GTK_GRID(keys), cancel_key, column, KEY_ROWS, CANCEL_KEYS, 1);
-	column += CANCEL_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), key_new("SPACE", G_CALLBACK(on_key_pressed),
-		GINT_TO_POINTER(' ')), column, KEY_ROWS, SPACE_KEYS, 1);
-	column += SPACE_KEYS;
-	gtk_grid_attach(GTK_GRID(keys), key_new("\u232B", G_CALLBACK(on_rub_out_pressed),
-		NULL), column, KEY_ROWS, RUB_OUT_KEYS, 1);
-	column += RUB_OUT_KEYS;
-	save_key = key_new("SAVE", G_CALLBACK(on_save_pressed), NULL);
-	gtk_grid_attach(GTK_GRID(keys), save_key, column, KEY_ROWS, SAVE_KEYS, 1);
-	gtk_box_pack_end(GTK_BOX(page), keys, TRUE, TRUE, 0);
+	gtk_box_pack_end(GTK_BOX(page), keyboard_new("key", on_text_key), TRUE, TRUE, 0);
 	return page;
+}
+
+// KBD's keyboard, under the status line and right of the column, with the
+// line of what was sent over its keys; made after the wheel, so that it
+// lies over everything there, and not shown until KBD is touched
+static void create_cw_keys(void) {
+	cw_keys = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	cw_sent_label = gtk_label_new("");
+	add_label_class(cw_sent_label, "typed");
+	gtk_label_set_xalign(GTK_LABEL(cw_sent_label), 1);
+	gtk_widget_set_size_request(cw_sent_label, -1, px_down(CW_SENT_HEIGHT));
+	gtk_box_pack_start(GTK_BOX(cw_keys), cw_sent_label, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(cw_keys), keyboard_new("key", on_cw_key), TRUE, TRUE, 0);
+	// its keys are shown now, and the whole hidden, and left so when the
+	// window is shown, until KBD shows it
+	gtk_widget_show_all(cw_keys);
+	gtk_widget_hide(cw_keys);
+	gtk_widget_set_no_show_all(cw_keys, TRUE);
+	put(cw_keys, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, PANEL_WIDTH - GRAPH_LEFT,
+		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
 }
 
 // the tuning wheel's box, made last so that it lies over the list of
@@ -4526,6 +4532,7 @@ static GtkWidget *create_window(void) {
 	create_middle();
 	create_list();
 	create_wheel();
+	create_cw_keys();
 
 	pages = gtk_stack_new();
 	gtk_stack_add_named(GTK_STACK(pages), screen, PAGE_MAIN);

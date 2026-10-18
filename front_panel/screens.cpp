@@ -52,14 +52,17 @@
 // TYPING A LINE OF TEXT
 //
 // One screen serves wherever a line of text is wanted: a title, a prompt,
-// a box of one line, and LVGL's keyboard. The author's rule is that the box
-// is in the upper part of the screen, so that the keyboard, which takes
-// the lower part, never covers it. The button beside the box, or the
-// keyboard's own tick, gives the text to whoever asked for it; the button
-// says what will be done with it, SAVE for a setting, GO for a search. The
-// arrow at the top left, the same as on every other screen, or the
-// keyboard's cross, goes back and gives nothing. Either way the screen it
-// was opened from comes back.
+// a box of one line, and a keyboard. The author's rule is that the box is
+// in the upper part of the screen, so that the keyboard, which takes the
+// lower part, never covers it. A text in capitals, the callsign or the
+// grid, is typed on the panel's one keyboard, the logbook's, as the author
+// asked on 18 October 2026, and its CLOSE gives the text to whoever asked
+// for it. The WiFi key, which has small letters and signs that keyboard
+// has not, is typed on LVGL's, whose tick, or the button beside the box,
+// gives it; the button says what will be done with it. The arrow at the
+// top left, the same as on every other screen, or LVGL's cross, goes back
+// and gives nothing. Either way the screen it was opened from comes
+// back.
 //
 // THE LOGBOOK
 //
@@ -367,14 +370,6 @@ static const char *const log_keys[] = {
 	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
 	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", LOG_CLOSE_KEY, "",
 };
-//the CW keyboard's: the logbook's, with ESC where CLOSE is
-#define CW_ESC_KEY "ESC"
-static const char *const cw_keys[] = {
-	"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
-	"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "/", "\n",
-	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
-	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", CW_ESC_KEY, "",
-};
 #define LOG_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_1
 #define LOG_SPACE_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
 //CLOSE, or ESC on the CW keyboard, is two keys wide: the author found
@@ -420,6 +415,10 @@ static lv_obj_t *input_title;
 static lv_obj_t *input_prompt;
 static lv_obj_t *input_box;
 static lv_obj_t *input_keyboard;
+//the one keyboard, for a text in capitals, and the button beside the box,
+//which goes with LVGL's
+static lv_obj_t *input_keys;
+static lv_obj_t *input_accept_box;
 static lv_obj_t *input_accept;
 static text_done_fn input_done;
 static lv_obj_t *input_opened_from;
@@ -625,6 +624,34 @@ static void on_input_cancel(lv_event_t *e){
 	input_close(NULL);
 }
 
+static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_t pressed);
+
+static void set_shown(lv_obj_t *thing, bool is_shown){
+	if (is_shown)
+		lv_obj_remove_flag(thing, LV_OBJ_FLAG_HIDDEN);
+	else
+		lv_obj_add_flag(thing, LV_OBJ_FLAG_HIDDEN);
+}
+
+//a key of the one keyboard, for a text in capitals
+static void on_input_key(lv_event_t *e){
+	lv_obj_t *keys = (lv_obj_t *)lv_event_get_target(e);
+	uint32_t which = lv_buttonmatrix_get_selected_button(keys);
+	const char *key;
+
+	if (which == LV_BUTTONMATRIX_BUTTON_NONE)
+		return;
+	key = lv_buttonmatrix_get_button_text(keys, which);
+	if (!strcmp(key, LOG_CLOSE_KEY))
+		input_save();
+	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
+		lv_textarea_delete_char(input_box);
+	else if (!strcmp(key, "SPACE"))
+		lv_textarea_add_char(input_box, ' ');
+	else
+		lv_textarea_add_text(input_box, key);
+}
+
 static void input_create(){
 	lv_obj_t *accept;
 
@@ -644,6 +671,7 @@ static void input_create(){
 	accept = button_create(input_screen, PAD + INPUT_BOX_WIDTH + PAD, INPUT_BOX_TOP,
 		INPUT_BUTTON_WIDTH, INPUT_BOX_HEIGHT, "", on_input_save);
 	input_accept = lv_obj_get_child(accept, 0);
+	input_accept_box = accept;
 
 	input_keyboard = lv_keyboard_create(input_screen);
 	lv_obj_set_size(input_keyboard, SCREEN_WIDTH, INPUT_KEYBOARD_HEIGHT);
@@ -651,6 +679,10 @@ static void input_create(){
 	lv_keyboard_set_textarea(input_keyboard, input_box);
 	lv_obj_add_event_cb(input_keyboard, on_input_save, LV_EVENT_READY, NULL);
 	lv_obj_add_event_cb(input_keyboard, on_input_cancel, LV_EVENT_CANCEL, NULL);
+
+	input_keys = keys_create(input_screen, log_keys, on_input_key);
+	lv_obj_set_size(input_keys, SCREEN_WIDTH, INPUT_KEYBOARD_HEIGHT);
+	lv_obj_align(input_keys, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
 
 //opens the screen for a line of text, over the screen it is opened from,
@@ -667,10 +699,12 @@ static void text_input_open(lv_obj_t *from, const char *title, const char *promp
 	lv_label_set_text(input_accept, accept);
 	lv_textarea_set_max_length(input_box, max_length);
 	lv_textarea_set_text(input_box, initial);
-	if (capitals)
-		lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_UPPER);
-	else
-		lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+	lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+	//capitals on the one keyboard, CLOSE taking the text; anything else on
+	//LVGL's, with the button
+	set_shown(input_keys, capitals);
+	set_shown(input_keyboard, !capitals);
+	set_shown(input_accept_box, !capitals);
 	input_is_capitals = capitals;
 	input_done = done;
 	input_opened_from = from;
@@ -1514,26 +1548,34 @@ static void log_create(){
 
 /* the CW keyboard
 
-   KBD on the main screen in CW opens it, as the window's KBD does: the
+   KBD on the main screen in CW brings it up, as the window's KBD does: the
    author asked on 18 October 2026 for the panel to have every control the
-   window has. Each key touched is sent at once, CW_TEXT, and is added to
-   the line at the top, which is only a record of what was sent, the last
-   of it in view. SPACE sends a space, as "_", which a value of a control
-   cannot begin or end with otherwise. The rub-out takes the last character
-   off the line, and back from what is still to go to the radio, but not
-   from what the radio has been given. ESC stops what the radio is sending,
-   CW_DO, and empties the line. The arrow, or a long press of the knob,
-   goes back. What is typed goes to the radio as a text, a part at a time;
-   while one is on its way, what is typed after it waits and goes next, all
-   of it in one text. */
+   window has, and for one keyboard, the logbook's, wherever something is
+   typed. It lies over the lower part of the main screen, right of the
+   column and under the status line, so that ESC in the column and what
+   CW is read off the air are still in view; the waterfall, which is
+   painted straight to the glass, is not painted while it is up. Each key
+   touched is sent at once, CW_TEXT, and is added to the line over the
+   keys, which is only a record of what was sent, the last of it in view.
+   SPACE sends a space, as "_", which a value of a control cannot begin or
+   end with otherwise. The rub-out takes the last character off the line,
+   and back from what is still to go to the radio, but not from what the
+   radio has been given. ESC in the column stops what the radio is sending
+   and empties the line. CLOSE, KBD again, or a long press of the knob puts
+   the keyboard away. What is typed goes to the radio as a text, a part at
+   a time; while one is on its way, what is typed after it waits and goes
+   next, all of it in one text. */
 
 #define CW_SENT_SHOWN 40
 #define CW_TEXT_SPACE '_'
-#define CW_LINE_TOP (BAR_HEIGHT + LOG_GAP)
-#define CW_LINE_HEIGHT 32
-#define CW_KEYS_TOP (CW_LINE_TOP + CW_LINE_HEIGHT + LOG_GAP)
+#define CW_LINE_HEIGHT 24
+//the room it lies in, as main.cpp has the screen: right of the column,
+//under the status line
+#define CW_KEYS_LEFT WATERFALL_LEFT
+#define CW_KEYS_TOP (STATUS_TOP + CW_STATUS_HEIGHT)
+#define CW_STATUS_HEIGHT 16
 
-static lv_obj_t *cw_screen;
+static lv_obj_t *cw_layer;
 static lv_obj_t *cw_line;
 static char cw_sent[CW_SENT_SHOWN + 1];
 static char cw_to_go[LINK_TEXT_MAX + 1];
@@ -1573,11 +1615,23 @@ static void cw_rub_out(){
 	cw_line_show();
 }
 
-static void cw_escape(){
+bool screens_cw_keys_up(){
+	return cw_layer != NULL && !lv_obj_has_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
+}
+
+void screens_cw_keys_hide(){
+	if (!screens_cw_keys_up())
+		return;
+	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
+	waterfall_set_painting(true);
+}
+
+//ESC in the column has stopped what the radio was sending: the line goes
+void screens_cw_stopped(){
 	cw_sent[0] = 0;
 	cw_to_go[0] = 0;
-	send_action("CW_DO", "ESC");
-	cw_line_show();
+	if (cw_line != NULL)
+		cw_line_show();
 }
 
 static void on_cw_key(lv_event_t *e){
@@ -1588,8 +1642,8 @@ static void on_cw_key(lv_event_t *e){
 	if (which == LV_BUTTONMATRIX_BUTTON_NONE)
 		return;
 	key = lv_buttonmatrix_get_button_text(keys, which);
-	if (!strcmp(key, CW_ESC_KEY))
-		cw_escape();
+	if (!strcmp(key, LOG_CLOSE_KEY))
+		screens_cw_keys_hide();
 	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
 		cw_rub_out();
 	else if (!strcmp(key, "SPACE"))
@@ -1612,37 +1666,41 @@ static void cw_send_waiting(){
 	cw_to_go[0] = 0;
 }
 
-static void on_back_from_cw(lv_event_t *e){
-	(void)e;
-	screens_close();
-}
-
 static void cw_create(){
-	lv_obj_t *label;
 	lv_obj_t *box;
 	lv_obj_t *keys;
 
-	cw_screen = screen_create();
-	label = text_create(cw_screen, "SENDING CW", &lv_font_montserrat_16, COLOUR_VALUE);
-	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
-	back_button_create(cw_screen, on_back_from_cw);
-	box = box_create(cw_screen, LOG_GAP, CW_LINE_TOP, SCREEN_WIDTH - 2 * LOG_GAP,
+	cw_layer = lv_obj_create(lv_screen_active());
+	lv_obj_remove_style_all(cw_layer);
+	lv_obj_set_size(cw_layer, SCREEN_WIDTH - CW_KEYS_LEFT, SCREEN_HEIGHT - CW_KEYS_TOP);
+	lv_obj_align(cw_layer, LV_ALIGN_TOP_LEFT, CW_KEYS_LEFT, CW_KEYS_TOP);
+	lv_obj_set_style_bg_color(cw_layer, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_bg_opa(cw_layer, LV_OPA_COVER, 0);
+	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_SCROLLABLE);
+	box = box_create(cw_layer, LOG_GAP, 0, SCREEN_WIDTH - CW_KEYS_LEFT - 2 * LOG_GAP,
 		CW_LINE_HEIGHT);
 	cw_line = text_create(box, "", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_obj_align(cw_line, LV_ALIGN_RIGHT_MID, -LOG_GAP, 0);
-	keys = keys_create(cw_screen, cw_keys, on_cw_key);
-	lv_obj_set_size(keys, SCREEN_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP);
+	keys = keys_create(cw_layer, log_keys, on_cw_key);
+	lv_obj_set_size(keys, SCREEN_WIDTH - CW_KEYS_LEFT,
+		SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT);
 	lv_obj_align(keys, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 }
 
+//KBD: the keyboard comes up, or goes if it is up
 void screens_open_cw_keys(){
-	if (cw_screen == NULL)
+	if (screens_cw_keys_up()){
+		screens_cw_keys_hide();
+		return;
+	}
+	if (cw_layer == NULL)
 		cw_create();
 	waterfall_set_painting(false);
-	main_hide();
-	cw_sent[0] = 0;
 	cw_line_show();
-	lv_obj_remove_flag(cw_screen, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_move_foreground(cw_layer);
 }
 
 /* the date and the time */
@@ -2522,8 +2580,6 @@ bool screens_is_open(){
 		return true;
 	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
-	if (cw_screen != NULL && !lv_obj_has_flag(cw_screen, LV_OBJ_FLAG_HIDDEN))
-		return true;
 	return input_screen != NULL && !lv_obj_has_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2538,6 +2594,7 @@ void screens_open_settings(){
 
 //whatever is open is closed and the main screen comes back
 void screens_close(){
+	screens_cw_keys_hide();
 	if (!screens_is_open())
 		return;
 	if (input_screen != NULL)
@@ -2553,8 +2610,6 @@ void screens_close(){
 		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
 	}
-	if (cw_screen != NULL)
-		lv_obj_add_flag(cw_screen, LV_OBJ_FLAG_HIDDEN);
 	input_done = NULL;
 	if (settings_screen != NULL)
 		lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);

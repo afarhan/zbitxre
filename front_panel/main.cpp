@@ -643,12 +643,15 @@ static void lay_out(){
 		set_hidden(halt_button, !is_showing_messages);
 		set_hidden(kbd_button, strcmp(group, MACRO_GROUP) != 0);
 		set_hidden(esc_button, strcmp(group, MACRO_GROUP) != 0);
+		//KBD's keyboard is CW's alone
+		if (strcmp(group, MACRO_GROUP) != 0)
+			screens_cw_keys_hide();
 		set_hidden(menu_button, is_showing_messages);
 	}
 	list_rows = LIST_ROWS;
 	if (is_showing_messages)
 		list_rows = LIST_ROWS_FT8;
-	if (!screens_is_open())
+	if (!screens_is_open() && !screens_cw_keys_up())
 		waterfall_set_painting(!is_showing_messages);
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
@@ -1349,6 +1352,7 @@ static void on_esc_touched(lv_event_t *e){
 	(void)e;
 	if (c != NULL)
 		do_the_action(c, "ESC");
+	screens_cw_stopped();
 }
 
 static void screen_create(){
