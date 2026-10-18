@@ -28,7 +28,11 @@ cd "$(dirname "$0")/.." || exit 1
 say() { echo "panel: $*"; }
 
 release=release/panel
-UF2_ADDRESS=https://my.sbitx.net/zbitx/front_panel.uf2
+# the service the radio is put on line with, which serves the firmware for
+# the cable too: my.sbitx.net unless the settings say SERVER= another
+SERVER=$(sed -n 's/^SERVER=//p' data/user_settings.ini 2>/dev/null | tail -1)
+SERVER=${SERVER:-my.sbitx.net}
+UF2_ADDRESS=https://$SERVER/zbitx/front_panel.uf2
 [ -f "$release/VERSION" ] || exit 0
 grep -q '^radio=sbitx' data/hw_settings.ini 2>/dev/null && exit 0
 # --from-radio: the radio program runs this itself as it starts after an
@@ -48,7 +52,7 @@ have=$(./panel_update --version 2>/tmp/panel_update.err)
 asked=$?
 if [ "$asked" = "$OLDER_PANEL" ]; then
 	say "the front panel has its older firmware, which is updated with the USB cable, once,"
-	say "as https://my.sbitx.net/upgrade shows:"
+	say "as https://$SERVER/upgrade shows:"
 	say "  1. Switch the radio off. Hold the tuning knob in while switching it on, then let go."
 	say "  2. Plug the panel's USB cable into a computer. A drive called RPI-RP2 appears."
 	say "  3. Copy onto it $UF2_ADDRESS, downloaded on that computer."

@@ -518,6 +518,19 @@ static struct control streaming = {
 	.value = "ON",
 };
 
+// SERVER is the service the radio is put on line with, my.sbitx.net unless
+// the owner has put another in data/user_settings.ini, where the radio
+// writes it with the other settings: zbitxre is open, and anyone may run
+// the service, accounts/, on a server of their own, the author's ruling of
+// 18 October 2026. The gateway reads it from that file when it starts, and
+// so do setup/set_clock.sh and setup/panel_firmware.sh. It is in no list,
+// and is set at the radio only, from the file or the terminal: a client
+// that set it wrong, from afar, would leave the radio unreachable
+static struct control server = {
+	.group = "SERVICE", .name = "SERVER", .kind = CONTROL_TEXT,
+	.value = "my.sbitx.net", .is_set_at_the_radio = 1,
+};
+
 static struct control remote_status = {
 	.group = "REMOTE", .name = "REMOTE_STATUS", .kind = CONTROL_TEXT,
 };
@@ -1928,6 +1941,7 @@ int main(int argc, char **argv) {
 	control_register(&radio_key);
 	control_register(&remote);
 	control_register(&streaming);
+	control_register(&server);
 	control_register(&remote_status);
 	control_register(&bluetooth);
 	control_register(&bluetooth_status);

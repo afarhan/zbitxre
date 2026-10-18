@@ -13,6 +13,17 @@
 // PROTOCOL.md, at the top of the repository, says what is spoken and why;
 // accounts/remote.py is the other end.
 //
+// WHICH SERVICE
+//
+// The radio's setting SERVER, which the radio writes in its
+// data/user_settings.ini with the others, my.sbitx.net unless the owner has
+// put another there; --server is taken before it. The author's ruling of
+// 18 October 2026: zbitxre is open, and anyone may run the service,
+// accounts/, on a server of their own and put their radios on line with
+// it. It is read when this starts, and is set at the radio only, never
+// from afar: tools/sdr.c says why. The ports are the service's own on any
+// server.
+//
 // WHY IT IS A PROGRAM OF ITS OWN
 //
 // The radio program, sdr, is a server: clients connect to it. A radio at
@@ -298,6 +309,9 @@
 #include "telephone.h"
 
 #define DEFAULT_SERVER "my.sbitx.net"
+#define SETTINGS_FILE "data/user_settings.ini"
+#define SERVER_SETTING "SERVER="
+#define SERVER_ROOM 128
 #define DEFAULT_PORT "8081"
 #define DEFAULT_RADIO_PORT "8081"
 #define MESSAGE_WORD "MESSAGE "
@@ -2015,10 +2029,30 @@ static void wait_and_pass_on(void) {
 	}
 }
 
+// the service named in the radio's settings file, SERVER=, if it names one
+static void server_from_settings(void) {
+	static char named[SERVER_ROOM];
+	char line[SERVER_ROOM + sizeof(SERVER_SETTING)];
+	FILE *file = fopen(SETTINGS_FILE, "r");
+
+	if (file == NULL)
+		return;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		line[strcspn(line, "\r\n")] = 0;
+		if (strncmp(line, SERVER_SETTING, strlen(SERVER_SETTING)))
+			continue;
+		snprintf(named, sizeof(named), "%.*s", SERVER_ROOM - 1, line + strlen(SERVER_SETTING));
+	}
+	fclose(file);
+	if (named[0] != 0)
+		server = named;
+}
+
 int main(int argc, char **argv) {
 	int i;
 
 	own_program_note(argv);
+	server_from_settings();
 	for (i = 1; i + 1 < argc; i += 2) {
 		if (!strcmp(argv[i], "--server"))
 			server = argv[i + 1];

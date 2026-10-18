@@ -89,6 +89,15 @@ with no settings file there is none, so give it one:
 
 ## On the server
 
+zbitxre is open, and this service is not only for my.sbitx.net: anyone may
+run it on a server of their own and put their radios on line with it. A
+radio is pointed at it by the line `SERVER=` in its
+`data/user_settings.ini`, which the radio writes as `SERVER=my.sbitx.net`;
+the owner puts their server's name there, and the radio takes it at its
+next start. The window
+reaching a radio from afar is given the server after the radio's name,
+`zbitx_gui remote vu2ese-home radio.example.org`.
+
 `setup/` has the files: `settings.ini`, a systemd unit for each program, and
 the lines for nginx. Port 8081 has to be let through the firewall for
 `remote.py`, for TCP and for UDP. The service runs as a user of its own, `sbitx-accounts`, with the

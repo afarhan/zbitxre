@@ -185,6 +185,10 @@ int control_set(const char *name, const char *value, int origin, char *why, int 
 		snprintf(why, room, "no such control");
 		return -1;
 	}
+	if (c->is_set_at_the_radio && origin >= 0) {
+		snprintf(why, room, "%s is set at the radio only", c->name);
+		return -1;
+	}
 	if (check(c, value, taken, why, room) < 0)
 		return -1;
 	if (c->kind == CONTROL_ACTION) {

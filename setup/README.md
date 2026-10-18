@@ -264,6 +264,19 @@ The first was the sbitx of Sasi, key "sasi", on 14 October 2026.
 
 ## What zbitxre keeps on the radio
 
+`data/user_settings.ini`, the radio's settings, a line `NAME=value` for
+each, which the radio writes as they change. One of them is changed by
+editing the file and nowhere else:
+
+    SERVER=my.sbitx.net
+
+the service the radio is put on line with; with no such line it is
+my.sbitx.net. Anyone may run the service, `accounts/`, on a server of
+their own, and put its name here; the radio takes it at its next start.
+The gateway, `zbitx_remote`, connects there, the clock is set from it, and
+the panel's firmware is fetched from it. No client may change it, since a
+wrong one set from afar would leave the radio unreachable.
+
 `data/snapshot.raw`, when "snapshot" has been asked for in the radio's
 terminal: the samples of sixteen blocks as the sound card gave them. It is
 not kept in the repository.

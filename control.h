@@ -32,6 +32,10 @@ struct control {
 	const char *choices;
 	char value[CONTROL_VALUE_MAX];
 	int (*apply)(struct control *c, const char *value, char *why, int room);
+	// set only from the settings file or the radio's terminal, and refused
+	// to a client, near or from afar: SERVER, which, set wrong, would leave
+	// the radio unreachable
+	int is_set_at_the_radio;
 };
 
 typedef void (*control_notify_fn)(const struct control *c, int origin);

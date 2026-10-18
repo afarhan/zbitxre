@@ -3,8 +3,9 @@
 # Copyright (C) 2026 Ashhar Farhan
 #
 # set_clock.sh — sets the radio's clock when it is plainly wrong, from the
-# Date of a plain HTTP answer from my.sbitx.net, and writes it to the clock
-# chip, if the kernel has one.
+# Date of a plain HTTP answer from the service the radio is put on line
+# with, my.sbitx.net unless data/user_settings.ini says SERVER= another, and
+# writes it to the clock chip, if the kernel has one.
 #
 #     setup/set_clock.sh
 #
@@ -23,7 +24,10 @@
 # update.sh run it; a clock that is right is left alone.
 
 EARLIEST=20261001
-SOURCE=http://my.sbitx.net/
+SETTINGS="$(dirname "$0")/../data/user_settings.ini"
+SERVER=$(sed -n 's/^SERVER=//p' "$SETTINGS" 2>/dev/null | tail -1)
+SERVER=${SERVER:-my.sbitx.net}
+SOURCE=http://$SERVER/
 
 [ "$(date -u +%Y%m%d)" -ge "$EARLIEST" ] && exit 0
 sudo -n true 2>/dev/null || exit 1
@@ -32,11 +36,11 @@ for _ in $(seq 12); do
 	said=$(curl -sI --max-time 5 "$SOURCE" | tr -d '\r' | sed -n 's/^[Dd]ate: //p')
 	if [ -n "$said" ] && sudo -n date -u -s "$said" > /dev/null 2>&1; then
 		[ -e /dev/rtc0 ] && sudo -n hwclock -w 2>/dev/null
-		echo "clock: set from my.sbitx.net, $(date -u '+%d %B %Y %H:%M:%S') UTC"
+		echo "clock: set from $SERVER, $(date -u '+%d %B %Y %H:%M:%S') UTC"
 		exit 0
 	fi
 	# the network may not be up yet, just after the radio started
 	sleep 5
 done
-echo "clock: still $(date -u '+%d %B %Y'); my.sbitx.net did not answer"
+echo "clock: still $(date -u '+%d %B %Y'); $SERVER did not answer"
 exit 1

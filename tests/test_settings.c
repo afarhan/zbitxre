@@ -50,6 +50,12 @@ static struct control voip = {
 static struct control voip_status = {
 	.group = "VOIP", .name = "VOIP_STATUS", .kind = CONTROL_TEXT,
 };
+// SERVER: kept like any setting, and set at the radio only
+static struct control server = {
+	.group = "SERVICE", .name = "SERVER", .kind = CONTROL_TEXT,
+	.value = "my.sbitx.net", .is_set_at_the_radio = 1,
+};
+#define A_CLIENT 0
 static struct control macro = {
 	.group = "CW", .name = "MACRO", .kind = CONTROL_ACTION, .choices = "CQ/RST",
 };
@@ -77,6 +83,7 @@ int main(void) {
 	control_register(&wpm);
 	control_register(&callsign);
 	control_register(&macro);
+	control_register(&server);
 	control_register(&voip);
 	control_register(&voip_status);
 	remove(SETTINGS_PATH);
@@ -112,6 +119,21 @@ int main(void) {
 		&& strcmp(control_get("MYCALLSIGN"), "VU2ESE") == 0
 		&& strcmp(control_get("FREQ"), "14074000") == 0,
 		"loaded again, the controls have what was written");
+
+	expect(file_has("SERVER=my.sbitx.net"),
+		"SERVER is written with the settings, my.sbitx.net to begin with");
+	expect(control_set("SERVER", "radio.example.org", A_CLIENT, why, sizeof(why)) < 0
+		&& strcmp(control_get("SERVER"), "my.sbitx.net") == 0,
+		"a client may not change SERVER");
+	{
+		FILE *file = fopen(SETTINGS_PATH, "a");
+
+		fprintf(file, "SERVER=radio.example.org\n");
+		fclose(file);
+	}
+	settings_load(SETTINGS_PATH);
+	expect(strcmp(control_get("SERVER"), "radio.example.org") == 0,
+		"SERVER changed in the file is the radio's at the next start");
 
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);
