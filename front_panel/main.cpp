@@ -1784,6 +1784,8 @@ void main_select(const char *name){
 		screens_open_settings();
 	else if (!strcmp(name, "LOG"))
 		screens_open_log();
+	else if (!strcmp(name, "KBD"))
+		screens_open_cw_keys();
 	else if (name[0] == 'F' && name[1] >= '1' && name[1] <= '0' + MACROS && name[2] == 0)
 		macro_touched(name[1] - '1');
 	else if (!strcmp(name, "FREQ"))

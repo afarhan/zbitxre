@@ -352,7 +352,8 @@ static char log_searched_for[LOG_SEARCH_MAX + 1];
 static char log_said[LOG_SAID_MAX + 1];
 #define NOT_EDITING (-1)
 static int log_editing = NOT_EDITING;
-static lv_obj_t *log_keyboard;
+//how far down the list and the keys begin: under the macros' row in CW
+static int log_keys_top;
 static bool log_is_save_waiting;
 //the macros' buttons, and STOP after them
 static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX + 1];
@@ -417,7 +418,6 @@ static lv_obj_t *input_box;
 static lv_obj_t *input_keyboard;
 //the one keyboard, for a text in capitals, and the button beside the box,
 //which goes with LVGL's
-static lv_obj_t *input_keys;
 static lv_obj_t *input_accept_box;
 static lv_obj_t *input_accept;
 static text_done_fn input_done;
@@ -594,9 +594,18 @@ static void back_button_create(lv_obj_t *mom, lv_event_cb_t touched){
 
 /* typing a line of text */
 
+static lv_obj_t *keys_attach(lv_obj_t *mom, int width, int height, lv_event_cb_t pressed);
+static void keys_put_away();
+static void on_log_key(lv_event_t *e);
+
 static void input_close(const char *text){
 	text_done_fn done = input_done;
 
+	if (input_keyboard != NULL){
+		lv_obj_delete(input_keyboard);
+		input_keyboard = NULL;
+	}
+	keys_put_away();
 	lv_obj_add_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 	input_done = NULL;
 	lv_obj_remove_flag(input_opened_from, LV_OBJ_FLAG_HIDDEN);
@@ -624,7 +633,6 @@ static void on_input_cancel(lv_event_t *e){
 	input_close(NULL);
 }
 
-static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_t pressed);
 
 static void set_shown(lv_obj_t *thing, bool is_shown){
 	if (is_shown)
@@ -673,16 +681,20 @@ static void input_create(){
 	input_accept = lv_obj_get_child(accept, 0);
 	input_accept_box = accept;
 
+}
+
+//LVGL's keyboard, with small letters and signs, for the WiFi key alone:
+//made when it is wanted and deleted when the typing ends, for the memory
+static void input_keyboard_make(){
+	if (input_keyboard != NULL)
+		return;
 	input_keyboard = lv_keyboard_create(input_screen);
 	lv_obj_set_size(input_keyboard, SCREEN_WIDTH, INPUT_KEYBOARD_HEIGHT);
 	lv_obj_align(input_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
 	lv_keyboard_set_textarea(input_keyboard, input_box);
 	lv_obj_add_event_cb(input_keyboard, on_input_save, LV_EVENT_READY, NULL);
 	lv_obj_add_event_cb(input_keyboard, on_input_cancel, LV_EVENT_CANCEL, NULL);
-
-	input_keys = keys_create(input_screen, log_keys, on_input_key);
-	lv_obj_set_size(input_keys, SCREEN_WIDTH, INPUT_KEYBOARD_HEIGHT);
-	lv_obj_align(input_keys, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 }
 
 //opens the screen for a line of text, over the screen it is opened from,
@@ -699,11 +711,12 @@ static void text_input_open(lv_obj_t *from, const char *title, const char *promp
 	lv_label_set_text(input_accept, accept);
 	lv_textarea_set_max_length(input_box, max_length);
 	lv_textarea_set_text(input_box, initial);
-	lv_keyboard_set_mode(input_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 	//capitals on the one keyboard, CLOSE taking the text; anything else on
 	//LVGL's, with the button
-	set_shown(input_keys, capitals);
-	set_shown(input_keyboard, !capitals);
+	if (capitals)
+		keys_attach(input_screen, SCREEN_WIDTH, INPUT_KEYBOARD_HEIGHT, on_input_key);
+	else
+		input_keyboard_make();
 	set_shown(input_accept_box, !capitals);
 	input_is_capitals = capitals;
 	input_done = done;
@@ -995,7 +1008,7 @@ static void log_editing_end(){
 	lv_obj_remove_state(log_fields[log_editing].value, LV_STATE_FOCUSED);
 	show_mark(log_fields[log_editing].box, false);
 	log_editing = NOT_EDITING;
-	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+	keys_put_away();
 	log_fields_show();
 }
 
@@ -1025,7 +1038,8 @@ static void log_editing_begin(int which){
 	show_mark(log_fields[which].box, true);
 	lv_obj_add_state(log_fields[which].value, LV_STATE_FOCUSED);
 	lv_textarea_set_cursor_pos(log_fields[which].value, LV_TEXTAREA_CURSOR_LAST);
-	lv_obj_remove_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+	keys_attach(log_screen, SCREEN_WIDTH, SCREEN_HEIGHT - log_keys_top, on_log_key);
+	lv_obj_move_foreground(ask_layer);
 }
 
 static void on_log_field_touched(lv_event_t *e){
@@ -1400,12 +1414,50 @@ static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_
 	return keys;
 }
 
-//the keyboard for the fields, over the list and under the row of fields,
-//so that what is typed is seen where it goes; its place is set when the
-//screen is opened, under the macros in CW
-static void log_keyboard_create(){
-	log_keyboard = keys_create(log_screen, log_keys, on_log_key);
-	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
+/* THE ONE SET OF KEYS
+
+   The author asked on 18 October 2026 for one keyboard in place of three,
+   and found the panel frozen opening SET after the logbook, KBD and the
+   callsign had each been typed on: each had kept its own copy of the keys
+   in LVGL's memory, which is small, and LVGL stops dead when it runs out.
+   So there is one set of keys, made once and moved to the screen that is
+   typing, at its foot, with whoever is typing told of each touch. */
+
+static lv_obj_t *the_keys;
+static lv_event_cb_t keys_pressed;
+
+static void on_the_keys(lv_event_t *e){
+	if (keys_pressed != NULL)
+		keys_pressed(e);
+}
+
+//the keys, on mom, at its foot, so high, their touches given to pressed
+static lv_obj_t *keys_attach(lv_obj_t *mom, int width, int height, lv_event_cb_t pressed){
+	if (the_keys == NULL)
+		the_keys = keys_create(mom, log_keys, on_the_keys);
+	else
+		lv_obj_set_parent(the_keys, mom);
+	keys_pressed = pressed;
+	lv_obj_set_size(the_keys, width, height);
+	lv_obj_align(the_keys, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_obj_remove_flag(the_keys, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_move_foreground(the_keys);
+	return the_keys;
+}
+
+static void keys_put_away(){
+	if (the_keys != NULL)
+		lv_obj_add_flag(the_keys, LV_OBJ_FLAG_HIDDEN);
+	keys_pressed = NULL;
+}
+
+//the keys are taken off a screen that is to be deleted, so that they are
+//not deleted with it
+static void keys_take_off(lv_obj_t *mom){
+	if (the_keys == NULL || lv_obj_get_parent(the_keys) != mom)
+		return;
+	lv_obj_set_parent(the_keys, lv_screen_active());
+	keys_put_away();
 }
 
 //the macros' buttons, made afresh when the screen is opened, in CW only,
@@ -1460,9 +1512,7 @@ static void log_macros_make(){
 	lv_table_set_row_count(log_table, log_rows_in_view + 1);
 	lv_obj_set_y(log_table, top);
 	lv_obj_set_height(log_table, SCREEN_HEIGHT - top);
-	lv_obj_set_size(log_keyboard, SCREEN_WIDTH, SCREEN_HEIGHT - top);
-	lv_obj_align(log_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-	lv_obj_move_foreground(log_keyboard);
+	log_keys_top = top;
 	lv_obj_move_foreground(ask_layer);
 }
 
@@ -1542,7 +1592,6 @@ static void log_create(){
 	lv_obj_add_event_cb(log_table, on_log_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
 	lv_obj_add_flag(log_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 	lv_obj_add_event_cb(log_table, on_log_touched, LV_EVENT_VALUE_CHANGED, NULL);
-	log_keyboard_create();
 	ask_create();
 }
 
@@ -1727,7 +1776,6 @@ static void cw_send_waiting(){
 static void cw_create(){
 	lv_obj_t *box;
 	lv_obj_t *play;
-	lv_obj_t *keys;
 
 	cw_layer = lv_obj_create(lv_screen_active());
 	lv_obj_remove_style_all(cw_layer);
@@ -1745,9 +1793,6 @@ static void cw_create(){
 	play = button_create(cw_layer, CW_KEYS_WIDTH - CW_PLAY_WIDTH - LOG_GAP, 0, CW_PLAY_WIDTH,
 		CW_LINE_HEIGHT, LV_SYMBOL_PLAY, on_cw_play);
 	cw_play_label = lv_obj_get_child(play, 0);
-	keys = keys_create(cw_layer, log_keys, on_cw_key);
-	lv_obj_set_size(keys, CW_KEYS_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT);
-	lv_obj_align(keys, LV_ALIGN_BOTTOM_MID, 0, 0);
 	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1761,6 +1806,8 @@ void screens_open_cw_keys(){
 		cw_create();
 	waterfall_set_painting(false);
 	cw_box_show();
+	keys_attach(cw_layer, CW_KEYS_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT,
+		on_cw_key);
 	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_move_foreground(cw_layer);
 }
@@ -2502,7 +2549,7 @@ void screens_knob_turned(int steps){
 		ask_is_on_yes = !ask_is_on_yes;
 		ask_show();
 	}
-	else if (is_up(log_screen) && !is_up(log_keyboard))
+	else if (is_up(log_screen) && log_editing == NOT_EDITING)
 		log_mark_at(log_mark + steps);
 	if (is_up(date_screen)){
 		roller_set(roller_marked, roller_value(roller_marked) + steps);
@@ -2539,7 +2586,7 @@ void screens_knob_clicked(){
 		confirm_answered(confirm_is_on_yes);
 	else if (is_up(log_screen) && is_up(ask_layer))
 		ask_answered(ask_is_on_yes);
-	else if (is_up(log_screen) && is_up(log_keyboard))
+	else if (is_up(log_screen) && log_editing != NOT_EDITING)
 		log_editing_done();
 	else if (is_up(log_screen))
 		log_ask_to_delete();
@@ -2667,10 +2714,17 @@ void screens_close(){
 		lv_obj_add_flag(date_screen, LV_OBJ_FLAG_HIDDEN);
 	if (connections_screen != NULL)
 		lv_obj_add_flag(connections_screen, LV_OBJ_FLAG_HIDDEN);
+	//the logbook's screen is the largest, some 16 kB of LVGL's memory: it
+	//is deleted when it is left, and made again when it is opened
 	if (log_screen != NULL){
 		log_editing_done();
-		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
-		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
+		keys_take_off(log_screen);
+		lv_obj_delete(log_screen);
+		log_screen = NULL;
+		ask_layer = NULL;
+		log_table = NULL;
+		log_status = NULL;
+		log_macros_shown = 0;
 	}
 	input_done = NULL;
 	if (settings_screen != NULL)
