@@ -286,6 +286,28 @@ static void check_a_lost_frame(void) {
 		"descriptions whose frame is lost are said again, and the values follow");
 }
 
+// what the panel's KBD sends in CW: an action given a text of its own, not
+// one of its choices. It is numbered after the many controls
+static struct control cw_text = {
+	.group = "CW", .name = "CW_TEXT", .kind = CONTROL_ACTION, .choices = "",
+};
+#define CW_TEXT_NUMBER (LINK_FIRST_DESCRIBED + 3 + MANY_CONTROLS)
+
+static void check_a_text_for_an_action(void) {
+	uint8_t part[LINK_TEXT_PART_HEADER + LINK_TEXT_PART_DATA];
+	char text[TEXT_MAX];
+	const char *name;
+	int count;
+
+	control_register(&cw_text);
+	panel_controls_describe();
+	turns(4 * TURNS_TO_SAY_ALL);
+	count = link_put_text_part(part, CW_TEXT_NUMBER, "CQ_DE", 0);
+	name = panel_controls_took_bytes(LINK_TEXT_PART, part, count, text, sizeof(text));
+	expect(name != NULL && strcmp(name, "CW_TEXT") == 0 && strcmp(text, "CQ_DE") == 0,
+		"a text for an action that takes one, CW_TEXT, comes from the panel");
+}
+
 static struct control many[MANY_CONTROLS];
 static char many_names[MANY_CONTROLS][CONTROL_NAME_MAX];
 
@@ -321,6 +343,7 @@ int main(void) {
 	check_a_text_from_the_panel();
 	check_a_lost_frame();
 	check_many_controls();
+	check_a_text_for_an_action();
 
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);

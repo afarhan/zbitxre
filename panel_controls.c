@@ -258,8 +258,15 @@ const char *panel_controls_took(int number, int32_t value, char *text, int room)
 }
 
 // a part of a text from the panel. When the text is whole it is given as
-// the control's name and the text; until then, and for anything that is not
-// a text control's, NULL
+// the control's name and the text; until then, and for anything that takes
+// no text, NULL. A text control takes one, and so does an action that is
+// given a text and not one of its choices, as CW_TEXT is, what the panel's
+// KBD sends in CW: the author asked on 18 October 2026 for the panel to
+// have what the window has
+static int is_free_text_action(const struct control *c) {
+	return c->kind == CONTROL_ACTION && (c->choices == NULL || c->choices[0] == 0);
+}
+
 const char *panel_controls_took_bytes(int control, const uint8_t *bytes, int count,
 		char *text, int room) {
 	static char gathered[LINK_TEXT_MAX + 1];
@@ -273,7 +280,7 @@ const char *panel_controls_took_bytes(int control, const uint8_t *bytes, int cou
 	for (i = 0; i < control_count() && i < CONTROLS_MAX; i++) {
 		if (number == NOT_ON_THE_LINK || number_of[i] != number)
 			continue;
-		if (control_at(i)->kind != CONTROL_TEXT)
+		if (control_at(i)->kind != CONTROL_TEXT && !is_free_text_action(control_at(i)))
 			return NULL;
 		snprintf(text, room, "%s", gathered);
 		return control_at(i)->name;

@@ -108,6 +108,7 @@ bool i2c_link_is_sending_text();
 // the other screens
 void screens_open_settings();
 void screens_open_log();
+void screens_open_cw_keys();
 void screens_log_part(const uint8_t *bytes, int count);
 void screens_close();
 bool screens_is_open();

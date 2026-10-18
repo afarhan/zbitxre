@@ -365,6 +365,14 @@ static const char *const log_keys[] = {
 	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
 	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", LOG_CLOSE_KEY, "",
 };
+//the CW keyboard's: the logbook's, with ESC where CLOSE is
+#define CW_ESC_KEY "ESC"
+static const char *const cw_keys[] = {
+	"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
+	"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "/", "\n",
+	"A", "S", "D", "F", "G", "H", "J", "K", "L", "?", "-", "\n",
+	"Z", "X", "C", "V", "SPACE", "B", "N", "M", ".", CW_ESC_KEY, "",
+};
 #define LOG_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_1
 #define LOG_SPACE_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
 static const lv_buttonmatrix_ctrl_t log_key_widths[] = {
@@ -1323,39 +1331,48 @@ static lv_obj_t *log_value_create(lv_obj_t *box, int width){
 }
 
 //CLOSE's label is drawn in a smaller font, to fit its key
-static void on_log_key_drawn(lv_event_t *e){
+static void on_key_drawn(lv_event_t *e){
+	lv_obj_t *keys = (lv_obj_t *)lv_event_get_target(e);
 	lv_draw_task_t *task = lv_event_get_draw_task(e);
 	lv_draw_label_dsc_t *label = lv_draw_task_get_label_dsc(task);
 	const char *key;
 
 	if (label == NULL || label->base.part != LV_PART_ITEMS)
 		return;
-	key = lv_buttonmatrix_get_button_text(log_keyboard, label->base.id1);
+	key = lv_buttonmatrix_get_button_text(keys, label->base.id1);
 	if (key != NULL && !strcmp(key, LOG_CLOSE_KEY))
 		label->font = &lv_font_montserrat_10;
+}
+
+//a keyboard of the logbook's keys, the last of them as given: CLOSE in the
+//logbook, ESC on the CW keyboard
+static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_t pressed){
+	lv_obj_t *keys = lv_buttonmatrix_create(mom);
+
+	lv_buttonmatrix_set_map(keys, map);
+	lv_buttonmatrix_set_ctrl_map(keys, log_key_widths);
+	lv_obj_set_style_text_font(keys, &lv_font_montserrat_16, LV_PART_ITEMS);
+	lv_obj_set_style_radius(keys, 0, 0);
+	lv_obj_set_style_radius(keys, 0, LV_PART_ITEMS);
+	lv_obj_set_style_pad_all(keys, LOG_GAP, 0);
+	lv_obj_set_style_pad_gap(keys, LOG_GAP, 0);
+	lv_obj_set_style_bg_color(keys, lv_color_hex(COLOUR_SCREEN), 0);
+	lv_obj_set_style_border_width(keys, 0, 0);
+	lv_obj_set_style_bg_color(keys, lv_color_hex(COLOUR_BOX), LV_PART_ITEMS);
+	lv_obj_set_style_text_color(keys, lv_color_hex(COLOUR_VALUE), LV_PART_ITEMS);
+	lv_obj_set_style_border_color(keys, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
+	lv_obj_set_style_border_width(keys, 1, LV_PART_ITEMS);
+	lv_obj_add_event_cb(keys, pressed, LV_EVENT_VALUE_CHANGED, NULL);
+	lv_obj_add_event_cb(keys, on_key_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
+	lv_obj_add_flag(keys, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+	return keys;
 }
 
 //the keyboard for the fields, over the list and under the row of fields,
 //so that what is typed is seen where it goes; its place is set when the
 //screen is opened, under the macros in CW
 static void log_keyboard_create(){
-	log_keyboard = lv_buttonmatrix_create(log_screen);
-	lv_buttonmatrix_set_map(log_keyboard, log_keys);
-	lv_buttonmatrix_set_ctrl_map(log_keyboard, log_key_widths);
-	lv_obj_set_style_text_font(log_keyboard, &lv_font_montserrat_16, LV_PART_ITEMS);
-	lv_obj_set_style_radius(log_keyboard, 0, 0);
-	lv_obj_set_style_radius(log_keyboard, 0, LV_PART_ITEMS);
-	lv_obj_set_style_pad_all(log_keyboard, LOG_GAP, 0);
-	lv_obj_set_style_pad_gap(log_keyboard, LOG_GAP, 0);
-	lv_obj_set_style_bg_color(log_keyboard, lv_color_hex(COLOUR_SCREEN), 0);
-	lv_obj_set_style_border_width(log_keyboard, 0, 0);
-	lv_obj_set_style_bg_color(log_keyboard, lv_color_hex(COLOUR_BOX), LV_PART_ITEMS);
-	lv_obj_set_style_text_color(log_keyboard, lv_color_hex(COLOUR_VALUE), LV_PART_ITEMS);
-	lv_obj_set_style_border_color(log_keyboard, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
-	lv_obj_set_style_border_width(log_keyboard, 1, LV_PART_ITEMS);
-	lv_obj_add_event_cb(log_keyboard, on_log_key, LV_EVENT_VALUE_CHANGED, NULL);
-	lv_obj_add_event_cb(log_keyboard, on_log_key_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
-	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+	log_keyboard = keys_create(log_screen, log_keys, on_log_key);
 	lv_obj_add_flag(log_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1484,6 +1501,139 @@ static void log_create(){
 	lv_obj_add_event_cb(log_table, on_log_touched, LV_EVENT_VALUE_CHANGED, NULL);
 	log_keyboard_create();
 	ask_create();
+}
+
+/* the CW keyboard
+
+   KBD on the main screen in CW opens it, as the window's KBD does: the
+   author asked on 18 October 2026 for the panel to have every control the
+   window has. Each key touched is sent at once, CW_TEXT, and is added to
+   the line at the top, which is only a record of what was sent, the last
+   of it in view. SPACE sends a space, as "_", which a value of a control
+   cannot begin or end with otherwise. The rub-out takes the last character
+   off the line, and back from what is still to go to the radio, but not
+   from what the radio has been given. ESC stops what the radio is sending,
+   CW_DO, and empties the line. The arrow, or a long press of the knob,
+   goes back. What is typed goes to the radio as a text, a part at a time;
+   while one is on its way, what is typed after it waits and goes next, all
+   of it in one text. */
+
+#define CW_SENT_SHOWN 40
+#define CW_TEXT_SPACE '_'
+#define CW_LINE_TOP (BAR_HEIGHT + LOG_GAP)
+#define CW_LINE_HEIGHT 32
+#define CW_KEYS_TOP (CW_LINE_TOP + CW_LINE_HEIGHT + LOG_GAP)
+
+static lv_obj_t *cw_screen;
+static lv_obj_t *cw_line;
+static char cw_sent[CW_SENT_SHOWN + 1];
+static char cw_to_go[LINK_TEXT_MAX + 1];
+
+static void cw_line_show(){
+	lv_label_set_text(cw_line, cw_sent);
+}
+
+static void cw_add(char c){
+	size_t had = strlen(cw_sent);
+	size_t waiting = strlen(cw_to_go);
+	char shown = c;
+
+	if (c == CW_TEXT_SPACE)
+		shown = ' ';
+	if (had == CW_SENT_SHOWN){
+		memmove(cw_sent, cw_sent + 1, had);
+		had--;
+	}
+	cw_sent[had] = shown;
+	cw_sent[had + 1] = 0;
+	if (waiting < sizeof(cw_to_go) - 1){
+		cw_to_go[waiting] = c;
+		cw_to_go[waiting + 1] = 0;
+	}
+	cw_line_show();
+}
+
+static void cw_rub_out(){
+	size_t had = strlen(cw_sent);
+	size_t waiting = strlen(cw_to_go);
+
+	if (had > 0)
+		cw_sent[had - 1] = 0;
+	if (waiting > 0)
+		cw_to_go[waiting - 1] = 0;
+	cw_line_show();
+}
+
+static void cw_escape(){
+	cw_sent[0] = 0;
+	cw_to_go[0] = 0;
+	send_action("CW_DO", "ESC");
+	cw_line_show();
+}
+
+static void on_cw_key(lv_event_t *e){
+	lv_obj_t *keys = (lv_obj_t *)lv_event_get_target(e);
+	uint32_t which = lv_buttonmatrix_get_selected_button(keys);
+	const char *key;
+
+	if (which == LV_BUTTONMATRIX_BUTTON_NONE)
+		return;
+	key = lv_buttonmatrix_get_button_text(keys, which);
+	if (!strcmp(key, CW_ESC_KEY))
+		cw_escape();
+	else if (!strcmp(key, LV_SYMBOL_BACKSPACE))
+		cw_rub_out();
+	else if (!strcmp(key, "SPACE"))
+		cw_add(CW_TEXT_SPACE);
+	else
+		cw_add(key[0]);
+}
+
+//what has been typed goes, once nothing else is on its way to the radio
+static void cw_send_waiting(){
+	struct panel_control *c;
+
+	if (cw_to_go[0] == 0 || i2c_link_is_sending_text())
+		return;
+	c = controls_find("CW_TEXT");
+	if (c != NULL){
+		Serial.printf("CW_TEXT %s\n", cw_to_go);
+		i2c_link_send_text(c->d.number, cw_to_go);
+	}
+	cw_to_go[0] = 0;
+}
+
+static void on_back_from_cw(lv_event_t *e){
+	(void)e;
+	screens_close();
+}
+
+static void cw_create(){
+	lv_obj_t *label;
+	lv_obj_t *box;
+	lv_obj_t *keys;
+
+	cw_screen = screen_create();
+	label = text_create(cw_screen, "SENDING CW", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
+	back_button_create(cw_screen, on_back_from_cw);
+	box = box_create(cw_screen, LOG_GAP, CW_LINE_TOP, SCREEN_WIDTH - 2 * LOG_GAP,
+		CW_LINE_HEIGHT);
+	cw_line = text_create(box, "", &lv_font_montserrat_16, COLOUR_VALUE);
+	lv_obj_align(cw_line, LV_ALIGN_RIGHT_MID, -LOG_GAP, 0);
+	keys = keys_create(cw_screen, cw_keys, on_cw_key);
+	lv_obj_set_size(keys, SCREEN_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP);
+	lv_obj_align(keys, LV_ALIGN_BOTTOM_MID, 0, 0);
+}
+
+void screens_open_cw_keys(){
+	if (cw_screen == NULL)
+		cw_create();
+	waterfall_set_painting(false);
+	main_hide();
+	cw_sent[0] = 0;
+	cw_line_show();
+	lv_obj_remove_flag(cw_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* the date and the time */
@@ -2299,6 +2449,7 @@ void screens_slice(){
 		log_is_save_waiting = false;
 		send_action("LOGGER", "SAVE");
 	}
+	cw_send_waiting();
 	if (log_macro_waiting[0] != 0 && !i2c_link_is_sending_text()){
 		send_action("MACRO", log_macro_waiting);
 		log_macro_waiting[0] = 0;
@@ -2362,6 +2513,8 @@ bool screens_is_open(){
 		return true;
 	if (log_screen != NULL && !lv_obj_has_flag(log_screen, LV_OBJ_FLAG_HIDDEN))
 		return true;
+	if (cw_screen != NULL && !lv_obj_has_flag(cw_screen, LV_OBJ_FLAG_HIDDEN))
+		return true;
 	return input_screen != NULL && !lv_obj_has_flag(input_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2391,6 +2544,8 @@ void screens_close(){
 		lv_obj_add_flag(ask_layer, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_add_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
 	}
+	if (cw_screen != NULL)
+		lv_obj_add_flag(cw_screen, LV_OBJ_FLAG_HIDDEN);
 	input_done = NULL;
 	if (settings_screen != NULL)
 		lv_obj_add_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);

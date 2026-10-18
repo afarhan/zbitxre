@@ -386,6 +386,9 @@ static lv_obj_t *spectrum_area;
 static lv_obj_t *term_button;
 static lv_obj_t *cq_button;
 static lv_obj_t *halt_button;
+//in CW, KBD and ESC in the same places, as the window has them
+static lv_obj_t *kbd_button;
+static lv_obj_t *esc_button;
 static lv_obj_t *menu_button;
 static bool is_showing_messages;
 
@@ -635,9 +638,11 @@ static void lay_out(){
 	messages_set_shown(is_showing_messages);
 	if (spectrum_area != NULL){
 		set_hidden(spectrum_area, is_showing_messages);
-		set_hidden(term_button, is_showing_messages);
+		set_hidden(term_button, is_showing_messages || !strcmp(group, MACRO_GROUP));
 		set_hidden(cq_button, !is_showing_messages);
 		set_hidden(halt_button, !is_showing_messages);
+		set_hidden(kbd_button, strcmp(group, MACRO_GROUP) != 0);
+		set_hidden(esc_button, strcmp(group, MACRO_GROUP) != 0);
 		set_hidden(menu_button, is_showing_messages);
 	}
 	list_rows = LIST_ROWS;
@@ -1331,6 +1336,21 @@ static void on_halt_touched(lv_event_t *e){
 	ft8_do("HALT");
 }
 
+//CW's two: the keyboard that sends as it is typed, and ESC, which stops
+//what is being sent, the radio's action CW_DO
+static void on_kbd_touched(lv_event_t *e){
+	(void)e;
+	screens_open_cw_keys();
+}
+
+static void on_esc_touched(lv_event_t *e){
+	struct panel_control *c = controls_find("CW_DO");
+
+	(void)e;
+	if (c != NULL)
+		do_the_action(c, "ESC");
+}
+
 static void screen_create(){
 	int i;
 
@@ -1361,6 +1381,12 @@ static void screen_create(){
 		on_halt_touched);
 	lv_obj_add_flag(cq_button, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_flag(halt_button, LV_OBJ_FLAG_HIDDEN);
+	kbd_button = live_button_create(0, STATUS_TOP + FT8_CQ_ROW * ROW_HEIGHT, "KBD",
+		on_kbd_touched);
+	esc_button = live_button_create(0, STATUS_TOP + FT8_HALT_ROW * ROW_HEIGHT, "ESC",
+		on_esc_touched);
+	lv_obj_add_flag(kbd_button, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_add_flag(esc_button, LV_OBJ_FLAG_HIDDEN);
 	for (i = 0; i < MACROS; i++){
 		macro_widget[i].box = box_create(WATERFALL_LEFT + i * TILE_WIDTH, FOOTER_TOP,
 			TILE_WIDTH, ROW_HEIGHT);
