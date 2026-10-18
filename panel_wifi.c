@@ -58,6 +58,14 @@
 // The panel's status bar is told what is being done, and ten seconds later
 // whether the radio is on that access point.
 //
+// WHICH IT IS ON
+//
+// WIFI_SSID is the name of the access point the radio is on, or nothing
+// when it is on none, looked for every five seconds with wpa_cli's status,
+// which the check after a join shares. The panel's WiFi row in SET shows
+// it, the author's asking of 18 October 2026. It is a report: never kept,
+// and set at the radio only, never by a client.
+//
 // Changing the access point changes the radio's address on the network,
 // and whatever was connected to it over WiFi loses it.
 //
@@ -92,6 +100,9 @@
 #define HEX_PER_BYTE 2
 #define QUOTES 2
 #define JOINED_CHECK_AFTER_MS 10000
+#define SSID_EVERY_MS 5000
+#define SSID_LINE "\nssid="
+#define JOINED_STATE "wpa_state=COMPLETED"
 #define NO_NETWORK (-1)
 #define NETWORK_FIELDS 2
 
@@ -367,16 +378,40 @@ static const char *join(const char *name, const char *key) {
 	return NULL;
 }
 
-// whether the radio is on the access point it was asked to join
-static void say_whether_joined(void) {
-	const char *words[] = { "status", NULL };
-	char answer[ANSWER_MAX];
+static struct control wifi_ssid = {
+	.group = "SYSTEM", .name = "WIFI_SSID", .kind = CONTROL_TEXT,
+	.is_set_at_the_radio = 1,
+};
+static long ssid_check_at_ms = NOT_WAITING;
+
+// WIFI_SSID from wpa_cli's status: the ssid= line's name, when the radio is
+// on the access point, or nothing
+static void take_the_ssid(const char *answer) {
+	char why[CONTROL_WHY_MAX];
+	char ssid[LINK_WIFI_NAME_MAX + 1] = "";
+	const char *at = strstr(answer, SSID_LINE);
+	size_t length;
+
+	if (at != NULL && strstr(answer, JOINED_STATE) != NULL) {
+		at += strlen(SSID_LINE);
+		length = strcspn(at, "\n");
+		if (length > LINK_WIFI_NAME_MAX)
+			length = LINK_WIFI_NAME_MAX;
+		memcpy(ssid, at, length);
+		ssid[length] = 0;
+	}
+	if (strcmp(wifi_ssid.value, ssid))
+		control_set(wifi_ssid.name, ssid, ORIGIN_NONE, why, sizeof(why));
+}
+
+// whether the radio is on the access point it was asked to join, from an
+// answer of wpa_cli's status
+static void say_whether_joined(const char *answer) {
 	char wanted[LINK_WIFI_NAME_MAX + 8];
 	char said[LINK_SAY_MAX + 1];
 
 	snprintf(wanted, sizeof(wanted), "\nssid=%s\n", joining);
-	if (ask(words, answer, sizeof(answer)) == 0 && strstr(answer, wanted) != NULL
-			&& strstr(answer, "wpa_state=COMPLETED") != NULL)
+	if (strstr(answer, wanted) != NULL && strstr(answer, JOINED_STATE) != NULL)
 		snprintf(said, sizeof(said), "wifi: joined %s", joining);
 	else
 		snprintf(said, sizeof(said), "wifi: not on %s", joining);
@@ -419,6 +454,29 @@ void panel_wifi_took_bytes(int control, const uint8_t *bytes, int count, long no
 	fflush(stdout);
 }
 
+// wpa_cli's status, every SSID_EVERY_MS for WIFI_SSID, and once after a
+// join, to say whether it was joined: one asking does for both when they
+// fall together
+static void poll_the_status(long now_ms) {
+	const char *words[] = { "status", NULL };
+	char answer[ANSWER_MAX];
+	int is_join_due = joined_check_at_ms != NOT_WAITING && now_ms >= joined_check_at_ms;
+
+	if (ssid_check_at_ms == NOT_WAITING)
+		ssid_check_at_ms = now_ms + SSID_EVERY_MS;
+	if (now_ms < ssid_check_at_ms && !is_join_due)
+		return;
+	if (now_ms >= ssid_check_at_ms)
+		ssid_check_at_ms = now_ms + SSID_EVERY_MS;
+	if (ask(words, answer, sizeof(answer)) < 0)
+		answer[0] = 0;
+	take_the_ssid(answer);
+	if (is_join_due) {
+		joined_check_at_ms = NOT_WAITING;
+		say_whether_joined(answer);
+	}
+}
+
 void panel_wifi_poll(long now_ms) {
 	if (is_scan_wanted) {
 		is_scan_wanted = 0;
@@ -430,10 +488,7 @@ void panel_wifi_poll(long now_ms) {
 		results_at_ms = NOT_WAITING;
 		read_the_results();
 	}
-	if (joined_check_at_ms != NOT_WAITING && now_ms >= joined_check_at_ms) {
-		joined_check_at_ms = NOT_WAITING;
-		say_whether_joined();
-	}
+	poll_the_status(now_ms);
 	send_a_part();
 }
 
@@ -452,5 +507,7 @@ static struct control wifi = {
 };
 
 int panel_wifi_open(void) {
+	if (control_register(&wifi_ssid) < 0)
+		return -1;
 	return control_register(&wifi);
 }

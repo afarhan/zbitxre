@@ -56,7 +56,8 @@
 // and of VoIP's, what the gateway says, who is heard and the owner's
 // speaking; the switch VOIP itself is kept, the author's ruling
 static const char *const not_kept[] = { "BAND", "STACK", "TX", "CLOCK", "TIME_SET", "NEW_COOKIE",
-	"UPDATE", "UPDATE_STATUS", "RADIO_KEY", "VOIP_STATUS", "VOIP_SPEAKER", "VOIP_TX" };
+	"UPDATE", "UPDATE_STATUS", "RADIO_KEY", "VOIP_STATUS", "VOIP_SPEAKER", "VOIP_TX",
+	"WIFI_SSID" };
 #define NOT_KEPT ((int)(sizeof(not_kept) / sizeof(not_kept[0])))
 // what the panel measures, the entry being written for the logbook, and
 // what was last said of reaching the radio from afar

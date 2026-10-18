@@ -225,7 +225,8 @@ static struct setting settings[] = {
 	{"Callsign", "MYCALLSIGN", NULL, callsign_open, NULL, NULL},
 	{"Grid", "MYGRID", NULL, grid_open, NULL, NULL},
 	{"Date/Time", "CLOCK", NULL, date_open, NULL, NULL},
-	{"WiFi", NULL, NULL, wifi_open, NULL, NULL},
+	//the access point the radio is on, as it says in WIFI_SSID
+	{"WiFi", "WIFI_SSID", NULL, wifi_open, NULL, NULL},
 	{"Connections", NULL, NULL, connections_open, NULL, NULL},
 	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
 	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},

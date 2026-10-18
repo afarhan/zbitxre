@@ -242,6 +242,9 @@ static void check_joining(void) {
 	expect(strcmp(asked, "status\n") == 0 && strcmp(last_said, "wifi: joined Airtel_71hh") == 0,
 		"then the radio looks, and says it has joined");
 
+	expect(strcmp(control_get("WIFI_SSID"), "Airtel_71hh") == 0,
+		"WIFI_SSID is the access point the radio is on");
+
 	choose("A new one", "its key 123", 20000);
 	expect(strstr(asked, "add_network\nset_network 14 ssid 41206e6577206f6e65\n"
 		"set_network 14 psk \"its key 123\"\nenable_network 14\n") != NULL,
