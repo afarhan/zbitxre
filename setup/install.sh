@@ -6,7 +6,11 @@
 # came with, ours or JJ's, in ~/sbitx. Run on the radio, as its user, with
 # the one line the user manual gives:
 #
-#     curl -fsSL https://my.sbitx.net/install | bash
+#     curl -fsSL https://my.sbitx.net/install.sh | bash
+#
+# That gives a short script that fetches this one from GitHub and runs it:
+# GitHub is where every build comes from and nowhere else, the author's
+# ruling of 18 October 2026, so an edit here is what runs the next time.
 #
 # The author's plan of 16 October 2026: an owner upgrades either with a new
 # SD card or with this one line, and gets on my.sbitx.net quickly after.

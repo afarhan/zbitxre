@@ -28,11 +28,13 @@ cd "$(dirname "$0")/.." || exit 1
 say() { echo "panel: $*"; }
 
 release=release/panel
-# the service the radio is put on line with, which serves the firmware for
-# the cable too: my.sbitx.net unless the settings say SERVER= another
+# the firmware for the cable is GitHub's, where every build comes from and
+# nowhere else, the author's ruling of 18 October 2026; the Upgrade page
+# that shows how is the service's, my.sbitx.net unless the settings say
+# SERVER= another
 SERVER=$(sed -n 's/^SERVER=//p' data/user_settings.ini 2>/dev/null | tail -1)
 SERVER=${SERVER:-my.sbitx.net}
-UF2_ADDRESS=https://$SERVER/zbitx/front_panel.uf2
+UF2_ADDRESS=https://raw.githubusercontent.com/afarhan/zbitxre/main/release/panel/front_panel.uf2
 [ -f "$release/VERSION" ] || exit 0
 grep -q '^radio=sbitx' data/hw_settings.ini 2>/dev/null && exit 0
 # --from-radio: the radio program runs this itself as it starts after an
