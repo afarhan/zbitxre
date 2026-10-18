@@ -38,7 +38,7 @@
 // 2026, they stay as they are when the window is closed and opened again,
 // and are cleared only by WIPE or by SAVE; and in CW the macros' buttons
 // are a row of their own under the fields, to be sent from here, with
-// ABORT at its end, which stops the macro being sent. Each field
+// STOP at its end, which stops the macro being sent. Each field
 // is one line high, and shows its name, dim, in place of a value while it
 // is empty.
 //
@@ -617,10 +617,10 @@ static void on_key_pressed(GtkButton *button, gpointer key) {
 		type_a_character(c);
 }
 
-// ABORT, at the end of the macros' row: the macro being sent is stopped,
+// STOP, at the end of the macros' row: the macro being sent is stopped,
 // and what was waiting dropped, the radio's CW_DO ESC; the author asked
 // for it on 18 October 2026, where the sample macros' last, "-", had been
-static void on_abort_pressed(GtkButton *button, gpointer unused) {
+static void on_stop_pressed(GtkButton *button, gpointer unused) {
 	(void)button;
 	(void)unused;
 	send("CW_DO", "ESC");
@@ -921,7 +921,7 @@ void logbook_window_set_macros(const char *choices) {
 		count++;
 	}
 	if (count > 0)
-		macro_button_add("ABORT", G_CALLBACK(on_abort_pressed));
+		macro_button_add("STOP", G_CALLBACK(on_stop_pressed));
 	gtk_widget_show_all(macro_row);
 	gtk_widget_set_visible(macro_row, count > 0);
 }

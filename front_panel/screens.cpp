@@ -305,7 +305,6 @@ static const struct roller_place roller_places[ROLLERS] = {
 //as high as a key of the keyboard under it, the author's asking: the
 //keyboard's four rows and the macros' share what is under the fields
 #define LOG_MACROS_HEIGHT 42
-//CLOSE is in a smaller font than the other keys, to fit a key's width
 #define LOG_CLOSE_KEY "CLOSE"
 #define LOG_MACROS_MAX 12
 //a macro labelled so is a place left empty in the macros' file
@@ -352,7 +351,7 @@ static char log_said[LOG_SAID_MAX + 1];
 static int log_editing = NOT_EDITING;
 static lv_obj_t *log_keyboard;
 static bool log_is_save_waiting;
-//the macros' buttons, and ABORT after them
+//the macros' buttons, and STOP after them
 static lv_obj_t *log_macro_buttons[LOG_MACROS_MAX + 1];
 static char log_macro_labels[LOG_MACROS_MAX][CONTROL_TEXT_MAX];
 static int log_macros_shown;
@@ -378,6 +377,10 @@ static const char *const cw_keys[] = {
 };
 #define LOG_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_1
 #define LOG_SPACE_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
+//CLOSE, or ESC on the CW keyboard, is two keys wide: the author found
+//CLOSE overflowing a key of one width on 18 October 2026, and the last row
+//is the narrower for it
+#define LOG_LAST_KEY_WIDTH LV_BUTTONMATRIX_CTRL_WIDTH_2
 static const lv_buttonmatrix_ctrl_t log_key_widths[] = {
 	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
 	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
@@ -386,7 +389,7 @@ static const lv_buttonmatrix_ctrl_t log_key_widths[] = {
 	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
 	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
 	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_SPACE_WIDTH,
-	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH,
+	LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_KEY_WIDTH, LOG_LAST_KEY_WIDTH,
 };
 static lv_obj_t *log_table;
 static char log_lines[LINK_LOG_LINES_MAX][LINK_LOG_LINE_MAX + 1];
@@ -1017,9 +1020,9 @@ static void on_log_key(lv_event_t *e){
 		lv_textarea_add_text(value, key);
 }
 
-//ABORT, at the end of the macros' row: the macro being sent is stopped,
+//STOP, at the end of the macros' row: the macro being sent is stopped,
 //the radio's CW_DO ESC, which the author asked for on 18 October 2026
-static void on_log_abort_touched(lv_event_t *e){
+static void on_log_stop_touched(lv_event_t *e){
 	(void)e;
 	log_macro_waiting[0] = 0;
 	send_action("CW_DO", "ESC");
@@ -1341,20 +1344,6 @@ static lv_obj_t *log_value_create(lv_obj_t *box, int width){
 	return value;
 }
 
-//CLOSE's label is drawn in a smaller font, to fit its key
-static void on_key_drawn(lv_event_t *e){
-	lv_obj_t *keys = (lv_obj_t *)lv_event_get_target(e);
-	lv_draw_task_t *task = lv_event_get_draw_task(e);
-	lv_draw_label_dsc_t *label = lv_draw_task_get_label_dsc(task);
-	const char *key;
-
-	if (label == NULL || label->base.part != LV_PART_ITEMS)
-		return;
-	key = lv_buttonmatrix_get_button_text(keys, label->base.id1);
-	if (key != NULL && !strcmp(key, LOG_CLOSE_KEY))
-		label->font = &lv_font_montserrat_10;
-}
-
 //a keyboard of the logbook's keys, the last of them as given: CLOSE in the
 //logbook, ESC on the CW keyboard
 static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_t pressed){
@@ -1374,8 +1363,6 @@ static lv_obj_t *keys_create(lv_obj_t *mom, const char *const *map, lv_event_cb_
 	lv_obj_set_style_border_color(keys, lv_color_hex(COLOUR_EDGE), LV_PART_ITEMS);
 	lv_obj_set_style_border_width(keys, 1, LV_PART_ITEMS);
 	lv_obj_add_event_cb(keys, pressed, LV_EVENT_VALUE_CHANGED, NULL);
-	lv_obj_add_event_cb(keys, on_key_drawn, LV_EVENT_DRAW_TASK_ADDED, NULL);
-	lv_obj_add_flag(keys, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 	return keys;
 }
 
@@ -1429,11 +1416,11 @@ static void log_macros_make(){
 		}
 		log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
 			LOG_MACROS_HEIGHT);
-		lv_obj_align(text_create(log_macro_buttons[i], "ABORT", &lv_font_montserrat_12,
+		lv_obj_align(text_create(log_macro_buttons[i], "STOP", &lv_font_montserrat_12,
 			COLOUR_VALUE), LV_ALIGN_CENTER, 0, 0);
-		lv_obj_add_event_cb(log_macro_buttons[i], on_log_abort_touched, LV_EVENT_CLICKED,
+		lv_obj_add_event_cb(log_macro_buttons[i], on_log_stop_touched, LV_EVENT_CLICKED,
 			NULL);
-		//ABORT is deleted with the macros the next time
+		//STOP is deleted with the macros the next time
 		log_macros_shown++;
 	}
 	lv_table_set_row_count(log_table, log_rows_in_view + 1);
