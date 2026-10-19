@@ -232,7 +232,7 @@ change where they are.
 The front panel's SET also has **Date/Time**, to give the radio the time
 when it has none from the network, the panel's firmware version, and
 **BOOTSEL**, which, after asking, makes the panel a USB drive to copy new
-firmware onto by its USB cable. Updates do not need it: they give the
+firmware onto, with a USB cable in the micro-USB port marked CAT. Updates do not need it: they give the
 panel its firmware by themselves.
 
 ![SET on the front panel](images/panel-set.png)

@@ -439,9 +439,12 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("exec bash /tmp/zbitxre_install.sh", pointer)
         for path in ("/install", "/zbitx/front_panel.uf2"):
             self.assertEqual(Browser(self.port).get(path)[0], 404)
-        # the knob held as the radio is switched on, and the cable after
+        # the cable unplugged first, the knob held as the radio is switched
+        # on, and the cable in the port marked CAT after
+        self.assertLess(text.index("<strong>unplug it</strong>"),
+                        text.index("switch the radio <strong>on</strong>"))
         self.assertLess(text.index("switch the radio <strong>on</strong>"),
-                        text.index("Connect the panel's USB socket"))
+                        text.index("connect the micro-USB port marked <strong>CAT</strong>"))
         self.assertIn("/static/upgrade.js?v=", text)
         self.assertIn("href=\"/upgrade\">Upgrade</a>", text)
         # the script it names is served, from this site, as a script must be

@@ -169,8 +169,9 @@ back.
   back on.
 - On a zBitx whose front panel has the old firmware, the terminal says the
   front panel needs the USB cable. That is done once, as the Upgrade page
-  shows: radio off, the panel's USB cable unplugged, the tuning knob held in
-  while the radio is switched on, then the cable to a computer and
+  shows: radio off, any cable unplugged from the micro-USB port marked
+  **CAT**, the tuning knob held in while the radio is switched on, then a
+  USB cable from the CAT port (not the one marked USB) to a computer and
   `front_panel.uf2` copied onto the drive that appears. After that, every
   update gives the panel its firmware by itself.
 
