@@ -3193,6 +3193,24 @@ static void empty_list(GtkWidget *list) {
 }
 
 // a row to each of the radio's texts and choices in a group, to be pressed
+// a row whose press opens something, a page or a box, ends in an arrow,
+// as the panel's do: the author's asking of 19 October 2026
+#define MORE_ARROW "\u203a"
+
+static void row_add_arrow(GtkWidget *row) {
+	GtkWidget *arrow = gtk_label_new(MORE_ARROW);
+
+	add_label_class(arrow, "tile-value");
+	gtk_widget_set_margin_start(arrow, px(ROW_MARGIN_SIDE));
+	gtk_box_pack_end(GTK_BOX(gtk_bin_get_child(GTK_BIN(row))), arrow, FALSE, FALSE, 0);
+}
+
+// a text opens its typing page, or for RADIO_KEY its box, and UPDATE its
+// box; a choice moves to its next where it is
+static int opens_more(const struct known *k) {
+	return k->is_text || !strcmp(k->name, UPDATE_CONTROL);
+}
+
 static void fill_with_group(GtkWidget *list, const char *group) {
 	GtkWidget *row;
 	GtkWidget *value;
@@ -3203,6 +3221,8 @@ static void fill_with_group(GtkWidget *list, const char *group) {
 			continue;
 		row = list_row_new(known[i].name, &value);
 		gtk_label_set_text(GTK_LABEL(value), known[i].value);
+		if (opens_more(&known[i]))
+			row_add_arrow(row);
 		page_row_add(list, row, act_on_setting, &known[i]);
 	}
 }
@@ -3400,12 +3420,13 @@ static void fill_settings(void) {
 	if (is_on_the_radio()) {
 		row = list_row_new("WIFI", &value);
 		gtk_label_set_text(GTK_LABEL(value), value_of(WIFI_SSID_CONTROL));
+		row_add_arrow(row);
 		page_row_add(settings_list, row, act_on_wifi_row, NULL);
 	}
 	// set at the radio and nowhere else
 	if (!is_remote) {
 		row = list_row_new("CONNECTIONS", &value);
-		gtk_label_set_text(GTK_LABEL(value), "\u203a");
+		row_add_arrow(row);
 		page_row_add(settings_list, row, act_on_connections_row, NULL);
 	}
 	gtk_widget_show_all(settings_list);
