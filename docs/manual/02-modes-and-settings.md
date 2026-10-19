@@ -86,9 +86,26 @@ The word before the comma is the button's label. In the text,
 from the logbook's CALL field, `{SENTRST}` your report, `{EXCH}` (or `#`) the
 exchange, `{GRID}` your grid.
 
-**Typing.** **KBD** in the left column brings up a keyboard on the screen:
-each key is sent as you touch it. **ESC** stops what is being sent and drops
-what was waiting. A keyboard plugged into the radio sends too, as you type.
+**Typing: KBD.** **KBD** in the left column brings up the keyboard over
+the lower part of the screen, with a box above the keys for what is to be
+sent. The column, with ESC, and the CW the radio reads off the air stay in
+view.
+
+![KBD in the GTK client: a message waiting in the box, ▶ at its right](images/window-kbd.png)
+
+- KBD opens **paused**. What you type waits in the box, so you can make a
+  message up while you listen to the band. The rub-out key, or Backspace
+  on a keyboard plugged into the radio, takes back the last letter.
+- **▶ (PLAY)**, at the right of the box, starts sending. Each letter leaves
+  the box as the radio sends it, and what you type while it plays is sent
+  as you type it. The button becomes **❚❚ (PAUSE)**.
+- **PAUSE** stops sending after the letter under way. What was not sent
+  stays in the box for the next PLAY.
+- **ESC** in the column stops sending at once, empties the box and pauses.
+- **CLOSE** puts the keyboard away.
+
+A keyboard plugged into the radio types into the box while KBD is up, and
+sends straight away, as you type, while it is not.
 
 ## FT8
 
@@ -187,24 +204,40 @@ whether you have worked them before.
 
 FT8 logs its contacts by itself.
 
-Tap an entry to select it. Entries can be deleted from the panel's LOG
-screen; the search you made stays as it was.
+Tap an entry to select it. Entries can be deleted from the front panel's
+LOG screen; the search you made stays as it was.
+
+In CW, the front panel's LOG screen also has the CW macros, to send while
+you log, and **STOP**, which stops what is being sent.
+
+![The logbook on the front panel](images/panel-log.png)
 
 ## SET
 
 ![SET](images/window-set.png)
 
-**SET** opens the station's settings:
+**SET** opens the station's settings. Rows that open something, a
+keyboard, a question or another screen, end in an arrow, **›**; the others
+change where they are.
 
 - **MYCALLSIGN** and **MYGRID**, your callsign and locator;
+- **WIFI**, the network the radio is on. A press lists the networks it
+  hears and joins the one you choose (chapter 1, "Join your WiFi"). In the
+  GTK client it is there only on the radio's own screen;
 - **UPDATE**, which brings the radio up to the newest zbitxre; see
   chapter 3;
 - **FT8_OPS** and **FT8_REPLY**, how FT8 is worked;
 - **CONNECTIONS**, the next screen.
 
-The panel's SET also has **Date/Time**, to give the radio the time when it
-has none from the network, **WiFi**, to join a network, and the panel's
-firmware version.
+The front panel's SET also has **Date/Time**, to give the radio the time
+when it has none from the network, the panel's firmware version, and
+**BOOTSEL**, which, after asking, makes the panel a USB drive to copy new
+firmware onto by its USB cable. Updates do not need it: they give the
+panel its firmware by themselves.
+
+![SET on the front panel](images/panel-set.png)
+
+![The front panel's WiFi screen: the networks heard, the strongest first](images/panel-wifi.png)
 
 ## CONNECTIONS
 
@@ -231,4 +264,4 @@ well), **VOIP_STATUS**, **BLUETOOTH_STATUS**, **SOUND_CARD_STATUS** and
 **CAT_STATUS**.
 
 REMOTE and STREAMING start ON on a new radio. CONNECTIONS is set at the
-radio only: a window operating the radio from afar does not show it.
+radio only: the remote GTK client and the web page do not show it.

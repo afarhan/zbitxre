@@ -85,9 +85,9 @@ on the phone, so that the app stays signed in.
 CONNECTIONS cannot be changed from afar: REMOTE, STREAMING and the key are
 set at the radio only.
 
-## The window on another computer
+## The GTK client on another computer
 
-The same window as on the sBitx's screen runs on a Linux desktop.
+The same GTK client as on the sBitx's screen runs on a Linux desktop.
 
 - **At home, on the same network as the radio:**
   `zbitx_gui 192.168.1.82`, with the radio's address.
@@ -133,14 +133,25 @@ are there, such as `7074 KHZ, 3 HERE`.
 ![The Upgrade page, for a radio's first install](images/web-upgrade.png)
 
 **From the radio.** In SET, select **UPDATE** and press. A box asks first;
-say yes. A view of the update shows each step as it happens: asking GitHub
-for news, building (about ten minutes on a zBitx, less on an sBitx), then
-"restarting the radio". **CANCEL** in the view stops it, and the radio is
-left as it was. When something new was built, the radio waits until it is
-not transmitting, restarts itself with the new version, and on a zBitx gives
-the front panel its new firmware, which takes under a minute. It ends by
-saying `DONE: updated to` and the version. If there was nothing new, it says
-`DONE: already up to date`.
+say yes. A view of the update, on the front panel and in the GTK client,
+shows each step as it happens: asking GitHub for news, building (about ten
+minutes on a zBitx, less on an sBitx), building the GTK client, then
+restarting the radio. **CANCEL** in the view stops it, and the radio is left
+as it was.
+
+When something new was built, the radio waits until it is not
+transmitting, then restarts itself with the new version. On a zBitx it then
+gives the front panel its new firmware, if there is one, which takes under
+a minute; the panel restarts with its coloured bars, as it does when
+switched on. The last step says what the radio and the panel now have, such
+as `DONE: now 4935493; panel 3a0386b, as before`. If there was nothing new,
+it says `DONE: already up to date`.
+
+On success the view **closes by itself** three seconds later, on the front
+panel and in the GTK client, and the GTK client starts again as its new
+build. A zBitx needs no monitor, so nothing waits for you to press anything.
+If the update failed or was cancelled, the view stays open, so that you can
+read why, until you press **CLOSE**.
 
 Your settings, your logbook and the radio's calibration are never touched
 by an update.
@@ -149,8 +160,19 @@ by an update.
 once, from a terminal on the radio's screen, as
 [my.sbitx.net/upgrade](https://my.sbitx.net/upgrade) shows step by step.
 The old software is kept, and `~/zbitxre/setup/undo_install.sh` puts it
-back. On a zBitx, the front panel is given its firmware once with a USB
-cable; after that it is updated over the radio's own link, with each update.
+back.
+
+- On a zBitx, the install turns off the radio's own WiFi access point,
+  which many zBitxes came with for the old software. A zBitx running
+  zbitxre is a WiFi client only: the access point beside the client loses
+  much of what the radio sends and receives. `undo_install.sh` turns it
+  back on.
+- On a zBitx whose front panel has the old firmware, the terminal says the
+  front panel needs the USB cable. That is done once, as the Upgrade page
+  shows: radio off, the panel's USB cable unplugged, the tuning knob held in
+  while the radio is switched on, then the cable to a computer and
+  `front_panel.uf2` copied onto the drive that appears. After that, every
+  update gives the panel its firmware by itself.
 
 ## When something is wrong
 
@@ -164,6 +186,9 @@ cable; after that it is updated over the radio's own link, with each update.
 - **You hear nobody on VoIP.** Both radios must be on the same kilohertz,
   with VOIP ONLINE. In another mode than VOIP you hear the room only with
   BREAK_IN ON.
-- **The window was closed.** Click the **zbitxre** icon on the radio's
-  desktop. It opens the window, and starts the radio program too if that
-  is not running.
+- **The GTK client was closed.** Click the **zbitxre** icon on the radio's
+  desktop. It opens the GTK client, and starts the radio program too if
+  that is not running.
+- **The radio is not on the internet**, on a zBitx still on the old
+  software: its own WiFi access point may be in the way. The install turns
+  it off; until then, the WiFi can come and go.

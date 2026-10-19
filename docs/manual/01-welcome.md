@@ -6,17 +6,19 @@ transmits, keys CW, decodes FT8 and RADE, and keeps the logbook. Everything
 you see is a screen onto that one radio:
 
 - on a **zBitx**, the **front panel**, with its touch screen and knob;
-- on an **sBitx**, the **window** on the radio's own screen, with the two
-  knobs on its front;
-- on any computer, the same window, reaching the radio over your network;
-- in a browser or on a phone, the **Operate** page at
+- on an **sBitx**, the **local GTK client** on the radio's own screen, with
+  the two knobs on its front;
+- on another Linux computer, the same GTK client: the **local GTK client**
+  on your own network, the **remote GTK client** through my.sbitx.net from
+  anywhere;
+- in a browser or on a phone, the **web page**, Operate at
   [my.sbitx.net](https://my.sbitx.net), from anywhere.
 
 They all show the same controls, and a change made on one is seen on all of
 them at once. So this manual is one manual for both radios. Where the panel
-and the window are worked differently, it says how for each.
+and the GTK client are worked differently, it says how for each.
 
-![The window on an sBitx, in LSB on 40 metres](images/window-main.png)
+![The GTK client on an sBitx, in LSB on 40 metres](images/window-main.png)
 
 ## What is in this manual
 
@@ -35,13 +37,13 @@ and the window are worked differently, it says how for each.
 
 ## The screen at a glance
 
-The window and the panel are laid out alike.
+The GTK client and the front panel are laid out alike.
 
 - **Top row:** STEP, the meter, the **frequency** (VFO A large, VFO B small
   above it), then VFO, OFFSET, DRIVE, AGC, IF and VOL.
 - **Second row:** the **band** buttons, 10M to 80M, and **MODE**.
-- **Left column:** **LOG**, **SET**, and a button that belongs to the mode:
-  TERM, KBD and ESC in CW, CQ and HALT in FT8.
+- **Left column:** **LOG**, **SET**, and the buttons that belong to the
+  mode: KBD and ESC in CW, CQ and HALT in FT8.
 - **Middle:** the **spectrum** above and the **waterfall** below, with the
   receiver's passband shaded and your frequency marked by a red line.
 - **Right:** the **list** of the controls for the mode in use.
@@ -66,26 +68,47 @@ Every list on every screen works the same way:
 A press on a **choice** (such as AGC) moves it to its next value. A press on
 a **number** (such as WPM) starts changing it: the row is edged in green,
 turning changes the value, and another press or a tap ends it. A press on a
-**text** (such as MYCALLSIGN) opens a keyboard on the screen.
+**text** (such as MYCALLSIGN) opens the keyboard.
+
+A row that opens another screen, a keyboard or a question ends in an arrow,
+**›**. A row without one changes where it is.
+
+On the front panel, the knob takes **two notches to move one step** in
+every list and setting, so that pressing it, which can turn it a notch by
+accident, does not move what you selected. Tuning the frequency is the
+exception: there every notch is a step.
+
+### The keyboard
+
+Wherever something is typed, the logbook, a callsign, or CW from **KBD**,
+the same keyboard comes up: the digits with the rub-out key after 0, the
+letters with **SPACE** in the bottom row, a few marks such as `/` `?` `-`
+and `.`, and **CLOSE**, which ends the typing. Only typing a WiFi network's
+key brings a full keyboard, with small letters, capitals and signs.
+
+![The keyboard, in KBD on the front panel](images/panel-kbd.png)
 
 #### sBitx Users! ####
 - the smaller knob on the top-right changes the selected control on the
 main screen directly and its press moves to the next control. In lists (like the logbook) it steps through the rows and its press acts. 
 - The larger knob on the bottom-left always tunes.
+
+
 Anything that restarts the radio or takes it off line asks first, in a box.
 
 ## Quick start
 
 ### 1. Switch on
 
-The radio program starts with the radio. On an sBitx the window opens on the
-radio's screen, and a terminal beside it shows what the radio program says.
-If you close the window, the **zbitxre** icon on the desktop opens it again.
+The radio program starts with the radio. On an sBitx the local GTK client
+opens on the radio's screen, and a terminal beside it shows what the radio
+program says. If you close the GTK client, the **zbitxre** icon on the
+desktop opens it again.
 
 ### 2. Set your callsign
 
 Tap **SET**. Select **MYCALLSIGN**, press, type your callsign on the
-keyboard that appears, and press Enter. Do the same for **MYGRID**, your
+keyboard that appears, and tap **CLOSE**. Do the same for **MYGRID**, your
 grid locator, such as MK68. The callsign is used by the CW macros, FT8 and
 the logbook, and by my.sbitx.net to know your radio.
 
@@ -93,7 +116,24 @@ the logbook, and by my.sbitx.net to know your radio.
 
 Tap the arrow at the top left to go back.
 
-### 3. Choose a band and a mode
+### 3. Join your WiFi
+
+For FT8's clock, updates and my.sbitx.net, the radio needs the internet.
+In **SET**, select **WiFi** and press. The radio lists the networks it
+hears, the strongest first; **SCAN** looks again. Tap yours, type its key,
+and tap **JOIN** on the front panel, or **CLOSE** in the GTK client. A
+network with no key is joined at once. About ten seconds later the radio
+says whether it joined, on the WiFi screen's top line on the front panel
+and on the status line in the GTK client, and the WiFi row in SET then
+shows the network's name.
+
+![SET on the front panel, the WiFi row showing the network](images/panel-set.png)
+
+WiFi is set only at the radio itself: the GTK client shows the WIFI row
+only on the radio's own screen, and the remote GTK client and the web page
+never offer it.
+
+### 4. Choose a band and a mode
 
 Tap a **band** button. The radio goes to where you last were on that band.
 Tapping the same band again steps through four places the band remembers,
@@ -102,19 +142,19 @@ each a frequency and a mode.
 Tap **MODE**, or select it and press, to step through the modes: USB, LSB,
 CW, CWR, AM, FT8, 2TONE, RADE1, RADE2 and VOIP.
 
-### 4. Tune
+### 5. Tune
 
 Turn the tuning knob, or the mouse wheel over the frequency. **STEP** sets
 how far a notch goes: 10 Hz, 100 Hz, 500 Hz, 1 kHz or 10 kHz. A tap on the
 spectrum or the waterfall changes how wide a slice of the band they show.
 
-### 5. Listen
+### 6. Listen
 
 **VOL** is the volume. If signals are too strong or too weak in the
 waterfall, change **IF**, the gain of the receiver's input. **AGC** sets how
 fast the receiver's gain follows the signal.
 
-### 6. Transmit
+### 7. Transmit
 
 With an antenna connected:
 
@@ -126,7 +166,7 @@ With an antenna connected:
 The radio goes back to receive by itself after two minutes of continuous
 transmission.
 
-### 7. Put it on line
+### 8. Put it on line
 
 To operate the radio from a browser or a phone, have it on the map, and
 talk over the internet, register at

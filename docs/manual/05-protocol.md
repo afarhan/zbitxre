@@ -17,7 +17,7 @@ read:
 | `radio.c` | The radio's own controls: `FREQ`, `BAND`, `MODE` and the rest |
 | `tools/sdr.c` | The program that opens the port, sends the spectrum and owns the program's own controls |
 | `rtp_audio.c`, `rtp_microphone.c`, `rtp_voip.c` | The sound streams |
-| `clients/gtk/zbitx_gui.c` | The desktop window, a complete client |
+| `clients/gtk/zbitx_gui.c` | The GTK client, a complete client |
 | `clients/remote/zbitx_remote.c` | The gateway: one more client of `sdr` on 127.0.0.1 |
 
 ---
@@ -32,18 +32,18 @@ read:
 - **Who may connect.** Anyone who can reach port 8081. There is no password and
   no login on this port (`PROTOCOL.md`: "There is no authentication.").
 - **How many.** At most `SERVER_CLIENTS_MAX`, which is 8, at once. A ninth
-  connection is accepted and then closed at once, with nothing said. The window
+  connection is accepted and then closed at once, with nothing said. The GTK client
   on the radio's screen, the gateway `zbitx_remote`, and each visitor the
   gateway carries in from my.sbitx.net each take one of the eight places.
 - **Everyone sees everyone's changes.** A change made by any client, by the
   front panel, or by typing on `sdr`'s terminal is sent to every other
-  connected client. That is how the desktop window follows the panel's knob.
+  connected client. That is how the GTK client follows the panel's knob.
   The radio does not tell a client about its own change. Section 2 gives the
   rules.
 - **Nothing is polled.** The radio sends a line when something changes, and
   nothing when nothing changes. A client never has to ask "what is the
   frequency now?".
-- **Several programs talk this protocol.** The desktop window
+- **Several programs talk this protocol.** The GTK client
   (`clients/gtk/zbitx_gui.c`) and the gateway (`clients/remote/zbitx_remote.c`)
   connect to it directly. So can `nc <radio> 8081` typed by hand. The web page
   (`accounts/static/operate.js`) speaks the same lines, carried over a WebSocket
@@ -291,7 +291,7 @@ the radio does not know the time. The time comes from `hw/radio_clock.c`, and
 it may differ from the client computer's clock. The control `CLOCK` changes at
 the start of each minute. A client that shows seconds can ask `time` once,
 count on by its own clock, and correct itself each time `CLOCK` changes. This
-is what the desktop window does.
+is what the GTK client does.
 
 ### `log` and `log <beginning of a callsign>`
 
@@ -356,11 +356,12 @@ is kept. A client that connects later is not told what was said before.
 | `WARN <text>` | Something the operator must act on first. Example: `WARN MYGRID is not set: enter it in SET`. A client may show it more boldly. |
 | `QSO <text>` | How the FT8 contact under way stands. Example: `QSO VU2XZ > -19 > R-14 > RR73`. An empty `QSO ` means the contact has ended. |
 | `CW <text>` | CW the radio has read off the air, a few characters at a time, spaces between words included. A line can be `CW ` followed by nothing but a space. |
+| `CW_SENT <text>` | What the radio has just begun to send in CW, of a text, a macro or a client's keying, a space as `_`. Example: `CW_SENT CQ_DE`. KBD takes each character out of its box as it comes. |
 
 ### Every name the radio may send
 
 `CONTROL`, `SPECTRUM`, `MODULATION`, `MESSAGE`, `TIME`, `LOG_LIST`, `LOG`,
-`SAY`, `WARN`, `QSO`, `CW`, `ERROR`, and the name of any control. Note that
+`SAY`, `WARN`, `QSO`, `CW`, `CW_SENT`, `ERROR`, and the name of any control. Note that
 `CW` the line (text read off the air) is not the CW group of controls, and no
 control is called `CW`.
 
@@ -381,8 +382,8 @@ were registered, then `CONTROL END`. The four formats come from
 - **`number`**: a whole number from min to max, in steps of step. The value is
   sent as decimal text.
 - **`choice`**: one of the choices, which are separated by `/`. Take the
-  choices as the whole rest of the line, not as its next word. The desktop
-  window does this, in case a choice ever contains a space.
+  choices as the whole rest of the line, not as its next word. The GTK
+  client does this, in case a choice ever contains a space.
 - **`text`**: free text, up to 63 characters.
 - **`action`**: something done, not something set. It has no value. Setting it
   to one of its choices does that, each time. An action with no choices is
@@ -443,6 +444,8 @@ table is the list in the source when this chapter was written, for reference.
 | SYSTEM | `CLOCK` | text | | The time, for example `2026-10-02 13:47 NTP`, or `NOT SET`. Cannot be set. |
 | SYSTEM | `TIME_SET` | number | 0–39445919 | Minutes since the start of 2026, UTC |
 | SYSTEM | `WIFI` | action | `SCAN` | `panel_wifi.c` |
+| SYSTEM | `WIFI_SSID` | text | | The access point the radio is on, empty for none. Set at the radio only. |
+| SERVICE | `SERVER` | text | | The service the radio is put on line with, `my.sbitx.net` unless changed at the radio. A client may not set it. |
 | METER | `POWER` | number | 0–999 | Forward power, tenths of a watt |
 | METER | `SWR` | number | 0–999 | Tenths: 13 is 1.3 |
 | METER | `BATTERY` | number | 0–9999 | Hundredths of a volt |
@@ -523,8 +526,8 @@ Example (shortened):
 - **Rate.** Every 100 ms, to each client that sent `spectrum on`, provided
   the client has nothing still waiting to be sent to it.
 - **Span is not settable here.** The radio always sends the full 534 points.
-  The `SPAN` control narrows only the front panel's own line. The desktop
-  window cuts its view from the full line itself.
+  The `SPAN` control narrows only the front panel's own line. The GTK
+  client cuts its view from the full line itself.
 
 A minimal decoder in Python:
 
@@ -734,7 +737,7 @@ Ask the time:
     TIME 1791397105
 
 Now leave it alone, and turn the front panel's knob, or change something in
-the desktop window. Each change appears as it is made:
+the GTK client. Each change appears as it is made:
 
     FREQ 14074500
     FREQ 14075000
@@ -750,7 +753,7 @@ Every request applies only to that connection, so nothing needs to be undone.
 
 ## 8. Writing a client
 
-### What the desktop window does
+### What the GTK client does
 
 `clients/gtk/zbitx_gui.c` is the reference client.
 
@@ -773,25 +776,25 @@ On connecting:
    `SPECTRUM`, `MODULATION`, `CONTROL` (building its list of controls at
    `CONTROL END`), `MESSAGE`, `TIME`, `CW`, `SAY`, `WARN`, `QSO`, `ERROR`,
    `LOG` and `LOG_LIST`. Anything else is taken as a control's value. The
-   values sent on connecting arrive *before* the schema. The window keeps
+   values sent on connecting arrive *before* the schema. The GTK client keeps
    values by name as they come, and fills in each control's kind when the
    schema arrives.
 
 While connected:
 
-- When the operator moves a control, the window shows the new value at once
+- When the operator moves a control, the GTK client shows the new value at once
   and sends `NAME value`. It does not wait for a reply, because none comes.
-- When the radio reports a change, the window shows it and never sends
+- When the radio reports a change, the GTK client shows it and never sends
   anything back.
 
 On losing the connection:
 
-- If the connection fails or closes, the window says so and tries once more
+- If the connection fails or closes, the GTK client says so and tries once more
   after 3 seconds (`RETRY_EVERY_MS`). It never has more than one connection or
   more than one retry waiting. An earlier version that kept adding connections
   used up the radio's eight places, and the radio ran out of memory.
 - If the radio has said nothing for 10 seconds (`SILENT_AT_MOST_MS`, checked
-  every 2 seconds), the window drops the connection and reconnects. With
+  every 2 seconds), the GTK client drops the connection and reconnects. With
   `spectrum on` the radio sends ten lines a second, so 10 seconds of silence
   means the connection is dead. A client that does not ask for the spectrum
   may hear nothing for a minute at a time, until `CLOCK` changes.
@@ -893,6 +896,6 @@ Notes on the example:
   as one string, even if they contain spaces.
 - It does not ask for the spectrum. To draw one, send `spectrum on` and
   decode the lines as in section 5.
-- It does not reconnect. A long-running client should do what the desktop
-  window does: on any failure, close, wait 3 seconds, connect again, and
+- It does not reconnect. A long-running client should do what the GTK
+  client does: on any failure, close, wait 3 seconds, connect again, and
   re-send its requests.

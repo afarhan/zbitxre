@@ -2,8 +2,9 @@
 
 Everything you can set on the radio is a control: a name and a value, such
 as **AUDIO** at 60 or **MODE** at LSB. The radio keeps one table of them, and
-every screen shows the same ones: the zBitx front panel, the window on the
-radio's own screen or a desktop, and the web page at my.sbitx.net. A change
+every screen shows the same ones: the zBitx front panel, the GTK client
+on the radio's own screen or a desktop (local, or remote through
+my.sbitx.net), and the web page at my.sbitx.net. A change
 made on one is seen on all the others at once.
 
 How a value is changed depends on where you are.
@@ -11,9 +12,10 @@ How a value is changed depends on where you are.
 - On the zBitx front panel, a tap selects a control, turning the knob steps
   through the rows of a list, and a press of the knob acts on the row that
   is selected: a choice moves to its next value, a number starts being
-  changed by the knob until the next press. A long press of the knob goes
+  changed by the knob until the next press. Every turn but tuning the
+  frequency takes two notches to a step. A long press of the knob goes
   back to the main screen from anywhere.
-- In the window, a tap or a click selects. The mouse wheel or the arrow keys
+- In the GTK client, a tap or a click selects. The mouse wheel or the arrow keys
   step through the rows, and a press acts: the middle mouse button, Enter,
   or a second tap on the same row.
 - On an sBitx, the right-hand control knob on the main screen changes the
@@ -27,7 +29,9 @@ Actions, which do something rather than hold a value, are never kept.
 
 In the tables below, a value written as "min–max, step N" is a number; a
 list such as OFF / ON is a choice; "text" is something typed in. Where the
-panel shows a control under a shorter name, it is given in brackets.
+panel shows a control under a shorter name, it is given in brackets. In
+SET, a row that opens something, a keyboard, a question or another screen,
+ends in an arrow, **›**.
 
 ## The main screen: always shown
 
@@ -68,7 +72,7 @@ The bottom row also has the TX and RX buttons, which set **TX** ON and OFF.
 
 ## CW: CW and CWR
 
-The group CW. Shown in CW and CWR. The window lists them in this order:
+The group CW. Shown in CW and CWR. The GTK client lists them in this order:
 BW, then **WPM**, **PITCH**, **SIDETONE**, **CW_DELAY** and **CW_INPUT**.
 
 | Control | Values | Starts at | Kept | What it does |
@@ -80,9 +84,9 @@ BW, then **WPM**, **PITCH**, **SIDETONE**, **CW_DELAY** and **CW_INPUT**.
 | **CW_DELAY** (DELAY) | 0–1000 ms, step 50 | 300 | Yes | How long the radio stays in transmit after the last element before it goes back to receive. |
 | **CW_INPUT** (INPUT) | STRAIGHT / IAMBIC / IAMBICB / BUG / ULTIMATIC | IAMBIC | Yes | What is plugged into the key jack and how the keyer works it. STRAIGHT: a straight key on the dot contact. IAMBIC: iambic A. IAMBICB: iambic B, which sends one more opposite element after a squeeze let go during an element. ULTIMATIC: with both paddles closed, the last one closed is repeated. BUG: the dot paddle makes dots and the dash paddle is a straight key. |
 | **MACRO** | the labels of the macros in data/cw.mc, such as CQ / RST / End | — | No (action) | Sends a macro, with your callsign and the logger's fields put in. The first six are the buttons on the bottom row in CW. Refused in other modes. There is no such control when the macro file is missing. A touch of the paddle, or anything typed, stops a macro and drops what was waiting. |
-| **CW_TEXT** | text | — | No (action) | Text typed on a keyboard, sent in CW as it is typed. In the window the KBD button brings up a keyboard on the screen for this, and a keyboard plugged into the radio sends too. Refused in other modes. |
+| **CW_TEXT** | text | — | No (action) | Text to send in CW. KBD's box gives the radio what it holds when PLAY is pressed, and then each letter as it is typed while it plays; a keyboard plugged into the radio sends this way too when KBD is not up. Each letter leaves KBD's box as the radio begins to send it (CW_SENT, chapter 5). Refused in other modes. |
 | **CW_KEY** | dots and dashes, and the gap before them in ms | — | No (action) | A character keyed on another device's own keyer, such as a telephone's screen. The radio sends it evenly at WPM and keeps the spacing as it was keyed. Refused in other modes. |
-| **CW_DO** | ESC | — | No (action) | ESC stops the text or macro being sent and drops whatever was waiting. In the window it is the ESC key on the KBD screen, and the Escape key on a keyboard. |
+| **CW_DO** | ESC | — | No (action) | ESC stops the text or macro being sent and drops whatever was waiting. It is ESC in the left column, and the Escape key on a keyboard. KBD's PAUSE sends it too, keeping in the box what had not begun; ESC empties the box. |
 
 ## FT8
 
@@ -92,7 +96,7 @@ without the FT8_ at the front of their names.
 
 | Control | Values | Starts at | Kept | What it does |
 |---|---|---|---|---|
-| **TX_PITCH** | 200–3000 Hz, step 10 | 1500 | Yes | Where in the passband your own signal is sent. In the window a tap on the graph in FT8 sets it, and a red line marks it. |
+| **TX_PITCH** | 200–3000 Hz, step 10 | 1500 | Yes | Where in the passband your own signal is sent. In the GTK client a tap on the graph in FT8 sets it, and a red line marks it. |
 | **FT8_SIDETONE** (SIDETONE) | 0–100, step 1 | 30 | Yes | How loud your own transmission is in the speaker; 0 is silence. It is kept apart from the CW sidetone. |
 | **FT8_AUTO** (AUTO) | OFF / ON | OFF | Yes | ON: while no contact is under way, a station that calls you is answered by itself. OFF: such a call is only shown in the list. It starts OFF so that the radio never transmits by itself until you have said it may. |
 | **FT8_REPEAT** (REPEAT) | 1–5, step 1 | 5 | Yes | How many times a message is sent without an answer before the contact is given up. |
@@ -101,7 +105,7 @@ without the FT8_ at the front of their names.
 
 **TX** is not used by hand in FT8: the radio keys itself in the slot a
 message is due. A message is answered by marking it in the list and pressing
-the knob, or by tapping it twice in the window. How FT8 is worked, and what
+the knob, or by tapping it twice in the GTK client. How FT8 is worked, and what
 is sent at the end of a contact, are set in SET with **FT8_OPS** and
 **FT8_REPLY**.
 
@@ -113,7 +117,7 @@ TX and RX buttons, as in the voice modes.
 | Control | Values | Starts at | Kept | What it does |
 |---|---|---|---|---|
 | **SQUELCH** | OFF / ON | ON | Yes | ON: the speaker is silent while no RADE signal is being received. OFF: the plain SSB audio is heard while there is no signal, which can help when tuning a station in by ear. A station can still be found with it ON. |
-| **RADE_STATUS** | text | -- | Yes (see note) | What the decoder says: "--" with no signal, and with one its signal to noise ratio and how far off tune it is, such as "SYNC 12 dB +3 Hz". Neither the panel nor the window lists it, since it is a text. |
+| **RADE_STATUS** | text | -- | Yes (see note) | What the decoder says: "--" with no signal, and with one its signal to noise ratio and how far off tune it is, such as "SYNC 12 dB +3 Hz". Neither the front panel nor the GTK client lists it, since it is a text. |
 
 Note: **RADE_STATUS** is not among the controls that settings.c leaves out,
 so it is written to the settings file with the rest, though it is a report
@@ -147,7 +151,9 @@ does, with **BW_VOICE**.
 
 SET on the main screen opens the settings: the group STATION. The panel
 shows them under friendlier names, given in brackets, and also has rows for
-the date and time, WiFi, the panel's firmware and BOOTSEL, which are
+the date and time, the panel's firmware and BOOTSEL. Both the front panel
+and the GTK client on the radio's own screen have the WiFi row, which shows
+**WIFI_SSID** and opens the list of networks (**WIFI**). These are
 described under "Behind the scenes" where they are controls. The last row,
 CONNECTIONS, opens the next screen.
 
@@ -163,8 +169,8 @@ CONNECTIONS, opens the next screen.
 
 CONNECTIONS is the last row of SET. It holds what the radio has to do with
 the world outside itself: the group CONNECTIONS, with **RADIO_KEY** first.
-The window does not offer this screen when it is itself reaching the radio
-through my.sbitx.net: these are set at the radio and nowhere else.
+The remote GTK client does not offer this screen, and the web page does
+not show it: these are set at the radio and nowhere else.
 
 | Control | Values | Starts at | Kept | What it does |
 |---|---|---|---|---|
@@ -191,7 +197,8 @@ to say. None can be changed. None is kept, except as noted for
 | **CAT_STATUS** | text | empty | No | The address and port to give a program that is to use CAT. Shown on CONNECTIONS. |
 | **VOIP_STATUS** | text | empty | No | The VoIP channel and how many radios are in it, "7074 KHZ, 3 HERE", or why your speech was not passed, "BUSY VU3XYZ". Shown on CONNECTIONS. |
 | **VOIP_SPEAKER** | text | empty | No | The callsign of whoever is being heard over VoIP now, empty while nobody is. Shown on the status line above the spectrum, in any voice mode. |
-| **UPDATE_STATUS** | text | empty | No | Each line the update says as it runs. The last begins DONE:, FAILED: or CANCELLED:. Shown in the update's own view. |
+| **UPDATE_STATUS** | text | empty | No | Each line the update says as it runs. The last begins DONE:, FAILED: or CANCELLED:, such as "DONE: now 4935493; panel 3a0386b, as before". Shown in the update's own view, which closes by itself three seconds after a DONE. |
+| **WIFI_SSID** | text | empty | No | The WiFi network the radio is on, empty when it is on none, looked at every five seconds. Shown as the value of SET's WiFi row. Set at the radio only. |
 
 ## Behind the scenes
 
@@ -201,7 +208,7 @@ of their own; some are kept by the radio for the screens; some are reports.
 ### Tuning and the spectrum (group PANEL)
 
 STEP and the VFOs are the radio's, common to every screen, so that the
-panel, the window and the web page tune by the same step and share the same
+panel, the GTK client and the web page tune by the same step and share the same
 two VFOs. Each screen still does its own tuning.
 
 | Control | Values | Starts at | Kept | What it does |
@@ -224,7 +231,7 @@ two VFOs. Each screen still does its own tuning.
 |---|---|---|---|---|
 | **CLOCK** | text | NOT SET | No | The radio's time in UTC, to the minute, and where it came from: "2026-10-02 13:47 NTP", RTC or SET, or NOT SET. It cannot be set; it is shown in SET as Date/Time on the panel. |
 | **TIME_SET** | 0–39445919 minutes, step 1 | 0 | No | The time you give the radio when it has none: minutes since the start of 2026, in UTC. The panel's Date/Time screen sets it with its rollers and SYNC. It is used only until the radio has the time from the network or its clock chip again. |
-| **WIFI** | SCAN | — | No (action) | Asks the radio to scan for WiFi access points. The panel's WiFi screen in SET does it when opened, lists what is heard, the strongest first, and lets you join one. |
+| **WIFI** | SCAN | — | No (action) | Asks the radio to scan for WiFi access points. The front panel's WiFi screen in SET does it when opened, lists what is heard, the strongest first, and lets you join one. The GTK client on the radio's own screen does its own scanning and joining, and does not use it. |
 
 ### Meters (group METER)
 
@@ -253,6 +260,12 @@ itself.
 | **EXCH** | text | empty | No | The exchange you received: a serial number, a grid or a name. |
 | **NR** | text | empty | No | The exchange you sent, most often a contest serial number. |
 | **LOGGER** | SAVE / WIPE | — | No (action) | SAVE writes the entry to the logbook, in the mode and on the frequency in use, at the radio's time. It needs at least CALL, SENT and RECV, and a clock that is set; otherwise it says what is missing and keeps what was typed. WIPE clears the five fields. |
+
+### The service (group SERVICE)
+
+| Control | Values | Starts at | Kept | What it does |
+|---|---|---|---|---|
+| **SERVER** | text | my.sbitx.net | Yes | The service the radio is put on line with. zbitxre is open, and anyone may run the service on a server of their own; this is for those who do. It is in no list, and no client may change it, near or from afar, since a wrong one would leave the radio out of reach: change it in the radio's own terminal, `SERVER radio.example.org`, or with the radio program stopped, in the line `SERVER=` of `~/zbitxre/data/user_settings.ini`, and restart the radio. |
 
 ### Internal
 

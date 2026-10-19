@@ -11,7 +11,7 @@ anyone who wants to change the software the same way.
 ## What you need
 
 - A Linux computer, with the build tools: `gcc`, `make`, `libasound2-dev`,
-  `libsqlite3-dev`, and `libgtk-3-dev` for the window.
+  `libsqlite3-dev`, and `libgtk-3-dev` for the GTK client.
 - **Claude Code**, from [claude.com/claude-code](https://claude.com/claude-code),
   and an account to use it with.
 - The repository:
@@ -52,7 +52,7 @@ they do, and no layers of options nobody asked for.
 ```
 make            # the radio, the tests and the tools
 make check      # every test
-make gui        # the window
+make gui        # the GTK client
 make remote     # the gateway to my.sbitx.net
 make panel      # the front panel's firmware (needs arduino-cli)
 python3 accounts/test_accounts.py    # the website
@@ -96,8 +96,8 @@ Most of the radio can be run on a desktop:
   `make check`;
 - `tests/hw_stand_ins.c` stands in for the radio's hardware: the pins, the
   I2C bus and the sound card. The radio program built against it runs on a
-  laptop, and the window connects to it as to a radio. The pictures of the
-  window in this manual were taken that way, with a made-up band played into
+  laptop, and the GTK client connects to it as to a radio. The pictures of
+  the GTK client in this manual were taken that way, with a made-up band played into
   the stand-in;
 - the website and the service run on a laptop too: `accounts/README.md`
   says how.
@@ -132,5 +132,5 @@ with a backup taken first; `accounts/README.md` says where things live.
 - "The macro buttons should show eight macros on a wide screen. Design it
   first."
 - "Add a test that the logbook keeps a search when an entry is deleted."
-- "Run the window against the stand-in and take a picture of SET."
+- "Run the GTK client against the stand-in and take a picture of SET."
 - "Write the commit for this, and say what was not tried on a radio."

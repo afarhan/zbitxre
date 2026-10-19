@@ -9,6 +9,6 @@ For the zBitx and the sBitx v3. Start with the first chapter.
 5. [The radio's protocol, for clients](05-protocol.md)
 6. [Working on zbitxre with Claude](06-coding-with-claude.md)
 
-The pictures are in `images/`. Those of the window were taken against a
-stand-in for the radio playing a made-up band; those of the front panel are
-still to come.
+The pictures are in `images/`. Most of those of the GTK client were taken
+against a stand-in for the radio playing a made-up band; those of the front
+panel were taken on a zBitx.
