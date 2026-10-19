@@ -2837,8 +2837,11 @@ static void ask_for_a_new_key(void) {
    opens with the first step the radio says, in its UPDATE_STATUS, lists
    each step under the last, and at the end says in large letters whether
    the update succeeded or failed, which the radio says by beginning its
-   last "DONE: ", "FAILED: " or "CANCELLED: ". It is closed then, by
-   CLOSE. Until then CANCEL stops the update, and the radio is put back as
+   last "DONE: ", "FAILED: " or "CANCELLED: ". A failure or a cancelling
+   is closed by CLOSE, once it has been read; a success closes itself
+   DONE_SHOWN_S later, and the window becomes its new self, the author
+   having said on 19 October 2026 that a zBitx needs no monitor, so a view
+   left waiting for CLOSE would wait for nobody. Until then CANCEL stops the update, and the radio is put back as
    it was, as the author asked the same day; once the radio is stopped to
    be restarted it is too late, and the radio does not answer it. An update that
    restarts the radio closes this window with it; the window that starts
@@ -2890,6 +2893,7 @@ static void become_own_program(const char *seen) {
 #define DONE_MARK "DONE: "
 #define FAILED_MARK "FAILED: "
 #define CANCELLED_MARK "CANCELLED: "
+#define DONE_SHOWN_S 3
 
 static GtkWidget *update_view;
 static GtkWidget *update_steps;
@@ -2915,6 +2919,15 @@ static void on_update_close(GtkButton *button, gpointer unused) {
 	gtk_widget_destroy(update_view);
 	if (own_program_is_new())
 		become_own_program(seen);
+}
+
+// a success, shown for DONE_SHOWN_S, closes as CLOSE would; if CLOSE was
+// tapped first there is nothing left to close
+static gboolean on_update_done_shown(gpointer unused) {
+	(void)unused;
+	if (update_view != NULL)
+		on_update_close(NULL, NULL);
+	return G_SOURCE_REMOVE;
 }
 
 static void on_update_cancel(GtkButton *button, gpointer unused) {
@@ -3021,6 +3034,8 @@ static void update_view_take(const char *status) {
 		: is_cancelled ? "update-cancelled" : "update-failed", 1);
 	gtk_widget_set_sensitive(update_cancel, FALSE);
 	gtk_widget_set_sensitive(update_close, TRUE);
+	if (is_done)
+		g_timeout_add_seconds(DONE_SHOWN_S, on_update_done_shown, NULL);
 }
 
 // UPDATE, tapped: a box that says what an update does and asks whether to
