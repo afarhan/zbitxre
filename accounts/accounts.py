@@ -2293,7 +2293,8 @@ class Handler(BaseHTTPRequestHandler):
             "<strong>RPI-RP2</strong> appears.</li>"
             "<li>Copy <strong>front_panel.uf2</strong> onto that "
             "drive. The drive goes away by itself and the panel restarts.</li>"
-            "<li>Unplug the cable.</li></ol>"
+            "<li>Unplug the cable, switch the radio <strong>off</strong>, and switch it "
+            "<strong>back on</strong>.</li></ol>"
 
             "<h3>Afterwards</h3>"
             "<ul class=\"steps\">"
