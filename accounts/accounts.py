@@ -1177,7 +1177,6 @@ a.action { background: #10181f; color: #fff; padding: 0.45em 1em; border-radius:
 .small { color: #777; font-size: 0.9em; margin-top: 2em; }
 .secret { font-size: 1.3em; background: #f4f6f8; padding: 0.5em 0.8em; display: inline-block; }
 .steps li { margin-bottom: 0.5em; }
-.command { font-family: monospace; }
 .tick { display: flex; align-items: center; gap: 0.5em; }
 p.on-radio { margin: 1.4em 0 0; }
 form .small { margin-top: 0.3em; }
@@ -1197,18 +1196,24 @@ td button { margin: 0; padding: 0.2em 0.8em; }
 /* keys are shown as the radio shows them, in small letters; the author found
    them in capitals here and small on the radio. Either is taken when typed */
 .code { font-family: monospace; letter-spacing: 0.1em; }
-/* the one line that upgrades a radio, on /upgrade: large, and in one dark
-   box, so that it is taken as one line, since the author's tester typed
-   only a part of it */
-.oneline { display: flex; align-items: center; gap: 0.8em; max-width: 40em;
-    background: #10181f; color: #fff; border-radius: 6px; padding: 0.8em 1em; }
+/* everything an owner types is in one look, the author's asking of
+   2026-10-19: bold, monospace, on a tint; a line of its own is a box, a
+   word in a sentence a tinted span. The one line that upgrades a radio, on
+   /upgrade, is larger, with its Copy button inside the box, since the
+   author's tester typed only a part of it. "monospace" twice keeps the
+   browser from shrinking it below the words around it */
+.command, .spelled { font-family: monospace, monospace; font-weight: bold; background: #e6ecf2;
+    color: #10181f; border-radius: 4px; padding: 0.1em 0.35em; }
+p.command, div.command { max-width: 40rem; box-sizing: border-box; padding: 0.6em 0.9em;
+    overflow-wrap: anywhere; }
 /* it is long, GitHub's address in it, so it wraps, anywhere, and is seen
    whole: a line cut short at the box's edge would be typed cut short */
-.oneline code { font-size: 1.1em; white-space: normal; overflow-wrap: anywhere; flex: 1; }
-.oneline button { margin: 0; }
+div.oneline { display: flex; align-items: center; gap: 0.8em; font-size: 1.1em;
+    max-width: 48rem; }
+.oneline code { font: inherit; white-space: normal; flex: 1; }
+.oneline button { margin: 0; font-size: 0.9em; }
 .check { background: #fff8e6; border-left: 4px solid #e0a000; padding: 0.6em 0.8em;
     max-width: 38em; }
-.spelled { font-family: monospace; }
 .foot { margin-top: 3em; color: #777; font-size: 0.9em; }
 """
 
@@ -2248,7 +2253,7 @@ class Handler(BaseHTTPRequestHandler):
             "<h3>4. Type the whole line</h3>"
             "<p>In the terminal, type this <strong>whole line, exactly as it "
             "is</strong>, then press Enter:</p>"
-            "<div class=\"oneline\"><code id=\"line\">curl -fsSL "
+            "<div class=\"command oneline\"><code id=\"line\">curl -fsSL "
             "%s/install.sh | bash</code>"
             "<button id=\"copy\" type=\"button\">Copy</button></div>"
             "<div class=\"check\"><strong>Check it letter by letter before you press "
@@ -2285,7 +2290,7 @@ class Handler(BaseHTTPRequestHandler):
             "it, switch the radio <strong>on</strong>. Then let go of the knob.</li>"
             "<li>Connect the panel's USB socket to your computer. A drive called "
             "<strong>RPI-RP2</strong> appears.</li>"
-            "<li>Copy <span class=\"command\">front_panel.uf2</span> onto that "
+            "<li>Copy <strong>front_panel.uf2</strong> onto that "
             "drive. The drive goes away by itself and the panel restarts.</li>"
             "<li>Unplug the cable.</li></ol>"
             "<p>The order matters: plugged in first, the cable keeps the panel "
