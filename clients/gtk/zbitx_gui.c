@@ -2903,11 +2903,13 @@ static GtkWidget *update_close;
 static GtkWidget *update_cancel;
 static char update_last[CONTROL_VALUE_MAX];
 
+// update_last is kept, so that the same step told again, by the radio to
+// a client that connects again, does not open the view for an update that
+// ended
 static void on_update_view_closed(GtkWidget *widget, gpointer unused) {
 	(void)widget;
 	(void)unused;
 	update_view = NULL;
-	update_last[0] = 0;
 }
 
 static void on_update_close(GtkButton *button, gpointer unused) {

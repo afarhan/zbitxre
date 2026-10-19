@@ -2419,10 +2419,11 @@ static bool update_is_up(){
 
 //the waterfall, which is painted straight to the screen, is stopped while
 //the view is up and the main screen laid out again after, if it is there
+//update_last is kept, so that the same step told again, when the radio
+//tells its controls again, does not open the view for an update that ended
 static void update_close(){
 	lv_obj_add_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
 	update_steps_count = 0;
-	update_last[0] = 0;
 	update_has_ended = false;
 	update_has_succeeded = false;
 	update_is_cancelling = false;

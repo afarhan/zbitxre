@@ -41,6 +41,11 @@
 #include "md5.h"
 
 #define ANSWER_TRIES_MS 30000
+// BEGIN is asked this many times, BEGIN_AGAIN_MS apart: on 19 October 2026
+// a panel that had run for a day did not begin an update that the same
+// panel, just restarted, took twice, and said nothing of why
+#define BEGIN_TRIES 3
+#define BEGIN_AGAIN_MS 3000
 #define BETWEEN_TRIES_MS 5
 #define READS_BEFORE_A_NUDGE 10
 #define RESTART_WAIT_MS 60000
@@ -227,6 +232,29 @@ static void put_number(uint8_t *at, uint32_t n) {
 	at[3] = (uint8_t)(n >> 24);
 }
 
+// BEGIN, tried again when the panel refuses it or does not answer, each
+// refusal said with the panel's state and why
+static int begin_image(size_t size, const char *md5) {
+	uint8_t carried[4 + LINK_UPDATE_MD5_HEX];
+	struct answer a;
+	int tries;
+
+	put_number(carried, (uint32_t)size);
+	memcpy(carried + 4, md5, LINK_UPDATE_MD5_HEX);
+	for (tries = 1; tries <= BEGIN_TRIES; tries++) {
+		memset(&a, 0, sizeof(a));
+		if (send_message(LINK_UPDATE_BEGIN, carried, sizeof(carried)) == 0
+				&& wait_for_answer(&a, ANSWER_TRIES_MS) == 0 && a.state == LINK_UPDATE_READY)
+			return 0;
+		fprintf(stderr, "panel_update: the panel did not begin the update, try %d of %d "
+			"(state %d, why %d, the Updater's error %d, %d reads failed)\n", tries, BEGIN_TRIES,
+			a.state, a.why >> 4, a.why & 0x0f, reads_failed);
+		send_message(LINK_UPDATE_ABORT, NULL, 0);
+		sleep_ms(BEGIN_AGAIN_MS);
+	}
+	return -1;
+}
+
 static int give_image(const uint8_t *image, size_t size) {
 	uint8_t carried[4 + 1 + LINK_UPDATE_DATA_MAX];
 	char md5[MD5_HEX_ROOM];
@@ -237,13 +265,8 @@ static int give_image(const uint8_t *image, size_t size) {
 	long began = now_ms();
 
 	md5_hex(image, size, md5);
-	put_number(carried, (uint32_t)size);
-	memcpy(carried + 4, md5, LINK_UPDATE_MD5_HEX);
-	if (send_message(LINK_UPDATE_BEGIN, carried, 4 + LINK_UPDATE_MD5_HEX) < 0
-			|| wait_for_answer(&a, ANSWER_TRIES_MS) < 0 || a.state != LINK_UPDATE_READY) {
-		fprintf(stderr, "panel_update: the panel did not begin the update\n");
+	if (begin_image(size, md5) < 0)
 		return -1;
-	}
 	while (offset < size) {
 		length = size - offset > LINK_UPDATE_DATA_MAX ? LINK_UPDATE_DATA_MAX
 			: (int)(size - offset);

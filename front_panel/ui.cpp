@@ -236,6 +236,8 @@ void ui_report(){
   Serial.printf("lvgl memory: %lu of %lu bytes used, %lu free in one piece at most\n",
     (unsigned long)(memory.total_size - memory.free_size), (unsigned long)memory.total_size,
     (unsigned long)memory.free_biggest_size);
+  //the Updater takes its 4 KB buffer, and LittleFS its own, from here
+  Serial.printf("heap: %d bytes free of %d\n", rp2040.getFreeHeap(), rp2040.getTotalHeap());
 }
 
 /* sends the whole screen, as LVGL draws it, to whoever is on the serial port.
