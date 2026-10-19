@@ -3651,6 +3651,12 @@ static gboolean on_key_in_cw(const GdkEventKey *event) {
 
 	if (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK))
 		return FALSE;
+	// Backspace rubs out the last of KBD's box, as its key does: the author
+	// found it did nothing, on 19 October 2026
+	if (event->keyval == GDK_KEY_BackSpace && gtk_widget_get_visible(cw_keys)) {
+		on_cw_key(KEYBOARD_RUB_OUT);
+		return TRUE;
+	}
 	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter
 			|| event->keyval == GDK_KEY_space) {
 		send_cw_character(' ');
