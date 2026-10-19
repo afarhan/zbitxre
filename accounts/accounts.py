@@ -2277,10 +2277,8 @@ class Handler(BaseHTTPRequestHandler):
             "restart the radio. At the end it offers to put the radio on "
             "my.sbitx.net.</p>"
 
-            "<h3>6. zBitx only, if it asks: the front panel's firmware</h3>"
-            "<p>Older front panels need their firmware put on once with a USB cable; "
-            "the line in step 4 says so if yours does. Later updates reach the "
-            "panel by themselves.</p>"
+            "<h3>6. Only if it says the front panel needs the USB cable</h3>"
+            "<p>Do this once. After it, the panel is updated by itself.</p>"
             "<ol class=\"steps\">"
             "<li>Download <a href=\"%s\" download>"
             "front_panel.uf2</a> on your computer.</li>"
