@@ -907,9 +907,9 @@ static void updated_take(void) {
 		pclose(file);
 	fflush(stdout);
 	if (outcome[0] != 0)
-		snprintf(updated_said, sizeof(updated_said), "DONE: %s; %s", said, outcome);
+		snprintf(updated_said, sizeof(updated_said), "DONE: %.20s; %.32s", said, outcome);
 	else
-		snprintf(updated_said, sizeof(updated_said), "DONE: %s", said);
+		snprintf(updated_said, sizeof(updated_said), "DONE: %.20s", said);
 	unsetenv(UPDATED_ENV);
 }
 

@@ -59,13 +59,24 @@ BUILT_FROM=data/built_from
 KEPT=/tmp/update_kept
 PROGRAMS="sdr zbitx_gui zbitx_remote"
 
+# --pulled-from=COMMIT: the script that pulled found itself changed and
+# handed on to the one pulled, which goes on from the pull. bash reads a
+# script as it runs it and keeps the file it began with, so until 19
+# October 2026 each update ran the update.sh of the one before: the author
+# saw "building the window" after it had been renamed
 if_new=0
-if [ "$1" = "--if-new" ]; then
-	if_new=1
-elif [ -n "$1" ] && [ "$1" != "--build-only" ]; then
-	echo "usage: setup/update.sh [--if-new]"
-	exit 2
-fi
+pulled_from=
+for word in "$@"; do
+	case "$word" in
+	--if-new) if_new=1 ;;
+	--build-only) ;;
+	--pulled-from=*) pulled_from=${word#--pulled-from=} ;;
+	*)
+		echo "usage: setup/update.sh [--if-new]"
+		exit 2
+		;;
+	esac
+done
 
 # each line is a step of the update, which the GTK client and the front
 # panel show;
@@ -110,17 +121,26 @@ for program in $PROGRAMS; do
 done
 [ -f "$BUILT_FROM" ] && cp -p "$BUILT_FROM" "$KEPT/"
 
-# the clock first: a radio whose clock says 2000, as a zbitx's can after
-# install.sh gives the kernel its clock chip, finds GitHub's certificate
-# not yet valid. set_clock.sh says why and sets it from my.sbitx.net
-if ! setup/set_clock.sh > /dev/null; then
-	failed "the clock is wrong and could not be set"
-fi
-
-before=$(git rev-parse --short HEAD)
-say "at $before; asking GitHub for news"
-if ! git pull --ff-only --quiet origin main; then
-	failed "the pull failed; nothing changed"
+if [ -n "$pulled_from" ]; then
+	before=$pulled_from
+else
+	# the clock first: a radio whose clock says 2000, as a zbitx's can
+	# after install.sh gives the kernel its clock chip, finds GitHub's
+	# certificate not yet valid. set_clock.sh says why and sets it from
+	# my.sbitx.net
+	if ! setup/set_clock.sh > /dev/null; then
+		failed "the clock is wrong and could not be set"
+	fi
+	before=$(git rev-parse --short HEAD)
+	say "at $before; asking GitHub for news"
+	if ! git pull --ff-only --quiet origin main; then
+		failed "the pull failed; nothing changed"
+	fi
+	if ! git diff --quiet "$before" HEAD -- setup/update.sh; then
+		words="--pulled-from=$before"
+		[ "$if_new" = 1 ] && words="$words --if-new"
+		exec bash setup/update.sh $words
+	fi
 fi
 after=$(git rev-parse --short HEAD)
 if [ "$before" = "$after" ]; then
