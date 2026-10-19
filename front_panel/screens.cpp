@@ -199,6 +199,10 @@ struct setting {
 	const char *control;   // the radio's control whose value is shown, or
 	const char *fixed;     // the panel's own text, when it has no control
 	void (*open)();
+	//whether a touch opens another screen, a list or a typing screen,
+	//marked with an arrow at the row's right end, the author's asking of
+	//19 October 2026
+	bool is_more;
 	lv_obj_t *value;
 	lv_obj_t *box;
 };
@@ -222,17 +226,17 @@ static void settings_show_values();
 #endif
 
 static struct setting settings[] = {
-	{"Callsign", "MYCALLSIGN", NULL, callsign_open, NULL, NULL},
-	{"Grid", "MYGRID", NULL, grid_open, NULL, NULL},
-	{"Date/Time", "CLOCK", NULL, date_open, NULL, NULL},
+	{"Callsign", "MYCALLSIGN", NULL, callsign_open, true, NULL, NULL},
+	{"Grid", "MYGRID", NULL, grid_open, true, NULL, NULL},
+	{"Date/Time", "CLOCK", NULL, date_open, true, NULL, NULL},
 	//the access point the radio is on, as it says in WIFI_SSID
-	{"WiFi", "WIFI_SSID", NULL, wifi_open, NULL, NULL},
-	{"Connections", NULL, NULL, connections_open, NULL, NULL},
-	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, NULL, NULL},
-	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, NULL, NULL},
-	{"Update", "UPDATE", NULL, update_open, NULL, NULL},
-	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, NULL, NULL},
-	{"BOOTSEL", NULL, "-", bootsel_open, NULL, NULL},
+	{"WiFi", "WIFI_SSID", NULL, wifi_open, true, NULL, NULL},
+	{"Connections", NULL, NULL, connections_open, true, NULL, NULL},
+	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, false, NULL, NULL},
+	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, false, NULL, NULL},
+	{"Update", "UPDATE", NULL, update_open, true, NULL, NULL},
+	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, false, NULL, NULL},
+	{"BOOTSEL", NULL, "-", bootsel_open, true, NULL, NULL},
 };
 #define SETTINGS ((int)(sizeof(settings) / sizeof(settings[0])))
 
@@ -894,6 +898,9 @@ static void on_back(lv_event_t *e){
 	screens_close();
 }
 
+//room at a row's right end for its arrow
+#define SETTING_ARROW_ROOM 24
+
 static void settings_create(){
 	lv_obj_t *list;
 	lv_obj_t *row;
@@ -930,6 +937,11 @@ static void settings_create(){
 		lv_obj_align(label, LV_ALIGN_LEFT_MID, PAD, 0);
 		settings[i].value = text_create(row, "", &lv_font_montserrat_16, COLOUR_VALUE);
 		lv_obj_align(settings[i].value, LV_ALIGN_RIGHT_MID, -PAD, 0);
+		if (!settings[i].is_more)
+			continue;
+		label = text_create(row, LV_SYMBOL_RIGHT, &lv_font_montserrat_16, COLOUR_VALUE);
+		lv_obj_align(label, LV_ALIGN_RIGHT_MID, -PAD, 0);
+		lv_obj_align(settings[i].value, LV_ALIGN_RIGHT_MID, -PAD - SETTING_ARROW_ROOM, 0);
 	}
 }
 
@@ -1702,7 +1714,7 @@ void screens_cw_keys_hide(){
 	if (!screens_cw_keys_up())
 		return;
 	lv_obj_add_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
-	waterfall_set_painting(true);
+	main_paint_when_free();
 }
 
 //ESC in the column has stopped the radio: the box goes, and it is paused
@@ -1805,12 +1817,12 @@ void screens_open_cw_keys(){
 	}
 	if (cw_layer == NULL)
 		cw_create();
-	waterfall_set_painting(false);
 	cw_box_show();
 	keys_attach(cw_layer, CW_KEYS_WIDTH, SCREEN_HEIGHT - CW_KEYS_TOP - CW_LINE_HEIGHT,
 		on_cw_key);
 	lv_obj_remove_flag(cw_layer, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_move_foreground(cw_layer);
+	main_paint_when_free();
 }
 
 /* the date and the time */
@@ -2337,11 +2349,13 @@ void screens_log_part(const uint8_t *bytes, int count){
 //the logbook is opened searching for nothing, with the newest entries of
 //every station: what was searched for the last time it was open is not kept
 void screens_open_log(){
+	//KBD's keys are the main screen's, and go with it
+	screens_cw_keys_hide();
 	if (log_screen == NULL)
 		log_create();
-	waterfall_set_painting(false);
 	main_hide();
 	lv_obj_remove_flag(log_screen, LV_OBJ_FLAG_HIDDEN);
+	main_paint_when_free();
 	log_macros_make();
 	log_fields_show();
 	log_search_done("");
@@ -2501,9 +2515,9 @@ void screens_update_status(const char *text){
 		update_has_ended = false;
 		update_is_cancelling = false;
 		lv_label_set_text(update_outcome_label, "");
-		waterfall_set_painting(false);
 		lv_obj_move_foreground(update_layer);
 		lv_obj_remove_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
+		main_paint_when_free();
 	}
 	if (is_done)
 		step += strlen(UPDATE_DONE_MARK);
@@ -2529,8 +2543,15 @@ void screens_update_status(const char *text){
 //the knob, while a screen other than the main one is up: turning moves the
 //mark from row to row, the list moving to keep it in view, and a click
 //chooses the marked row, as a touch on it does
-void screens_knob_turned(int steps){
+//a mark, or a roller of the date, moves by main_selection_moves(): two
+//notches to a step
+void screens_knob_turned(int notches){
+	int steps;
+
 	if (update_is_up())
+		return;
+	steps = main_selection_moves(notches);
+	if (steps == 0)
 		return;
 	if (confirm_is_up()){
 		confirm_is_on_yes = !confirm_is_on_yes;
@@ -2694,12 +2715,13 @@ bool screens_is_open(){
 }
 
 void screens_open_settings(){
+	screens_cw_keys_hide();
 	if (settings_screen == NULL)
 		settings_create();
-	waterfall_set_painting(false);
 	main_hide();
 	settings_show();
 	lv_obj_remove_flag(settings_screen, LV_OBJ_FLAG_HIDDEN);
+	main_paint_when_free();
 }
 
 //whatever is open is closed and the main screen comes back

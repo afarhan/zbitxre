@@ -651,8 +651,7 @@ static void lay_out(){
 	list_rows = LIST_ROWS;
 	if (is_showing_messages)
 		list_rows = LIST_ROWS_FT8;
-	if (!screens_is_open() && !screens_cw_keys_up())
-		waterfall_set_painting(!is_showing_messages);
+	main_paint_when_free();
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
 
@@ -1718,22 +1717,53 @@ void main_note_large(const char *text){
 }
 
 //the knob goes to whatever is selected
+//the knob moves a selection, or changes a value, by one for every two
+//notches, the author's asking of 19 October 2026: pressing the knob turns
+//it a notch, now and then, and moved the mark. A notch left over is
+//forgotten after a second, so that it never adds to the next turn. Tuning
+//the frequency alone takes every notch. It is the panel's rule; the GTK
+//client's wheel and knob are as they were
+#define NOTCHES_A_MOVE 2
+#define NOTCH_FORGOTTEN_MS 1000
+
+int main_selection_moves(int notches){
+	static int left_over;
+	static unsigned long last_ms;
+	int moves;
+
+	if (millis() - last_ms > NOTCH_FORGOTTEN_MS)
+		left_over = 0;
+	last_ms = millis();
+	left_over += notches;
+	moves = left_over / NOTCHES_A_MOVE;
+	left_over -= moves * NOTCHES_A_MOVE;
+	return moves;
+}
+
 void main_knob_turned(int steps){
+	int moves;
+
 	if (screens_is_open()){
 		screens_knob_turned(steps);
 		return;
 	}
-	if (selected == ON_FREQUENCY)
+	if (selected == ON_FREQUENCY){
 		tune(steps);
+		show();
+		return;
+	}
+	moves = main_selection_moves(steps);
+	if (moves == 0)
+		return;
 	if (selected == ON_A_CONTROL && selected_control != NULL)
-		change(selected_control, steps);
+		change(selected_control, moves);
 	if (selected == ON_THE_MESSAGES)
-		messages_scroll(steps);
+		messages_scroll(moves);
 	if (selected == ON_THE_LIST && listed_count > 0){
 		if (is_changing_the_marked_row)
-			change(listed[list_mark], steps);
+			change(listed[list_mark], moves);
 		else {
-			list_mark = clamp(list_mark + steps, 0, listed_count - 1);
+			list_mark = clamp(list_mark + moves, 0, listed_count - 1);
 			keep_the_mark_in_view();
 		}
 	}
@@ -1811,6 +1841,17 @@ void main_select(const char *name){
 	show();
 }
 
+//the graph and the waterfall are painted straight to the glass, over
+//whatever LVGL has drawn there, so they are painted only while nothing lies
+//over them: no screen open, KBD's keys not up, and the mode not FT8, whose
+//messages take their place. Every opening and closing asks this, and it
+//alone says: on 19 October 2026 the author found the spectrum painted over
+//the callsign's keys, painting having been turned on by KBD's keys closing
+//while SET was open
+void main_paint_when_free(){
+	waterfall_set_painting(!screens_is_open() && !screens_cw_keys_up() && !is_showing_messages);
+}
+
 void main_ui(){
 	if (!main_screen){
 		Serial.println("Creating the main screen");
@@ -1821,5 +1862,5 @@ void main_ui(){
 		show();
 	}
 	lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-	waterfall_set_painting(!is_showing_messages);
+	main_paint_when_free();
 }

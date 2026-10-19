@@ -116,6 +116,8 @@ void screens_cw_sent(const char *text);
 void screens_log_part(const uint8_t *bytes, int count);
 void screens_close();
 bool screens_is_open();
+void main_paint_when_free();
+int main_selection_moves(int notches);
 void screens_radio_said();
 void screens_set_text(char *control_and_text);
 void screens_select(const char *name);

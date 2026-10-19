@@ -315,7 +315,11 @@ void waterfall_redraw(void){
 		next_row = 0;
 }
 
+//painting turned on paints the whole of it again, once: it is asked often,
+//main_paint_when_free() deciding at every opening and closing
 void waterfall_set_painting(bool on){
+	if (on == is_painting)
+		return;
 	is_painting = on;
 	if (on)
 		waterfall_redraw();

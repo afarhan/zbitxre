@@ -62,15 +62,15 @@ static struct said said_list[SAID_MAX];
 static volatile int said_count;
 
 //the values of text controls that the radio has said, kept until loop()
-//takes them: the logger's five fields are said together when it wipes
-//them, and every text control's value after the radio has described them
-#define TEXTS_MAX 12
-struct said_text {
-	int number;
-	char text[CONTROL_TEXT_ROOM];
-};
-static struct said_text texts[TEXTS_MAX];
-static volatile int texts_count;
+//takes them, each control's newest in a place of its own. The radio says
+//every text control's value together after it has described them, some
+//twenty, and the logger's five fields together when it wipes them; a
+//shared queue of twelve dropped what came after, WIFI_SSID and SERVER
+//among them, which the author found on 19 October 2026, SET's WiFi row
+//empty after the panel had restarted
+#define TEXT_PLACES (LINK_CONTROLS - LINK_FIRST_DESCRIBED)
+static char texts[TEXT_PLACES][CONTROL_TEXT_ROOM];
+static volatile bool is_text_new[TEXT_PLACES];
 
 //the access points the radio listed, staged until the list is whole
 static struct link_wifi_point wifi_staged[LINK_WIFI_POINTS_MAX];
@@ -157,12 +157,11 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		waterfall_update(bytes);
 	if (control == LINK_DESCRIBE)
 		controls_stage(bytes, count);
-	if (control >= LINK_FIRST_DESCRIBED && texts_count < TEXTS_MAX
+	if (control >= LINK_FIRST_DESCRIBED && control < LINK_CONTROLS
 			&& count < CONTROL_TEXT_ROOM){
-		texts[texts_count].number = control;
-		memcpy(texts[texts_count].text, bytes, count);
-		texts[texts_count].text[count] = 0;
-		texts_count = texts_count + 1;
+		memcpy(texts[control - LINK_FIRST_DESCRIBED], bytes, count);
+		texts[control - LINK_FIRST_DESCRIBED][count] = 0;
+		is_text_new[control - LINK_FIRST_DESCRIBED] = true;
 	}
 	if (control == LINK_WIFI_LIST)
 		stage_wifi_points(bytes, count);
@@ -315,7 +314,7 @@ static void send_the_next_part(){
 
 void i2c_link_slice(){
 	static struct said said[SAID_MAX];
-	struct said_text text_said;
+	char text_said[CONTROL_TEXT_ROOM];
 	char text[LINK_SAY_MAX + 1];
 	int count;
 	int i;
@@ -331,13 +330,14 @@ void i2c_link_slice(){
 		screens_wifi_listed(wifi_staged, wifi_staged_count);
 		interrupts();
 	}
-	while (texts_count > 0){
+	for (int i = 0; i < TEXT_PLACES; i++){
+		if (!is_text_new[i])
+			continue;
 		noInterrupts();
-		text_said = texts[0];
-		texts_count = texts_count - 1;
-		memmove(texts, texts + 1, texts_count * sizeof(texts[0]));
+		memcpy(text_said, texts[i], sizeof(text_said));
+		is_text_new[i] = false;
 		interrupts();
-		main_radio_says_text(text_said.number, text_said.text);
+		main_radio_says_text(i + LINK_FIRST_DESCRIBED, text_said);
 	}
 	if (is_text_said){
 		noInterrupts();
