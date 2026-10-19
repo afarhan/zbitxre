@@ -170,14 +170,14 @@ $(KISS_FFT): dsp/kiss_fft/kiss_fft.c dsp/kiss_fft/kiss_fft.h \
 	$(CC) -std=gnu11 -O2 -g -w -Idsp/kiss_fft -c -o $@ dsp/kiss_fft/kiss_fft.c
 
 sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
-		panel_controls.c panel_wifi.c panel_wifi.h settings.c settings.h radio.h \
+		panel_controls.c panel_wifi.c panel_wifi.h wifi.c wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
 		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h panel_cw.c panel_cw.h \
 		logger.c logger.h server.h control.h meter.c meter.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
-		panel_controls.c panel_wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c logbook.c \
-		logger.c settings.c meter.c \
+		panel_controls.c panel_wifi.c wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c \
+		logbook.c logger.c settings.c meter.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
 $(BUILD)/test_si5351_math: tests/test_si5351_math.c hw/si5351.c \
@@ -237,9 +237,9 @@ $(BUILD)/test_settings: tests/test_settings.c settings.c settings.h control.c \
 		control.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_settings.c settings.c control.c
 
-$(BUILD)/test_panel_wifi: tests/test_panel_wifi.c panel_wifi.c panel_wifi.h \
+$(BUILD)/test_panel_wifi: tests/test_panel_wifi.c panel_wifi.c panel_wifi.h wifi.c wifi.h \
 		control.c control.h $(LINK) $(LINK_HEADERS) hw/panel.h | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_panel_wifi.c panel_wifi.c control.c $(LINK)
+	$(CC) $(CFLAGS) -o $@ tests/test_panel_wifi.c panel_wifi.c wifi.c control.c $(LINK)
 
 $(BUILD)/test_radio_clock: tests/test_radio_clock.c hw/radio_clock.c \
 		hw/radio_clock.h | $(BUILD)
@@ -331,11 +331,11 @@ gui: $(GUI)
 # of clients/remote it has the keyed hash, to answer the service's
 # challenge with when it reaches a radio through my.sbitx.net
 GUI_PARTS = clients/gtk/knob.c clients/gtk/logbook_window.c clients/gtk/keyboard.c \
-	hw/gpio.c hw/board.c \
+	wifi.c hw/gpio.c hw/board.c \
 	clients/remote/sha256.c
 
 $(GUI): clients/gtk/zbitx_gui.c $(GUI_PARTS) clients/gtk/knob.h \
-		clients/gtk/logbook_window.h clients/gtk/keyboard.h hw/gpio.h hw/board.h \
+		clients/gtk/logbook_window.h clients/gtk/keyboard.h wifi.h hw/gpio.h hw/board.h \
 		clients/remote/sha256.h
 	$(CC) $(CFLAGS) -Iclients/gtk -Iclients/remote $$(pkg-config --cflags gtk+-3.0) -o $@ clients/gtk/zbitx_gui.c \
 		$(GUI_PARTS) $$(pkg-config --libs gtk+-3.0) -lpthread -lm

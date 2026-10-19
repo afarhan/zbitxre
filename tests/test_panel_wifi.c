@@ -16,6 +16,7 @@
 #include "link.h"
 #include "panel.h"
 #include "panel_wifi.h"
+#include "wifi.h"
 
 #define PANEL_ROOM (LINK_ANSWER_MAX - 1)
 #define TURNS 12
@@ -62,10 +63,21 @@ void panel_say(const char *text) {
 	snprintf(last_said, sizeof(last_said), "%s", text);
 }
 
-// in place of wpa_cli: what was asked is noted, the words with a space
-// between them and a line to each command, and the answers are made up
-static int ask_here(const char *const *words, char *answer, int room) {
+// in place of wpa_cli and nmcli: what was asked is noted, the words with a
+// space between them and a line to each command, nmcli's marked so, and
+// the answers are made up. NetworkManager runs when is_network_manager is
+static int is_network_manager;
+
+static int ask_here(const char *program, const char *const *words, char *answer, int room) {
+	int is_nmcli = strstr(program, "nmcli") != NULL;
 	int i;
+
+	if (is_nmcli && !strcmp(words[0], "-t")) {
+		snprintf(answer, room, "%s\n", is_network_manager ? "running" : "");
+		return 0;
+	}
+	if (is_nmcli)
+		asked_used += snprintf(asked + asked_used, sizeof(asked) - asked_used, "nmcli ");
 
 	for (i = 0; words[i] != NULL; i++) {
 		if (i > 0)
@@ -83,6 +95,8 @@ static int ask_here(const char *const *words, char *answer, int room) {
 		snprintf(answer, room, "bssid=6e:22\nssid=%s\nwpa_state=COMPLETED\n", on_now);
 	else if (!strcmp(words[0], "set_network") && is_key_refused && !strcmp(words[2], "psk"))
 		snprintf(answer, room, "FAIL\n");
+	else if (is_nmcli)
+		snprintf(answer, room, "Device 'wlan0' successfully activated\n");
 	else
 		snprintf(answer, room, "OK\n");
 	return 0;
@@ -224,7 +238,7 @@ static void check_none(void) {
 }
 
 static void check_joining(void) {
-	panel_wifi_set_asking(ask_here);
+	wifi_set_asking(ask_here);
 
 	choose("Airtel_71hh", "a new key for it", 1000);
 	expect(strcmp(asked,
@@ -266,6 +280,17 @@ static void check_joining(void) {
 	expect(strstr(asked, "select_network") == NULL
 		&& strcmp(last_said, "wifi: the key was not taken") == 0,
 		"a key that is not taken stops it there, and nothing is selected");
+
+	// with NetworkManager, as on Bookworm, the joining is nmcli's
+	is_network_manager = 1;
+	choose("Airtel_71hh", "a new key for it", 70000);
+	expect(strcmp(asked, "nmcli device wifi connect Airtel_71hh password a new key for it\n")
+		== 0 && strcmp(last_said, "wifi: joining Airtel_71hh") == 0,
+		"with NetworkManager the access point is joined through nmcli, and nothing else");
+	choose("A cafe", "", 80000);
+	expect(strcmp(asked, "nmcli device wifi connect A cafe\n") == 0,
+		"and an open one is joined with no key");
+	is_network_manager = 0;
 }
 
 int main(void) {

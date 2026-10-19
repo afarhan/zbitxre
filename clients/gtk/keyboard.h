@@ -14,3 +14,4 @@
 typedef void (*keyboard_fn)(char key);
 
 GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed);
+GtkWidget *keyboard_new_full(const char *key_class, keyboard_fn pressed);

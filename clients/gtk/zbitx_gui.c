@@ -462,6 +462,7 @@
 #include "gpio.h"
 #include "knob.h"
 #include "keyboard.h"
+#include "wifi.h"
 #include "logbook_window.h"
 #include "sha256.h"
 
@@ -725,6 +726,13 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define VOIP_SPEAKER_CONTROL "VOIP_SPEAKER"
 #define CONNECTIONS_GROUP "CONNECTIONS"
 #define PAGE_CONNECTIONS "connections"
+#define PAGE_WIFI "wifi"
+#define PAGE_WIFI_KEY "wifi-key"
+#define WIFI_SSID_CONTROL "WIFI_SSID"
+// a scan takes a few seconds before its results are read
+#define WIFI_SCAN_TAKES_MS 4000
+#define WIFI_JOINED_CHECK_AFTER_S 10
+#define WIFI_SAID_ROOM 96
 #define RADIO_KEY_CONTROL "RADIO_KEY"
 #define UPDATE_CONTROL "UPDATE"
 #define UPDATE_STATUS_CONTROL "UPDATE_STATUS"
@@ -1966,7 +1974,7 @@ static void handle_line(const char *name, char *value) {
 	show_values();
 	if ((is_page_shown(PAGE_SETTINGS) || is_page_shown(PAGE_CONNECTIONS))
 			&& (!strcmp(k->group, STATION_GROUP) || !strcmp(k->group, REMOTE_GROUP)
-			|| !strcmp(k->group, CONNECTIONS_GROUP)))
+			|| !strcmp(k->group, CONNECTIONS_GROUP) || !strcmp(k->name, WIFI_SSID_CONTROL)))
 		fill_settings();
 }
 
@@ -3063,11 +3071,15 @@ static void act_on_connections_row(gpointer unused);
 
 typedef void (*row_act_fn)(gpointer data);
 
+static GtkWidget *wifi_list;
+
 static GtkWidget *shown_page_list(void) {
 	if (is_page_shown(PAGE_SETTINGS))
 		return settings_list;
 	if (is_page_shown(PAGE_CONNECTIONS))
 		return connections_list;
+	if (is_page_shown(PAGE_WIFI))
+		return wifi_list;
 	return NULL;
 }
 
@@ -3200,6 +3212,178 @@ static void act_on_connections_row(gpointer unused) {
 	open_page_list(PAGE_CONNECTIONS, connections_list);
 }
 
+/* WiFi, on the radio's own screen
+
+   The author asked on 18 October 2026 for WiFi in SET, so that a touch
+   screen sbitx can be put on a network without a keyboard, as the front
+   panel puts a zbitx on one. The client running on the radio's own screen
+   has the radio's WiFi as its own, and asks it itself, with wifi.c, which
+   the radio shares for the panel: nothing about WiFi goes over the radio's
+   protocol, so neither a remote GTK client, nor the web page, nor anything
+   else on the network can reach it, and a key typed wrong from afar cannot
+   leave the radio out of reach. The row is only shown when the client is
+   talking to the radio on this same Pi.
+
+   The row shows the access point the radio is on, WIFI_SSID. A press on it
+   opens the list of what is heard, the strongest first, after a scan of a
+   few seconds. A press on one that wants a key opens its key page, with
+   the full keyboard, small letters, capitals and signs; CLOSE joins it.
+   One that wants none is joined at once. The joining is done apart from
+   the screen, which a join through nmcli would hold for some seconds, and
+   ten seconds after it the status line says whether it was joined. */
+
+static GtkWidget *create_top_bar(const char *back_to, GtkWidget **title);
+
+static struct link_wifi_point wifi_points[LINK_WIFI_POINTS_MAX];
+static int wifi_point_count;
+static struct link_wifi_point wifi_chosen;
+static char wifi_key[LINK_WIFI_KEY_MAX + 1];
+static GtkWidget *wifi_key_title;
+static GtkWidget *wifi_key_label;
+
+static int is_on_the_radio(void) {
+	return !is_remote && (!strcmp(radio_name, "localhost")
+		|| !strcmp(radio_name, "127.0.0.1"));
+}
+
+static gboolean show_wifi_said(gpointer text) {
+	show_status(text);
+	g_free(text);
+	return G_SOURCE_REMOVE;
+}
+
+// the joining, on a thread of its own; what it comes to goes to the status
+// line, through GTK's own thread
+static void *join_wifi(void *unused) {
+	struct link_wifi_point chosen = wifi_chosen;
+	char key[LINK_WIFI_KEY_MAX + 1];
+	char status[WIFI_ANSWER_MAX];
+	char said[WIFI_SAID_ROOM];
+	const char *trouble;
+
+	(void)unused;
+	snprintf(key, sizeof(key), "%s", wifi_key);
+	memset(wifi_key, 0, sizeof(wifi_key));
+	trouble = wifi_join(chosen.name, key);
+	memset(key, 0, sizeof(key));
+	if (trouble != NULL) {
+		g_idle_add(show_wifi_said, g_strdup(trouble));
+		return NULL;
+	}
+	sleep(WIFI_JOINED_CHECK_AFTER_S);
+	if (wifi_status(status, sizeof(status)) == 0 && wifi_is_on(status, chosen.name))
+		snprintf(said, sizeof(said), "wifi: joined %s", chosen.name);
+	else
+		snprintf(said, sizeof(said), "wifi: not on %s", chosen.name);
+	g_idle_add(show_wifi_said, g_strdup(said));
+	return NULL;
+}
+
+static void start_joining_wifi(void) {
+	char said[WIFI_SAID_ROOM];
+	pthread_t thread;
+
+	snprintf(said, sizeof(said), "wifi: joining %s", wifi_chosen.name);
+	show_status(said);
+	if (pthread_create(&thread, NULL, join_wifi, NULL) == 0)
+		pthread_detach(thread);
+	fill_settings();
+	show_page(PAGE_SETTINGS);
+}
+
+static void show_wifi_key(void) {
+	char with_mark[LINK_WIFI_KEY_MAX + 2];
+
+	snprintf(with_mark, sizeof(with_mark), "%s_", wifi_key);
+	gtk_label_set_text(GTK_LABEL(wifi_key_label), with_mark);
+}
+
+static void on_wifi_key(char key) {
+	size_t length = strlen(wifi_key);
+
+	if (key == KEYBOARD_CLOSE) {
+		start_joining_wifi();
+		return;
+	}
+	if (key == KEYBOARD_RUB_OUT && length > 0)
+		wifi_key[length - 1] = 0;
+	else if (key != KEYBOARD_RUB_OUT && length < LINK_WIFI_KEY_MAX) {
+		wifi_key[length] = key;
+		wifi_key[length + 1] = 0;
+	}
+	show_wifi_key();
+}
+
+// an access point pressed: its key is asked for, or one that wants none is
+// joined
+static void act_on_wifi_point(gpointer point) {
+	wifi_chosen = *(struct link_wifi_point *)point;
+	memset(wifi_key, 0, sizeof(wifi_key));
+	if (!wifi_chosen.is_secured) {
+		start_joining_wifi();
+		return;
+	}
+	gtk_label_set_text(GTK_LABEL(wifi_key_title), wifi_chosen.name);
+	show_wifi_key();
+	show_page(PAGE_WIFI_KEY);
+}
+
+static gboolean take_wifi_results(gpointer unused) {
+	GtkWidget *row;
+	GtkWidget *value;
+	char said[WIFI_SAID_ROOM];
+	int i;
+
+	(void)unused;
+	wifi_point_count = wifi_read_results(wifi_points, LINK_WIFI_POINTS_MAX);
+	empty_list(wifi_list);
+	for (i = 0; i < wifi_point_count; i++) {
+		row = list_row_new(wifi_points[i].name, &value);
+		snprintf(said, sizeof(said), "%d dBm", wifi_points[i].signal_dbm);
+		if (!wifi_points[i].is_secured)
+			snprintf(said, sizeof(said), "%d dBm  open", wifi_points[i].signal_dbm);
+		gtk_label_set_text(GTK_LABEL(value), said);
+		page_row_add(wifi_list, row, act_on_wifi_point, &wifi_points[i]);
+	}
+	if (wifi_point_count == 0) {
+		row = list_row_new("no access points are heard", &value);
+		page_row_add(wifi_list, row, NULL, NULL);
+	}
+	gtk_widget_show_all(wifi_list);
+	page_list_select(wifi_list, 0);
+	return G_SOURCE_REMOVE;
+}
+
+static void act_on_wifi_row(gpointer unused) {
+	GtkWidget *row;
+	GtkWidget *value;
+
+	(void)unused;
+	empty_list(wifi_list);
+	row = list_row_new("looking for access points", &value);
+	page_row_add(wifi_list, row, NULL, NULL);
+	gtk_widget_show_all(wifi_list);
+	show_page(PAGE_WIFI);
+	if (wifi_scan() < 0)
+		show_status("wifi: the radio's WiFi could not be asked to scan");
+	g_timeout_add(WIFI_SCAN_TAKES_MS, take_wifi_results, NULL);
+}
+
+// the key's page: the access point's name, the key as it is typed, and the
+// full keyboard
+static GtkWidget *create_wifi_key_page(void) {
+	GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+	gtk_box_pack_start(GTK_BOX(page), create_top_bar(PAGE_WIFI, &wifi_key_title), FALSE,
+		FALSE, 0);
+	wifi_key_label = gtk_label_new("");
+	add_label_class(wifi_key_label, "typed");
+	gtk_widget_set_size_request(wifi_key_label, -1, px_down(ROW_HEIGHT));
+	gtk_box_pack_start(GTK_BOX(page), wifi_key_label, FALSE, FALSE, 0);
+	gtk_box_pack_end(GTK_BOX(page), keyboard_new_full("key", on_wifi_key), TRUE, TRUE, 0);
+	return page;
+}
+
 // the two screens' rows, made afresh each time they are shown. The
 // settings: the radio's texts and choices in the group STATION, and a row
 // that opens the connections. The connections: the switches in the group
@@ -3212,6 +3396,12 @@ static void fill_settings(void) {
 
 	empty_list(settings_list);
 	fill_with_group(settings_list, STATION_GROUP);
+	// on the radio's own screen, the radio's WiFi
+	if (is_on_the_radio()) {
+		row = list_row_new("WIFI", &value);
+		gtk_label_set_text(GTK_LABEL(value), value_of(WIFI_SSID_CONTROL));
+		page_row_add(settings_list, row, act_on_wifi_row, NULL);
+	}
 	// set at the radio and nowhere else
 	if (!is_remote) {
 		row = list_row_new("CONNECTIONS", &value);
@@ -4622,6 +4812,9 @@ static GtkWidget *create_window(void) {
 		create_list_page("SETTINGS", PAGE_MAIN, &settings_list), PAGE_SETTINGS);
 	gtk_stack_add_named(GTK_STACK(pages),
 		create_list_page("CONNECTIONS", PAGE_SETTINGS, &connections_list), PAGE_CONNECTIONS);
+	gtk_stack_add_named(GTK_STACK(pages),
+		create_list_page("WIFI", PAGE_SETTINGS, &wifi_list), PAGE_WIFI);
+	gtk_stack_add_named(GTK_STACK(pages), create_wifi_key_page(), PAGE_WIFI_KEY);
 	gtk_stack_add_named(GTK_STACK(pages), create_text_page(), PAGE_TEXT);
 	gtk_container_add(GTK_CONTAINER(window), pages);
 

@@ -21,20 +21,44 @@
 //
 // The keys take whatever room they are given, all of one size, but SPACE,
 // which is two keys wide. Their look is the caller's, by the class named.
+//
+// THE FULL KEYBOARD
+//
+// A WiFi key may have small letters and any sign, and the local GTK client
+// on an sbitx's own screen sets the radio's WiFi, the author's asking of
+// 18 October 2026, so keyboard_new_full() has three pages of the same
+// four rows: small letters, capitals, and signs. SHIFT goes between the
+// small letters and the capitals, #+= to the signs and abc back. It is for
+// the WiFi key alone; everything else is typed on the one keyboard.
+
+#include <string.h>
 
 #include "keyboard.h"
 
 #define ROWS 4
 #define SPACE_COLUMNS 2
+#define PAGES 3
 
-// the keys, a row to a line: a character is its key, and these stand for
-// the keys that are not characters
-#define RUB_OUT_KEY '<'
-#define SPACE_KEY '_'
-#define CLOSE_KEY '>'
+// the keys, a row to a line: a character is its key, and these, which no
+// key types, stand for the keys that are not characters. A string is
+// broken after each, since C would read a letter after \x02 as more of it
+#define RUB_OUT_KEY '\x01'
+#define SPACE_KEY '\x02'
+#define CLOSE_KEY '\x03'
+#define SHIFT_KEY '\x04'
+#define SIGNS_KEY '\x05'
+#define LETTERS_KEY '\x06'
 static const char *const key_rows[ROWS] = {
-	"1234567890<", "QWERTYUIOP/", "ASDFGHJKL?-", "ZXCV_BNM.>",
+	"1234567890\x01", "QWERTYUIOP/", "ASDFGHJKL?-", "ZXCV\x02" "BNM.\x03",
 };
+
+// the full keyboard's pages: small letters, capitals and signs
+static const char *const full_rows[PAGES][ROWS] = {
+	{ "1234567890\x01", "qwertyuiop\x05", "asdfghjkl.\x04", "zxcv\x02" "bnm-\x03" },
+	{ "1234567890\x01", "QWERTYUIOP\x05", "ASDFGHJKL.\x04", "ZXCV\x02" "BNM-\x03" },
+	{ "!@#$%^&*()\x01", "_+=[]{};:'\x06", "\"\\|`~<>,/?", "zxcv\x02" "bnm-\x03" },
+};
+static const char *const page_names[PAGES] = { "small", "capitals", "signs" };
 
 static const char *key_label(char c, char *text) {
 	if (c == RUB_OUT_KEY)
@@ -43,6 +67,12 @@ static const char *key_label(char c, char *text) {
 		return "SPACE";
 	if (c == CLOSE_KEY)
 		return "CLOSE";
+	if (c == SHIFT_KEY)
+		return "SHIFT";
+	if (c == SIGNS_KEY)
+		return "#+=";
+	if (c == LETTERS_KEY)
+		return "abc";
 	text[0] = c;
 	text[1] = 0;
 	return text;
@@ -58,13 +88,34 @@ static char key_given(char c) {
 	return c;
 }
 
-static void on_key_clicked(GtkButton *button, gpointer key) {
-	keyboard_fn pressed = (keyboard_fn)g_object_get_data(G_OBJECT(button), "pressed");
+// the full keyboard's page is changed by its keys, the stack it is in
+// being the grid's parent
+static void show_page_of(GtkWidget *key, const char *page) {
+	GtkWidget *grid = gtk_widget_get_parent(key);
 
-	pressed(key_given((char)GPOINTER_TO_INT(key)));
+	gtk_stack_set_visible_child_name(GTK_STACK(gtk_widget_get_parent(grid)), page);
 }
 
-GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed) {
+static void on_key_clicked(GtkButton *button, gpointer key) {
+	keyboard_fn pressed = (keyboard_fn)g_object_get_data(G_OBJECT(button), "pressed");
+	const char *page = g_object_get_data(G_OBJECT(button), "page");
+	char c = (char)GPOINTER_TO_INT(key);
+
+	if (c == SHIFT_KEY && !strcmp(page, page_names[0]))
+		show_page_of(GTK_WIDGET(button), page_names[1]);
+	else if (c == SHIFT_KEY)
+		show_page_of(GTK_WIDGET(button), page_names[0]);
+	else if (c == SIGNS_KEY)
+		show_page_of(GTK_WIDGET(button), page_names[2]);
+	else if (c == LETTERS_KEY)
+		show_page_of(GTK_WIDGET(button), page_names[0]);
+	else
+		pressed(key_given(c));
+}
+
+// a grid of the rows given, each key a button of the class named
+static GtkWidget *keys_of(const char *const *rows, const char *key_class, keyboard_fn pressed,
+		const char *page) {
 	GtkWidget *keys = gtk_grid_new();
 	GtkWidget *key;
 	char text[2];
@@ -77,7 +128,7 @@ GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed) {
 	gtk_grid_set_column_homogeneous(GTK_GRID(keys), TRUE);
 	for (row = 0; row < ROWS; row++) {
 		column = 0;
-		for (at = key_rows[row]; *at != 0; at++) {
+		for (at = rows[row]; *at != 0; at++) {
 			width = 1;
 			if (*at == SPACE_KEY)
 				width = SPACE_COLUMNS;
@@ -87,6 +138,7 @@ GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed) {
 			gtk_widget_set_hexpand(key, TRUE);
 			gtk_widget_set_vexpand(key, TRUE);
 			g_object_set_data(G_OBJECT(key), "pressed", (gpointer)pressed);
+			g_object_set_data(G_OBJECT(key), "page", (gpointer)page);
 			g_signal_connect(key, "clicked", G_CALLBACK(on_key_clicked),
 				GINT_TO_POINTER(*at));
 			gtk_grid_attach(GTK_GRID(keys), key, column, row, width, 1);
@@ -94,4 +146,18 @@ GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed) {
 		}
 	}
 	return keys;
+}
+
+GtkWidget *keyboard_new(const char *key_class, keyboard_fn pressed) {
+	return keys_of(key_rows, key_class, pressed, page_names[0]);
+}
+
+GtkWidget *keyboard_new_full(const char *key_class, keyboard_fn pressed) {
+	GtkWidget *pages = gtk_stack_new();
+	int i;
+
+	for (i = 0; i < PAGES; i++)
+		gtk_stack_add_named(GTK_STACK(pages), keys_of(full_rows[i], key_class, pressed,
+			page_names[i]), page_names[i]);
+	return pages;
 }
