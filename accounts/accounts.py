@@ -2284,6 +2284,9 @@ class Handler(BaseHTTPRequestHandler):
             "<li>Download <a href=\"%s\" download>"
             "front_panel.uf2</a> on your computer.</li>"
             "<li>Switch the radio <strong>off</strong>.</li>"
+            "<li>If a USB cable is plugged into the panel, <strong>unplug "
+            "it</strong>. Plugged in, it keeps the panel powered, and the panel "
+            "does not restart.</li>"
             "<li>Hold the <strong>tuning knob pressed in</strong>, and while holding "
             "it, switch the radio <strong>on</strong>. Then let go of the knob.</li>"
             "<li>Connect the panel's USB socket to your computer. A drive called "
@@ -2291,8 +2294,6 @@ class Handler(BaseHTTPRequestHandler):
             "<li>Copy <strong>front_panel.uf2</strong> onto that "
             "drive. The drive goes away by itself and the panel restarts.</li>"
             "<li>Unplug the cable.</li></ol>"
-            "<p>The order matters: plugged in first, the cable keeps the panel "
-            "powered, and it never starts as the drive.</p>"
 
             "<h3>Afterwards</h3>"
             "<ul class=\"steps\">"
