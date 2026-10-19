@@ -2277,7 +2277,7 @@ class Handler(BaseHTTPRequestHandler):
             "restart the radio. At the end it offers to put the radio on "
             "my.sbitx.net.</p>"
 
-            "<h3>6. Only if it says the front panel needs the USB cable</h3>"
+            "<h3>6. Only if the terminal says the front panel needs the USB cable</h3>"
             "<p>The steps below are needed only this one time. Future updates of "
             "zbitxre will update the front panel automatically.</p>"
             "<ol class=\"steps\">"
