@@ -2278,7 +2278,8 @@ class Handler(BaseHTTPRequestHandler):
             "my.sbitx.net.</p>"
 
             "<h3>6. Only if it says the front panel needs the USB cable</h3>"
-            "<p>Do this once. After it, the panel is updated by itself.</p>"
+            "<p>The steps below are needed only this one time. Future updates of "
+            "zbitxre will update the front panel automatically.</p>"
             "<ol class=\"steps\">"
             "<li>Download <a href=\"%s\" download>"
             "front_panel.uf2</a> on your computer.</li>"
