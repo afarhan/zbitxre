@@ -63,10 +63,13 @@ asked=$?
 if [ "$asked" = "$OLDER_PANEL" ]; then
 	say "the front panel has its older firmware, which is updated with the USB cable, once,"
 	say "as https://$SERVER/upgrade shows:"
-	say "  1. Switch the radio off. Hold the tuning knob in while switching it on, then let go."
-	say "  2. Plug the panel's USB cable into a computer. A drive called RPI-RP2 appears."
-	say "  3. Copy onto it $UF2_ADDRESS, downloaded on that computer."
-	say "  The panel restarts with it, and later updates come over I2C by themselves."
+	say "  1. Switch the radio off. Unplug the panel's USB cable if it is plugged in:"
+	say "     plugged in, it keeps the panel powered, and the panel does not restart."
+	say "  2. Hold the tuning knob in while switching the radio on, then let go."
+	say "  3. Plug the panel's USB cable into a computer. A drive called RPI-RP2 appears."
+	say "  4. Copy onto it $UF2_ADDRESS, downloaded on that computer."
+	say "  5. Unplug the cable, switch the radio off, and switch it back on."
+	say "  Future updates of zbitxre will update the front panel automatically."
 	outcome "panel needs the USB cable"
 	exit 0
 fi
