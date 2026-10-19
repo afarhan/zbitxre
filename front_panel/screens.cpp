@@ -2378,12 +2378,15 @@ static bool is_up(lv_obj_t *screen){
 
 /* the update, seen happening
 
-   As in the window: the author asked on 16 October 2026 to see an update
-   as it goes, and whether it succeeded. A view over every screen opens
-   with the first step the radio says in UPDATE_STATUS, shows the latest
-   steps under one another, and at the end says whether the update
+   As in the GTK client: the author asked on 16 October 2026 to see an
+   update as it goes, and whether it succeeded. A view over every screen
+   opens with the first step the radio says in UPDATE_STATUS, shows the
+   latest steps under one another, and at the end says whether the update
    succeeded or failed, by the radio's "DONE: ", "FAILED: " or
-   "CANCELLED: ", with CLOSE. Until then CANCEL stops the update, and the
+   "CANCELLED: ". A failure or a cancelling waits for CLOSE, to be read; a
+   success closes itself UPDATE_DONE_SHOWN_MS later, as the GTK client's
+   does, the author having found on 19 October 2026 the view left waiting
+   after an update had ended well. Until then CANCEL stops the update, and the
    radio is put back as it was, as the author asked the same day. The one
    that can be pressed is marked, and a click of the knob presses it. The panel is given new
    firmware in the middle of an update, and restarts; the radio tells it
@@ -2394,6 +2397,7 @@ static bool is_up(lv_obj_t *screen){
 #define UPDATE_DONE_MARK "DONE: "
 #define UPDATE_FAILED_MARK "FAILED: "
 #define UPDATE_CANCELLED_MARK "CANCELLED: "
+#define UPDATE_DONE_SHOWN_MS 3000
 #define UPDATE_BUTTON_LEFT (SCREEN_WIDTH / 2 - CONFIRM_BUTTON_WIDTH - PAD)
 #define UPDATE_BUTTON_RIGHT (SCREEN_WIDTH / 2 + PAD)
 
@@ -2407,6 +2411,7 @@ static char update_steps[UPDATE_STEPS_SHOWN][UPDATE_STEP_ROOM];
 static int update_steps_count;
 static char update_last[UPDATE_STEP_ROOM];
 static bool update_has_ended;
+static bool update_has_succeeded;
 
 static bool update_is_up(){
 	return update_layer != NULL && !lv_obj_has_flag(update_layer, LV_OBJ_FLAG_HIDDEN);
@@ -2419,9 +2424,18 @@ static void update_close(){
 	update_steps_count = 0;
 	update_last[0] = 0;
 	update_has_ended = false;
+	update_has_succeeded = false;
 	update_is_cancelling = false;
 	if (!screens_is_open())
 		main_ui();
+}
+
+//a success, shown for UPDATE_DONE_SHOWN_MS, closes as CLOSE would; if CLOSE
+//was pressed first, or another update has begun, there is nothing to close
+static void on_update_done_shown(lv_timer_t *timer){
+	(void)timer;
+	if (update_is_up() && update_has_succeeded)
+		update_close();
 }
 
 static void on_update_close(lv_event_t *e){
@@ -2501,6 +2515,7 @@ void screens_update_status(const char *text){
 	bool is_failed = !strncmp(text, UPDATE_FAILED_MARK, strlen(UPDATE_FAILED_MARK));
 	bool is_cancelled = !strncmp(text, UPDATE_CANCELLED_MARK, strlen(UPDATE_CANCELLED_MARK));
 	const char *step = text;
+	lv_timer_t *timer;
 
 	//the radio tells its controls again when the panel starts: the same
 	//step is not shown twice, and nothing is opened for no update
@@ -2513,6 +2528,7 @@ void screens_update_status(const char *text){
 	if (!update_is_up() || (update_has_ended && !is_done && !is_failed && !is_cancelled)){
 		update_steps_count = 0;
 		update_has_ended = false;
+		update_has_succeeded = false;
 		update_is_cancelling = false;
 		lv_label_set_text(update_outcome_label, "");
 		lv_obj_move_foreground(update_layer);
@@ -2536,6 +2552,11 @@ void screens_update_status(const char *text){
 			: is_cancelled ? "UPDATE CANCELLED" : "UPDATE FAILED");
 		lv_obj_set_style_text_color(update_outcome_label,
 			lv_color_hex(is_done ? 0x00E060 : is_cancelled ? 0xFFC000 : 0xFF4040), 0);
+	}
+	if (is_done){
+		update_has_succeeded = true;
+		timer = lv_timer_create(on_update_done_shown, UPDATE_DONE_SHOWN_MS, NULL);
+		lv_timer_set_repeat_count(timer, 1);
 	}
 	update_show();
 }

@@ -664,7 +664,8 @@ static struct control radio_key = {
 // waits until it is not transmitting, closes what it has open and becomes
 // the new radio program in its place, by exec, in the same terminal, with
 // UPDATED_ENV saying so. The new one gives the panel its firmware before
-// it opens the panel, and then says "DONE: updated to ..." for
+// it opens the panel, and then says "DONE: now ..." and how the panel's
+// firmware went for
 // UPDATE_SAID_FOR_MS, so that a window that connects after the restart is
 // told how it ended and one that connects later is not.
 #define UPDATE_SCRIPT "setup/update.sh"
@@ -862,7 +863,7 @@ static void restart_as_built(char **argv) {
 		built[strcspn(built, "\n")] = 0;
 		fclose(file);
 	}
-	snprintf(said, sizeof(said), "updated to %s", built);
+	snprintf(said, sizeof(said), "now %s", built);
 	setenv(UPDATED_ENV, said, 1);
 	for (int fd = 3; fd < OPEN_FILES_MOST; fd++)
 		close(fd);
@@ -871,9 +872,16 @@ static void restart_as_built(char **argv) {
 }
 
 // at the start of a radio program that an update started: the panel is
-// given its firmware, while nothing here has it open
+// given its firmware, while nothing here has it open. What the script says
+// goes to the terminal, and its last line, "outcome: ", into the update's
+// last step: the author found on 19 October 2026 that an update said
+// nothing of the panel's firmware, given, as before, or failed. An sbitx's
+// says none, and its last step is the commit alone
 static void updated_take(void) {
 	const char *said = getenv(UPDATED_ENV);
+	static const char *const mark = "outcome: ";
+	char line[UPDATE_LINE_ROOM];
+	char outcome[UPDATE_LINE_ROOM] = "";
 	FILE *file;
 
 	if (said == NULL) {
@@ -887,11 +895,21 @@ static void updated_take(void) {
 		unlink(UPDATE_RESULT);
 		return;
 	}
-	if (system(PANEL_FIRMWARE_SCRIPT) == 0)
-		snprintf(updated_said, sizeof(updated_said), "DONE: %s", said);
+	file = popen(PANEL_FIRMWARE_SCRIPT, "r");
+	while (file != NULL && fgets(line, sizeof(line), file) != NULL) {
+		line[strcspn(line, "\n")] = 0;
+		if (!strncmp(line, mark, strlen(mark)))
+			snprintf(outcome, sizeof(outcome), "%s", line + strlen(mark));
+		else
+			printf("%s\n", line);
+	}
+	if (file != NULL)
+		pclose(file);
+	fflush(stdout);
+	if (outcome[0] != 0)
+		snprintf(updated_said, sizeof(updated_said), "DONE: %s; %s", said, outcome);
 	else
-		snprintf(updated_said, sizeof(updated_said), "DONE: %s; the panel kept its firmware",
-			said);
+		snprintf(updated_said, sizeof(updated_said), "DONE: %s", said);
 	unsetenv(UPDATED_ENV);
 }
 

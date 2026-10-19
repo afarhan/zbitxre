@@ -157,10 +157,16 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		waterfall_update(bytes);
 	if (control == LINK_DESCRIBE)
 		controls_stage(bytes, count);
-	if (control >= LINK_FIRST_DESCRIBED && control < LINK_CONTROLS
-			&& count < CONTROL_TEXT_ROOM){
-		memcpy(texts[control - LINK_FIRST_DESCRIBED], bytes, count);
-		texts[control - LINK_FIRST_DESCRIBED][count] = 0;
+	//a text longer than the panel keeps is cut to fit, never dropped: the
+	//update's last step, "DONE: updated to c3665d8; the panel kept its
+	//firmware", was dropped on 19 October 2026, and its view waited for it
+	if (control >= LINK_FIRST_DESCRIBED && control < LINK_CONTROLS){
+		int kept = count;
+
+		if (kept > CONTROL_TEXT_ROOM - 1)
+			kept = CONTROL_TEXT_ROOM - 1;
+		memcpy(texts[control - LINK_FIRST_DESCRIBED], bytes, kept);
+		texts[control - LINK_FIRST_DESCRIBED][kept] = 0;
 		is_text_new[control - LINK_FIRST_DESCRIBED] = true;
 	}
 	if (control == LINK_WIFI_LIST)

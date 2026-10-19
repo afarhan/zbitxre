@@ -26,6 +26,11 @@
 cd "$(dirname "$0")/.." || exit 1
 
 say() { echo "panel: $*"; }
+# the last line, short, which the radio program puts in the update's last
+# step, "DONE: now 38ec5ba; panel 6b8501c, as before": the author found on
+# 19 October 2026 that an update said nothing of the panel's firmware. The
+# panel shows 47 characters of a step, so it is kept to 25
+outcome() { echo "outcome: $*"; }
 
 release=release/panel
 # the firmware for the cable is GitHub's, where every build comes from and
@@ -43,7 +48,10 @@ if [ "$1" != "--from-radio" ] && pgrep -x sdr > /dev/null; then
 	say "the radio program is running; the panel is left as it is"
 	exit 1
 fi
-make --quiet panel_update || exit 1
+if ! make --quiet panel_update; then
+	outcome "panel update not built"
+	exit 1
+fi
 
 want=$(cat "$release/VERSION")
 # panel_update ends with OLDER_PANEL when the panel's firmware is from
@@ -59,15 +67,22 @@ if [ "$asked" = "$OLDER_PANEL" ]; then
 	say "  2. Plug the panel's USB cable into a computer. A drive called RPI-RP2 appears."
 	say "  3. Copy onto it $UF2_ADDRESS, downloaded on that computer."
 	say "  The panel restarts with it, and later updates come over I2C by themselves."
+	outcome "panel needs the USB cable"
 	exit 0
 fi
 if [ "$asked" != 0 ] || [ -z "$have" ]; then
 	say "the panel's firmware could not be asked: $(head -1 /tmp/panel_update.err)"
+	outcome "panel did not answer"
 	exit 1
 fi
 if [ "$have" = "$want" ]; then
 	say "the front panel's firmware, $have, is up to date"
+	outcome "panel $have, as before"
 	exit 0
 fi
 say "the front panel has $have; giving it $want, which takes under a minute"
-./panel_update "$release/front_panel.bin.gz"
+if ! ./panel_update "$release/front_panel.bin.gz"; then
+	outcome "panel update failed"
+	exit 1
+fi
+outcome "panel now $want"

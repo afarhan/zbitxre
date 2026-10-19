@@ -49,8 +49,8 @@ UP_TO_DATE=3
 # earlier update had pulled and not built, and was left on its old
 # programs
 BUILT_FROM=data/built_from
-# the update can be cancelled, from the view of it in the window and on
-# the panel, as the author asked on 16 October 2026: the radio sends this
+# the update can be cancelled, from the view of it in the GTK client and
+# on the front panel, as the author asked on 16 October 2026: the radio sends this
 # script's process group TERM. A build stopped part way leaves no program,
 # make taking away the one it was writing, so the programs are kept in
 # KEPT before the build and put back. git is left where the pull took it:
@@ -67,14 +67,15 @@ elif [ -n "$1" ] && [ "$1" != "--build-only" ]; then
 	exit 2
 fi
 
-# each line is a step of the update, which the window and the panel show;
+# each line is a step of the update, which the GTK client and the front
+# panel show;
 # the panel shows 47 characters, so each is kept to that, in plain words
 say() {
 	echo "update: $*"
 }
 
-# how the update ended, the last that is said, which the window and the
-# panel show as its outcome
+# how the update ended, the last that is said, which the GTK client and
+# the front panel show as its outcome
 done_with() {
 	say "DONE: $*"
 	exit "$UP_TO_DATE"
@@ -146,8 +147,8 @@ if ! make --quiet sdr; then
 fi
 mkdir -p data && echo "$after" > "$BUILT_FROM"
 if pkg-config --exists gtk+-3.0 2>/dev/null; then
-	say "building the window"
-	make --quiet gui || say "window build failed; old one kept"
+	say "building the GTK client"
+	make --quiet gui || say "GTK client build failed; old one kept"
 fi
 say "building the gateway"
 make --quiet remote || say "gateway build failed; old one kept"
