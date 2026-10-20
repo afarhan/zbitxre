@@ -796,6 +796,7 @@ class Remote:
         self.listener_from[writer] = address
         self.listeners.setdefault(radio, set()).add(writer)
         self.usage["came"] += 1
+        self.service.tally("listen", address)
         self.usage["most"] = max(self.usage["most"], self.listening())
         self.say("a listener has come to radio %d from %s: %d listening" % (
             radio, address, len(self.listeners[radio])))

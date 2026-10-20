@@ -177,5 +177,12 @@ make --quiet remote || say "gateway build failed; old one kept"
 # what was built
 trap '' TERM INT
 say "built $after"
+# my.sbitx.net counts the radios updated, of each kind, and nothing more is
+# sent: the author's asking of 20 October 2026. accounts.py says what is
+# counted
+radio=$(sed -n 's/^radio *= *//p' data/hw_settings.ini 2> /dev/null | head -1)
+[ -z "$radio" ] && grep -q '^hw *= *4' data/hw_settings.ini 2> /dev/null && radio=zbitx
+curl -fsS -m 10 -o /dev/null "https://my.sbitx.net/installed?radio=${radio:-unknown}&by=update" \
+	2> /dev/null || true
 [ -z "$ZBITXRE_FROM_RADIO" ] && echo "update: restart the radio to use it"
 exit 0

@@ -191,6 +191,44 @@ cross to let go of it, and a radio is listened to as soon as it is
 touched. A browser has no UDP, so this last stretch is TCP, inside the
 site's HTTPS.
 
+THE STATIONS, AS A LIST
+
+/stations has the radios as words, for the blind operators who cannot use
+the globe, as the author asked on 2026-10-20: a page made here, with
+headings and tables that a screen reader reads, and nothing drawn. First
+the radios on line, each with its callsign, its four-character square
+and a button to listen to it; then the rest that are registered, each
+with when it was last on line. The count at the top says how many there
+are. The author agreed that day to the radios that are not on line being
+shown to anyone, which the globe does not do: a callsign and a square a
+hundred kilometres across. A radio's name is not shown, as on the globe.
+
+Listening is done by static/stations.js, with sound.js, as the globe
+does it. What the radio is tuned to is said only while it is listened
+to, since a radio says it only then; the line that says it is read out
+by a screen reader as it changes.
+
+WHAT IS COUNTED
+
+The author asked on 2026-10-20 to know how many have fetched the
+installer, registered, upgraded and listened. The table tally keeps, for
+each day in UTC, each thing that was done and a mark for who did it, so
+that one address is counted once a day for each:
+
+    install          /install.sh fetched by curl or wget, as on a radio;
+                     a browser or a search engine's robot is not counted
+    installed RADIO  setup/install.sh, at its end, has upgraded a radio
+                     of that kind, zbitx or sbitxv3
+    updated RADIO    setup/update.sh has built an update
+    listen           a browser has listened to a radio
+
+The mark is the SHA-256 of the day and the address, cut short, and not the
+address: it tells one address from another on that day and on no other.
+Registrations and radios are counted from their own tables.
+
+/stats shows it, to the callsigns named in the settings as admins and to
+nobody else, who are told there is no such page. The author asked for it.
+
 MAIL
 
 Mail is sent through the SMTP server named in the settings, over TLS. If
@@ -214,7 +252,8 @@ Customer service works on the droplet, with this same program:
     delete CALLSIGN           the account, its radios and its sessions
     note CALLSIGN TEXT        a line kept with the account
 
-There is no admin page on the web: what is not there cannot be broken into.
+There is no admin page on the web for any of that: what is not there
+cannot be broken into. /stats, above, only reads.
 """
 
 import argparse
@@ -289,6 +328,15 @@ NOT_TICKED = "Tick the three boxes once the radio is set that way."
 KEY_IN_USE = ("That radio key is already in use on my.sbitx.net. On the radio, tap "
               "RADIO_KEY, choose NEW KEY, and type the new twelve letters here.")
 
+# how many days /stats shows, and how many the radios on line lately go back
+STATS_DAYS = 14
+LATELY_DAYS = 7
+DAY_S = 24 * 3600
+TALLY_MARK_LENGTH = 16
+# what a radio may say it is, on /installed
+RADIO_KIND_FORM = re.compile(r"^[a-z0-9]{1,12}$")
+INSTALL_FETCHERS = re.compile(r"^(curl|Wget)/")
+
 CALLSIGN_FORM = re.compile(r"^[A-Z0-9]{3,10}$")
 GRID_FORM = re.compile(r"^[A-R]{2}[0-9]{2}([A-X]{2})?$")
 SUFFIX_FORM = re.compile(r"^[a-z0-9]{1,10}$")
@@ -343,6 +391,12 @@ create index if not exists attempts_bucket on attempts(bucket, at);
 create table if not exists spent (
     challenge text primary key,
     expires integer not null
+);
+create table if not exists tally (
+    day text not null,
+    what text not null,
+    who text not null,
+    primary key (day, what, who)
 );
 """
 
@@ -1028,6 +1082,7 @@ MAP_PAGE = """<!doctype html>
 <button id="heard-close" title="put the list away">›</button></div>
 <div id="heard-list"></div></div>
 <div id="hint">drag to turn &middot; pinch or wheel to come nearer &middot; touch a radio to listen
+&middot; <a href="/stations">the radios as a list</a>
 <br>blue dots are listeners, placed to the nearest grid square by their network address
 &middot; <a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></div>
 <script src="/static/sound.js"></script>
@@ -1060,6 +1115,7 @@ STATIC = {
     "sound.js": "text/javascript; charset=utf-8",
     "sound_worklet.js": "text/javascript; charset=utf-8",
     "upgrade.js": "text/javascript; charset=utf-8",
+    "stations.js": "text/javascript; charset=utf-8",
     "icon-192.png": "image/png",
     "icon-512.png": "image/png",
 }
@@ -1251,6 +1307,9 @@ class Settings:
         self.sockets = server.get("sockets", (
             "wss://" if site.scheme == "https" else "ws://") + site.netloc)
         self.invite_code = server.get("invite_code", "")
+        # who may see /stats, "VU2ESE, VU3XYZ"
+        self.admins = {tidy_callsign(word) for word in server.get("admins", "").split(",")
+                       if tidy_callsign(word)}
         self.support = server.get("support", "")
         self.smtp_host = mail.get("host", "")
         self.smtp_port = int(mail.get("port", "587"))
@@ -1848,6 +1907,71 @@ class Service:
                                   "listeners": listeners_of(row["listener_places"])})
         return found
 
+    def stations(self):
+        """every radio of an active account, for /stations: those on line
+        first, then the rest, each by callsign"""
+        found = []
+        with self.store.open() as db:
+            for row in db.execute(
+                    "select radios.id, accounts.callsign, radios.grid, radios.online, "
+                    "radios.streaming, radios.last_seen from radios "
+                    "join accounts on accounts.id = radios.account "
+                    "where accounts.status = 'active' "
+                    "order by radios.online desc, accounts.callsign, radios.id"):
+                square = square_of(row["grid"])
+                found.append({"radio": row["id"], "callsign": row["callsign"],
+                              "grid": square["grid"] if square else "",
+                              "online": bool(row["online"]),
+                              "streaming": bool(row["streaming"]),
+                              "last_seen": row["last_seen"]})
+        return found
+
+    def tally(self, what, address):
+        """one thing done, counted once a day for each address"""
+        day = time.strftime("%Y-%m-%d", time.gmtime(now()))
+        mark = digest("%s %s" % (day, address))[:TALLY_MARK_LENGTH]
+        with self.store.open() as db:
+            db.execute("insert or ignore into tally (day, what, who) values (?, ?, ?)",
+                       (day, what, mark))
+
+    def stats(self):
+        """what /stats shows: the totals, and each of the last days"""
+        days = [time.strftime("%Y-%m-%d", time.gmtime(now() - back * DAY_S))
+                for back in range(STATS_DAYS)]
+        lately = now() - LATELY_DAYS * DAY_S
+        with self.store.open() as db:
+            def one(query, *values):
+                return db.execute(query, values).fetchone()[0] or 0
+            totals = {
+                "accounts": one("select count(*) from accounts where status = 'active'"),
+                "pending": one("select count(*) from accounts where status = 'pending'"),
+                "with a radio": one("select count(distinct account) from radios"),
+                "radios": one("select count(*) from radios"),
+                "ever on line": one("select count(*) from radios where online = 1 "
+                                    "or last_seen is not null"),
+                "on line lately": one("select count(*) from radios where online = 1 "
+                                      "or last_seen >= ?", lately),
+                "on line": one("select count(*) from radios where online = 1"),
+            }
+            for what in ("install", "listen"):
+                totals[what] = one("select count(*) from tally where what = ?", what)
+            kinds = {}
+            for row in db.execute("select what, count(*) from tally "
+                                  "where what like 'installed %' or what like 'updated %' "
+                                  "group by what order by what"):
+                kinds[row[0]] = row[1]
+            by_day = {day: {} for day in days}
+            for row in db.execute("select day, what, count(*) from tally where day >= ? "
+                                  "group by day, what", (days[-1],)):
+                if row[0] in by_day:
+                    by_day[row[0]][row[1]] = row[2]
+            for row in db.execute("select created from accounts where created >= ?",
+                                  (now() - STATS_DAYS * DAY_S,)):
+                day = time.strftime("%Y-%m-%d", time.gmtime(row[0]))
+                if day in by_day:
+                    by_day[day]["registered"] = by_day[day].get("registered", 0) + 1
+        return {"totals": totals, "kinds": kinds, "days": days, "by_day": by_day}
+
     def copied_by(self, radio, after):
         """what a radio that is on the globe has copied in FT8 lately, for
         anyone: each message's number, when it was heard, the dial, the
@@ -1883,7 +2007,8 @@ def nav_bar(account=None, guard=None):
                       "<input type=\"hidden\" name=\"guard\" value=\"%s\">"
                       "<button>Sign out</button></form>" % guard)
     return ("<nav class=\"bar\"><a class=\"site\" href=\"/\">my.sbitx.net</a>"
-            "<a href=\"/\">Home</a><a href=\"/map\">Map</a><a href=\"/upgrade\">Upgrade</a>"
+            "<a href=\"/\">Home</a><a href=\"/map\">Map</a><a href=\"/stations\">Stations</a>"
+            "<a href=\"/upgrade\">Upgrade</a>"
             "<a href=\"/help\">Help</a>"
             "<span class=\"who\">%s</span></nav>" % right)
 
@@ -2448,6 +2573,103 @@ class Handler(BaseHTTPRequestHandler):
                                time.strftime("%Y-%m-%d %H:%M", time.gmtime(kept["taken"])),
                                table)))
 
+    def stations_page(self):
+        """the radios as a list, for those who cannot use the globe"""
+        found = self.service.stations()
+        online = [radio for radio in found if radio["online"]]
+        rest = [radio for radio in found if not radio["online"]]
+        rows = ""
+        for radio in online:
+            callsign = html.escape(radio["callsign"])
+            listen = "Not streaming"
+            if radio["streaming"]:
+                listen = ("<button type=\"button\" class=\"listen\" data-radio=\"%d\" "
+                          "data-callsign=\"%s\">Listen to %s</button>"
+                          % (radio["radio"], callsign, callsign))
+            rows += ("<tr><th scope=\"row\">%s</th><td>%s</td><td>%s</td></tr>"
+                     % (callsign, radio["grid"] or "not set", listen))
+        on_table = "<p>None just now.</p>"
+        if rows:
+            on_table = ("<table><tr><th scope=\"col\">Callsign</th>"
+                        "<th scope=\"col\">Grid square</th><th scope=\"col\">Listen</th>"
+                        "</tr>%s</table>" % rows)
+        rows = ""
+        for radio in rest:
+            last = "never"
+            if radio["last_seen"]:
+                last = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(radio["last_seen"]))
+            rows += ("<tr><th scope=\"row\">%s</th><td>%s</td><td>%s</td></tr>"
+                     % (html.escape(radio["callsign"]), radio["grid"] or "not set", last))
+        off_table = "<p>None.</p>"
+        if rows:
+            off_table = ("<table><tr><th scope=\"col\">Callsign</th>"
+                         "<th scope=\"col\">Grid square</th>"
+                         "<th scope=\"col\">Last on line</th></tr>%s</table>" % rows)
+        body = ("<h1>Stations</h1>"
+                "<p>%d of %d radios are on line. <a href=\"/stations\">Look again</a></p>"
+                "<p>The radios of the <a href=\"/map\">map</a>, as a list. Listen plays a "
+                "radio here; press it again to stop.</p>"
+                "<p id=\"now\" class=\"said\" aria-live=\"polite\" hidden></p>"
+                "<h2>On line (%d)</h2>%s<h2>Not on line (%d)</h2>%s"
+                "<script src=\"%s\"></script><script src=\"%s\"></script>"
+                % (len(online), len(found), len(online), on_table, len(rest), off_table,
+                   static_address("sound.js"), static_address("stations.js")))
+        self.send(200, self.page("Stations", body),
+                  policy=PAGE_POLICY + "; connect-src 'self' " + self.service.settings.sockets)
+
+    def installed(self, query):
+        """a radio's installer or updater saying it has done its work"""
+        kind = query.get("radio", [""])[0].lower()
+        by = query.get("by", ["install"])[0]
+        if not RADIO_KIND_FORM.match(kind):
+            kind = "unknown"
+        what = "updated" if by == "update" else "installed"
+        self.service.tally("%s %s" % (what, kind), self.address())
+        self.send(200, "ok\n", "text/plain; charset=utf-8")
+
+    def stats_page(self, account):
+        """the counts, for the admins alone"""
+        if account is None or account["callsign"] not in self.service.settings.admins:
+            self.send(404, self.page("Not found", "<p>There is no such page.</p>"))
+            return
+        found = self.service.stats()
+        totals = found["totals"]
+        lines = (
+            ("Accounts registered", totals["accounts"]),
+            ("Registrations not yet verified", totals["pending"]),
+            ("Accounts with a radio added", totals["with a radio"]),
+            ("Radios added", totals["radios"]),
+            ("Radios ever on line", totals["ever on line"]),
+            ("Radios on line in the last %d days" % LATELY_DAYS, totals["on line lately"]),
+            ("Radios on line now", totals["on line"]),
+            ("Installer fetched by a radio (address-days)", totals["install"]),
+            ("Listeners (address-days)", totals["listen"]),
+        )
+        rows = "".join("<tr><th scope=\"row\">%s</th><td>%d</td></tr>" % (html.escape(name),
+                                                                        count)
+                       for name, count in lines)
+        rows += "".join("<tr><th scope=\"row\">%s</th><td>%d</td></tr>"
+                        % (html.escape(what.replace("installed ", "Upgraded, ")
+                                       .replace("updated ", "Updated, ")), count)
+                        for what, count in found["kinds"].items())
+        columns = ["registered", "install", "listen"] + sorted(found["kinds"])
+        heads = {"registered": "Registered", "install": "Installer fetched",
+                 "listen": "Listeners"}
+        day_rows = ""
+        for day in found["days"]:
+            counts = found["by_day"][day]
+            day_rows += "<tr><th scope=\"row\">%s</th>%s</tr>" % (day, "".join(
+                "<td>%d</td>" % counts.get(column, 0) for column in columns))
+        day_table = ("<table><tr><th scope=\"col\">Day (UTC)</th>%s</tr>%s</table>"
+                     % ("".join("<th scope=\"col\">%s</th>" % html.escape(
+                         heads.get(column, column.replace("installed ", "Upgraded, ")
+                                   .replace("updated ", "Updated, ")))
+                         for column in columns), day_rows))
+        self.send(200, self.page("Counts", "<h1>Counts</h1>"
+                                 "<p>Each address is counted once a day for each thing it "
+                                 "did.</p><table>%s</table><h2>The last %d days</h2>%s"
+                                 % (rows, STATS_DAYS, day_table)))
+
     # requests
 
     def do_HEAD(self):
@@ -2526,7 +2748,15 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/help":
             self.help_page()
         elif url.path == "/install.sh":
+            if INSTALL_FETCHERS.match(self.headers.get("User-Agent", "")):
+                self.service.tally("install", self.address())
             self.send(200, INSTALL_POINTER, "text/plain; charset=utf-8", keep="no-cache")
+        elif url.path == "/installed":
+            self.installed(query)
+        elif url.path == "/stations":
+            self.stations_page()
+        elif url.path == "/stats":
+            self.stats_page(account)
         elif url.path == "/upgrade":
             self.upgrade_page()
         elif url.path in ("/radios/settings", "/radios/log"):

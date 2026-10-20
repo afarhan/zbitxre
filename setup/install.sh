@@ -54,7 +54,9 @@
 #     callsign and the grid when the old settings had none, turns REMOTE on,
 #     makes the radio's key, and prints the address that adds the radio
 #     with the key already typed in.
-#  9. Asks to restart the radio.
+#  9. Tells my.sbitx.net that a radio of its kind, zbitx or sbitxv3, was
+#     upgraded, for the author's count; nothing else is sent. Then asks to
+#     restart the radio.
 #
 # ~/sbitx is not changed, and setup/undo_install.sh puts the old program
 # back. Run again, this brings zbitxre up to date and changes nothing that
@@ -304,6 +306,11 @@ if is_yes "$(ask "Put this radio on my.sbitx.net, to operate it from a browser o
 	echo "        $SITE/radios/add#$shown"
 	echo
 fi
+
+# my.sbitx.net counts the radios upgraded, of each kind, and nothing more
+# is sent: the author's asking of 20 October 2026. accounts.py says what
+# is counted
+curl -fsS -m 10 -o /dev/null "$SITE/installed?radio=$radio" 2> /dev/null || true
 
 # 9. a restart
 say "zbitxre is installed. setup/undo_install.sh puts the old program back."

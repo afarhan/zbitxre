@@ -717,6 +717,75 @@ class AccountsTest(unittest.TestCase):
         for hidden in ("home", "fj", "abcd", home["cookie"]):
             self.assertNotIn(hidden, text)
 
+    def test_the_stations_list_has_those_on_line_first_and_then_the_rest(self):
+        browser = self.make_account()
+        self.add_radio(browser, "home")
+        self.add_radio(browser, "attic", "bbbb-cccc-dddd")
+        other = self.make_account("VU3AAA", "aaa@example.org", Browser(self.port))
+        self.add_radio(other, "shack", "cccc-dddd-eeee")
+        with self.service.store.open() as db:
+            db.execute("update radios set online = 1, grid = 'MK97fj' where suffix = 'home'")
+            db.execute("update radios set online = 0, grid = 'JN58td', last_seen = 86400 "
+                       "where suffix = 'attic'")
+            db.execute("update radios set online = 1, grid = '', streaming = 0 "
+                       "where suffix = 'shack'")
+        status, text = Browser(self.port).get("/stations")
+        self.assertEqual(status, 200)
+        self.assertIn("2 of 3 radios are on line", text)
+        self.assertIn("<h2>On line (2)</h2>", text)
+        self.assertIn("<h2>Not on line (1)</h2>", text)
+        home = self.service.radio_called("vu2ese-home")
+        self.assertIn('data-radio="%d" data-callsign="VU2ESE">Listen to VU2ESE</button>'
+                      % home["id"], text)
+        self.assertRegex(text, r"VU3AAA</th><td>not set</td><td>Not streaming")
+        self.assertIn("JN58</td><td>1970-01-02 00:00 UTC", text)
+        self.assertLess(text.index("VU3AAA"), text.index("JN58"))
+        self.assertIn('aria-live="polite"', text)
+        self.assertIn("/static/stations.js?v=", text)
+        for hidden in ("home", "attic", "fj", "td", "abcd", home["cookie"]):
+            self.assertNotIn(">" + hidden, text)
+            self.assertNotIn(hidden + "<", text)
+        _, map_page = Browser(self.port).get("/map")
+        self.assertIn('href="/stations"', map_page)
+
+    def test_the_installer_fetched_by_a_radio_is_counted_once_a_day(self):
+        for agent in ("curl/7.64.0", "curl/8.5.0", "Mozilla/5.0 (GoogleOther)"):
+            status, text = self.browser.ask("GET", "/install.sh",
+                                            headers={"User-Agent": agent})
+            self.assertEqual(status, 200)
+            self.assertIn("zbitxre_install.sh", text)
+        self.browser.ask("GET", "/install.sh", headers={"User-Agent": "Wget/1.21",
+                                                        "X-Real-IP": "192.0.2.7"})
+        self.browser.get("/installed?radio=zbitx")
+        self.browser.get("/installed?radio=sbitxv3&by=update")
+        self.browser.get("/installed?radio=<b>&by=update")
+        self.assertEqual(self.service.stats()["totals"]["install"], 2)
+        self.assertEqual(self.service.stats()["kinds"], {
+            "installed zbitx": 1, "updated sbitxv3": 1, "updated unknown": 1})
+        with self.service.store.open() as db:
+            marks = [row[0] for row in db.execute("select who from tally")]
+        self.assertNotIn("127.0.0.1", " ".join(marks))
+        self.assertNotIn("192.0.2.7", " ".join(marks))
+
+    def test_the_counts_are_for_the_admins_alone(self):
+        self.service.settings.admins = {"VU2ESE"}
+        self.assertEqual(Browser(self.port).get("/stats")[0], 404)
+        other = self.make_account("VU3AAA", "aaa@example.org", Browser(self.port))
+        self.assertEqual(other.get("/stats")[0], 404)
+        browser = self.make_account()
+        self.add_radio(browser, "home")
+        self.service.tally("listen", "192.0.2.1")
+        self.service.tally("listen", "192.0.2.1")
+        self.service.tally("listen", "192.0.2.2")
+        status, text = browser.get("/stats")
+        self.assertEqual(status, 200)
+        self.assertIn("Accounts registered</th><td>2</td>", text)
+        self.assertIn("Accounts with a radio added</th><td>1</td>", text)
+        self.assertIn("Radios ever on line</th><td>0</td>", text)
+        self.assertIn("Listeners (address-days)</th><td>2</td>", text)
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        self.assertIn("<th scope=\"row\">%s</th><td>2</td><td>0</td><td>2</td>" % today, text)
+
     def test_what_a_radio_on_the_globe_copies_in_ft8_is_anyones_to_read(self):
         browser = self.make_account()
         self.add_radio(browser, "home")
