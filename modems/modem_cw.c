@@ -117,8 +117,8 @@
 // So the keyer does not wait for the transmitter. An element begins when
 // the paddle closes, with its sidetone, and the modem says, through
 // wants_tx(), that it has something to send. The radio then goes to
-// transmit, which takes the waits of tr_switch() in core_sdr.c, 33 ms as
-// zbitxv2 had them. What is transmitted is what the keyer keyed, held back
+// transmit, which takes the waits of tr_switch() in core_sdr.c, 2 ms on a
+// board with PIN diodes and 33 ms as zbitxv2 had them. What is transmitted is what the keyer keyed, held back
 // by just as much as lets the transmitter come on first; so the first
 // element goes out whole, and every element and space after it is as long
 // as the keyer made it.

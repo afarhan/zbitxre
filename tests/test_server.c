@@ -96,8 +96,12 @@
 
 #define CW_BLOCKS 64
 #define BLOCKS_TO_TRANSMIT 1
-// tr_switch()'s 33 ms less the 14 ms the modem has in hand
+// tr_switch()'s 33 ms less the 14 ms the modem has in hand, with the waits
+// of a board with relays, which the check sets so that there is a hold to
+// see; with the 1 and 1 ms of PIN diodes there is none
 #define RF_DELAY (19 * 96)
+#define RELAY_WAITS "tr_waits=23,10,15"
+#define PIN_DIODE_WAITS "tr_waits=1,1,15"
 #define FILTER_DELAY 512
 #define BURST_FRACTION 10
 #define BURST_SLACK 300
@@ -722,10 +726,12 @@ static void check_cw_transmitting(int one) {
 	int wanted_at_block = CW_BLOCKS;
 	int tap_sample = TAP_AT_US * SAMPLES_PER_MS / 1000;
 	int lag = KEYER_LAG_US * SAMPLES_PER_MS / 1000;
+	char answer[ANSWER_MAX];
 	int first;
 	int length;
 	int b;
 
+	sdr_request(RELAY_WAITS, answer);
 	say(one, "BAND 20M\n");
 	say(one, "MODE CW\n");
 	say(one, "CW_INPUT IAMBIC\n");
@@ -760,6 +766,7 @@ static void check_cw_transmitting(int one) {
 		&& abs(length - DOT_AT_20_WPM) < BURST_SLACK,
 		"the transmitter is sent a whole dot, after the sidetone by what the changeover needs");
 	expect(!cw->wants_tx(), "and the modem stops asking after its hang time");
+	sdr_request(PIN_DIODE_WAITS, answer);
 	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
 	say(one, "MODE USB\n");
 }

@@ -75,13 +75,12 @@
 //
 // GOING BETWEEN RECEIVE AND TRANSMIT
 //
-// tr_switch() is zbitxv2's tr_switch_v4(), in its order and with its waits.
-// To transmit: the receiver's power is taken off and the filters released;
-// 23 ms are waited, for the receiver's circuits to drain; the band's filter
-// is selected and 10 ms waited for it to settle; then the transmitter's power
-// is put on. To receive: the transmitter's power is taken off first, the
-// filters released, and 16 ms waited before the receiver's power is put
-// on. The author's reason for the order: the capacitors in the transmit
+// tr_switch() is zbitxv2's tr_switch_v4(), in its order. To transmit: the
+// receiver's power is taken off and the filters released; a wait, for the
+// receiver's circuits to drain; the band's filter is selected and a wait for
+// it to settle; then the transmitter's power is put on. To receive: the
+// transmitter's power is taken off first, the filters released, and a wait
+// before the receiver's power is put on. zbitxv2 waited 23, 10 and 16 ms. The author's reason for the order: the capacitors in the transmit
 // circuitry must discharge fully before the receiver is powered, or the
 // circuits, which work in both directions, oscillate.
 //
@@ -93,8 +92,14 @@
 // once. So one program has to serve boards that differ in just these
 // numbers. The author says of the waits themselves that he chose them out
 // of thin air, and that they are to be shortened as far as each board
-// allows, since CW's first element waits for the first two. A radio whose
-// file does not give them works with zbitxv2's, which are safe for relays.
+// allows, since CW's first element waits for the first two.
+//
+// A radio whose file does not give them works with 1, 1 and 15 ms, the
+// author's ruling of 20 October 2026. Every board zbitxre supports switches
+// by PIN diodes, and an upgraded radio's file, copied from the old
+// program's, never gives them: with zbitxv2's 23 and 10 ms the author
+// measured CW's RF 50 ms after the paddle, and with these 30 ms, 5 ms after
+// the sidetone. A board with relays has to give its own in its file.
 //
 // The request "tr_waits=23,10,15", in that order, sets them while the
 // radio runs, for finding on an oscilloscope what a board allows; what is
@@ -295,9 +300,9 @@ static atomic_int reset_wanted = 0;
 #define DB_OF_AMPLITUDE 20.0
 #define TX_MUTE_BLOCKS 20
 
-//the waits of tr_switch(), in milliseconds, as zbitxv2 had them
-#define TR_RX_DRAIN_MS 23
-#define TR_FILTER_SETTLE_MS 10
+//the waits of tr_switch(), in milliseconds, for PIN diodes
+#define TR_RX_DRAIN_MS 1
+#define TR_FILTER_SETTLE_MS 1
 #define TR_TX_OFF_MS 1
 #define TR_TX_DRAIN_MS 15
 #define TR_WAIT_MAX_MS 200
