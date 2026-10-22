@@ -19,9 +19,10 @@
 //           is shown in their top left corner. The author moved the
 //           status line from under the waterfall to above it, where in
 //           FT8 it is above the list of messages
-//           on the right, 144 wide: the list, three rows of 48
+//           on the right, 144 wide: the list, four rows of 48, the
+//           last beside the bottom row
 //   y 272   six buttons under the waterfall, the mode's own: its macros in
-//           CW; and MENU at the right end
+//           CW
 //
 // The top row is the frequency and the radio's core controls. Whatever
 // else the radio has, that belongs to the radio as a whole or to the mode
@@ -58,8 +59,11 @@
 // ends the contact. TERM, which is not written yet, is not shown in FT8,
 // since only four buttons fit in the column. TX_PITCH, where in the
 // passband we send, is in the list on the right, and so is SIDETONE, how
-// loud our own transmission is; MENU is not shown in FT8, and the list has
-// a fourth row in its place, at the author's asking.
+// loud our own transmission is.
+//
+// There was a dim MENU at the right end of the bottom row, for nothing
+// written; the author had it taken away, and the list has a fourth row in
+// its place in every mode, as FT8's had.
 //
 // The time in UTC is in the top right corner of the frequency's box, small
 // as the box's title is, in every mode, as the radio sends it each second:
@@ -80,8 +84,8 @@
 // waterfall's painting is stopped while the list is there.
 //
 // SET opens the settings and LOG the logbook, which are in screens.cpp.
-// TERM and MENU are for the keyboard and whatever else; neither is written
-// yet, so those buttons are shown dim and do nothing.
+// TERM is for whatever else; it is not written yet, so its button is shown
+// dim and does nothing.
 //
 // The frequency is shown with the VFO in use before it, A: or B:, and a
 // click of the knob while the frequency is selected goes to the other VFO.
@@ -180,7 +184,6 @@
 #define TILE_WIDTH 48
 #define FREQ_LEFT 48
 #define FREQ_WIDTH 144
-#define MENU_LEFT 432
 #define COLUMN_BUTTONS 3
 #define FT8_CQ_ROW 2
 #define FT8_HALT_ROW 3
@@ -195,7 +198,7 @@
 #define LIST_LEFT 336
 #define LIST_TOP 96
 #define LIST_WIDTH 144
-#define LIST_ROWS 3
+#define LIST_ROWS 4
 //the passbands, as the radio's modems have them
 #define VOICE_LOW_HZ 300
 #define FT8_LOW_HZ 50
@@ -203,9 +206,6 @@
 #define SECONDS_A_MINUTE 60
 #define MINUTES_AN_HOUR 60
 #define SECONDS_AN_HOUR 3600
-//in FT8 MENU is not shown, and the list has its place too
-#define LIST_ROWS_FT8 4
-#define LIST_ROWS_MAX 4
 
 #define TITLE_LEFT 3
 #define TITLE_TOP 1
@@ -380,7 +380,7 @@ static struct widget band_widget[BANDS];
 static struct widget footer_widget[FOOTER_TILES];
 static struct widget footer_button[FOOTER_TILES];
 static const struct footer *footer_in_use;
-static struct widget list_widget[LIST_ROWS_MAX];
+static struct widget list_widget[LIST_ROWS];
 static lv_obj_t *span_label;
 static lv_obj_t *spectrum_area;
 static lv_obj_t *term_button;
@@ -389,7 +389,6 @@ static lv_obj_t *halt_button;
 //in CW, KBD and ESC in the same places, as the window has them
 static lv_obj_t *kbd_button;
 static lv_obj_t *esc_button;
-static lv_obj_t *menu_button;
 static bool is_showing_messages;
 
 
@@ -399,7 +398,6 @@ static struct panel_control *listed[CONTROLS_MAX];
 static int listed_count;
 static int list_top;
 static int list_mark;
-static int list_rows = LIST_ROWS;
 static char laid_out_group[CONTROL_TEXT_MAX];
 
 static enum selection selected = ON_FREQUENCY;
@@ -646,11 +644,7 @@ static void lay_out(){
 		//KBD's keyboard is CW's alone
 		if (strcmp(group, MACRO_GROUP) != 0)
 			screens_cw_keys_hide();
-		set_hidden(menu_button, is_showing_messages);
 	}
-	list_rows = LIST_ROWS;
-	if (is_showing_messages)
-		list_rows = LIST_ROWS_FT8;
 	main_paint_when_free();
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
@@ -685,8 +679,8 @@ static void lay_out(){
 		list_mark = listed_count - 1;
 	if (list_mark < 0)
 		list_mark = 0;
-	if (list_top > listed_count - list_rows)
-		list_top = listed_count - list_rows;
+	if (list_top > listed_count - LIST_ROWS)
+		list_top = listed_count - LIST_ROWS;
 	if (list_top < 0)
 		list_top = 0;
 }
@@ -695,8 +689,8 @@ static void lay_out(){
 static void keep_the_mark_in_view(){
 	if (list_mark < list_top)
 		list_top = list_mark;
-	if (list_mark >= list_top + list_rows)
-		list_top = list_mark - list_rows + 1;
+	if (list_mark >= list_top + LIST_ROWS)
+		list_top = list_mark - LIST_ROWS + 1;
 }
 
 /* showing it */
@@ -842,9 +836,9 @@ static void show_list(){
 	bool is_marked;
 	int i;
 
-	for (i = 0; i < LIST_ROWS_MAX; i++){
+	for (i = 0; i < LIST_ROWS; i++){
 		list_widget[i].control = NULL;
-		if (i < list_rows && list_top + i < listed_count)
+		if (list_top + i < listed_count)
 			list_widget[i].control = listed[list_top + i];
 		if (list_widget[i].control == NULL){
 			show_widget(&list_widget[i], "", false, false);
@@ -1231,11 +1225,11 @@ static void on_touched(lv_event_t *e){
 	if (w == &freq_widget)
 		select_the_frequency();
 	else if (w->control != NULL){
-		for (i = 0; i < LIST_ROWS_MAX; i++){
+		for (i = 0; i < LIST_ROWS; i++){
 			if (w == &list_widget[i])
 				break;
 		}
-		if (i < LIST_ROWS_MAX)
+		if (i < LIST_ROWS)
 			select_the_list(list_top + i);
 		else
 			select_a_control(w->control);
@@ -1399,7 +1393,6 @@ static void screen_create(){
 			&lv_font_montserrat_14, COLOUR_VALUE);
 		lv_obj_align(macro_widget[i].value, LV_ALIGN_CENTER, 0, 0);
 	}
-	menu_button = dim_button_create(MENU_LEFT, FOOTER_TOP, "MENU");
 
 	tile_create(&freq_widget, FREQ_LEFT, 0, FREQ_WIDTH, &lv_font_montserrat_20);
 	for (i = 0; i < PLACES; i++){
@@ -1431,7 +1424,7 @@ static void screen_create(){
 		lv_obj_add_flag(footer_button[i].box, LV_OBJ_FLAG_HIDDEN);
 	}
 
-	for (i = 0; i < LIST_ROWS_MAX; i++)
+	for (i = 0; i < LIST_ROWS; i++)
 		row_create(&list_widget[i], LIST_LEFT, LIST_TOP + i * ROW_HEIGHT, LIST_WIDTH);
 
 	//nothing of LVGL's is drawn over the graph and the waterfall but the
