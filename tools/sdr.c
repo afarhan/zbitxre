@@ -23,9 +23,9 @@
 // TRANSMITTING
 //
 // The radio transmits while its control TX is ON, which a client or the
-// terminal sets, "TX ON", or the PTT: in USB, LSB and 2TONE, the modes
-// that take a microphone's switch, the radio transmits while the PTT is
-// held, as zbitxv2 did. In CW the same contact is a paddle and is the
+// terminal sets, "TX ON", or the PTT: in USB, LSB, AM, 2TONE and RADE,
+// the modes that take a microphone's switch, the radio transmits while the
+// PTT is held, as zbitxv2 did. In CW the same contact is a paddle and is the
 // keyer's. A change of the PTT is taken when it has held for 30 ms, so
 // that its contacts' bounce does not put the radio in and out of transmit.
 //
@@ -1734,8 +1734,8 @@ static void follow_voip(long now) {
 static int is_ptt_mode(void) {
 	const char *mode = control_get("MODE");
 
-	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "2TONE")
-		|| !strcmp(mode, "RADE1") || !strcmp(mode, "RADE2");
+	return !strcmp(mode, "USB") || !strcmp(mode, "LSB") || !strcmp(mode, "AM")
+		|| !strcmp(mode, "2TONE") || !strcmp(mode, "RADE1") || !strcmp(mode, "RADE2");
 }
 
 // the PTT, or a modem with something to send, puts the radio in transmit
