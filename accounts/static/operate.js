@@ -102,7 +102,8 @@
 // does not know of SPLIT or RIT yet.
 //
 // A finger drawn along the graph or the waterfall tunes, a step for every
-// few pixels, and so do a mouse's wheel and the tuning wheel.
+// few pixels, and so does the tuning wheel; a mouse's wheel tunes over
+// anything but the lists, a step a notch.
 //
 // A tap on the graph goes to the next span, as in the window. In FT8 a tap
 // there puts the pitch we send at where it fell.
@@ -1191,13 +1192,31 @@
       set("SPAN", spans[(at + 1) % spans.length]);
     }
   });
-  scope.addEventListener("wheel", function (e) {
+  // a mouse's wheel tunes wherever it is over the page, as the knob does,
+  // but over what scrolls, the list of controls and FT8's messages, and
+  // over whatever is laid on top of the page, which is not in app. Only the graph and the frequency
+  // tuned, and the author found the wheel did nothing over the rest.
+  // A notch is a step. A notch comes as one event of some 50 to 120
+  // pixels, or 3 lines, by the browser; a touchpad's, or a smooth wheel's,
+  // as many small ones, which are added up to a notch's worth
+  var WHEEL_NOTCH_PIXELS = 50, WHEEL_LINE_PIXELS = 33, WHEEL_PAGE_PIXELS = 400;
+  var wheelPixels = 0;
+  document.addEventListener("wheel", function (e) {
+    var over = e.target.closest ? e.target : document.body;
+    if (!over.closest("#app") || over.closest("#list, #messages")) { return; }
     e.preventDefault();
-    tune(e.deltaY < 0 ? 1 : -1);
-  }, { passive: false });
-  frequency.addEventListener("wheel", function (e) {
-    e.preventDefault();
-    tune(e.deltaY < 0 ? 1 : -1);
+    var pixels = -e.deltaY;
+    if (e.deltaMode === 1) { pixels *= WHEEL_LINE_PIXELS; }
+    if (e.deltaMode === 2) { pixels *= WHEEL_PAGE_PIXELS; }
+    if (Math.abs(pixels) >= WHEEL_NOTCH_PIXELS) {
+      wheelPixels = 0;
+      tune(Math.sign(pixels) * Math.max(1, Math.round(Math.abs(pixels) / 100)));
+      return;
+    }
+    wheelPixels += pixels;
+    var steps = Math.trunc(wheelPixels / WHEEL_NOTCH_PIXELS);
+    wheelPixels -= steps * WHEEL_NOTCH_PIXELS;
+    tune(steps);
   }, { passive: false });
   window.addEventListener("resize", function () { drawScope(); drawMeter(); drawWheel(); });
 
