@@ -627,6 +627,13 @@ static struct rx *add_rx(int frequency, short mode, int bpf_low, int bpf_high){
 	return r;
 }
 
+//the gain is put on the whole of each sample, the real part with the
+//imaginary. SSB hears only the imaginary part, but AM hears the size of
+//the sample, cabs(), and until 22 October 2026 only the imaginary part
+//was raised: AM then heard the IF's carrier rectified and not its
+//envelope, and a station a little off the dial buzzed at twice the
+//difference, worst on the sbitx, whose carrier is at a quarter of the
+//sample rate
 static double agc2(struct rx *r){
 	int i;
 	double signal_strength, agc_gain_should_be;
@@ -634,7 +641,7 @@ static double agc2(struct rx *r){
 	//do nothing if agc is off
 	if (r->agc_speed == -1){
 		for (i=0; i < MAX_BINS/2; i++)
-			__imag__ (r->fft_time[i+(MAX_BINS/2)]) *=10000000;
+			r->fft_time[i+(MAX_BINS/2)] *= 10000000;
 		return 10000000;
 	}
 
@@ -667,13 +674,13 @@ static double agc2(struct rx *r){
 
 	if (agc_ramp != 0){
 		for (i = 0; i < MAX_BINS/2; i++){
-			__imag__ (r->fft_time[i+(MAX_BINS/2)]) *= r->agc_gain;
+			r->fft_time[i+(MAX_BINS/2)] *= r->agc_gain;
 		}
 		r->agc_gain += agc_ramp;
 	}
 	else
 		for (i = 0; i < MAX_BINS/2; i++)
-			__imag__ (r->fft_time[i+(MAX_BINS/2)]) *= r->agc_gain;
+			r->fft_time[i+(MAX_BINS/2)] *= r->agc_gain;
 
 	r->agc_loop--;
 

@@ -25,6 +25,14 @@
 // How strong the tone is, is measured the way a tone decoder does it: the
 // samples are multiplied by a sine and a cosine of 400 Hz and summed.
 //
+// A station a little off the dial must be heard as cleanly as one on it:
+// the station is put on the centre bin and 200 and 800 Hz either side of
+// it, and what goes to the speaker must be the tone and next to nothing
+// else. Until 22 October 2026 the AGC raised only the imaginary part of
+// the samples, and AM, which hears their size, heard the IF's carrier
+// rectified: a station off the dial buzzed at twice the difference, and
+// the speaker had as much besides the tone as the tone itself.
+//
 // Then the radio transmits in AM, the microphone given a 1 kHz tone that
 // modulates it to half. What goes to the transmitter must have its carrier
 // on the centre bin, where the radio is tuned, and a sideband 1 kHz either
@@ -132,6 +140,56 @@ static double tone_heard(double carrier_hz) {
 	return 2.0 * sqrt(with_sine * with_sine + with_cosine * with_cosine) / count;
 }
 
+//how much goes to the speaker besides the tone, as a share of the tone,
+//from a station whose carrier is carrier_hz
+#define CLEAN_SHARE 0.05
+
+static double besides_the_tone(double carrier_hz) {
+	static int32_t to_speaker[BLOCK];
+	double with_sine = 0;
+	double with_cosine = 0;
+	double sum = 0;
+	double squares = 0;
+	double tone;
+	double mean;
+	double t;
+	long count = 0;
+	int b;
+	int i;
+
+	for (b = 0; b < WARM_UP_BLOCKS; b++)
+		one_block(carrier_hz, 0, to_speaker);
+	for (b = 0; b < MEASURED_BLOCKS; b++) {
+		one_block(carrier_hz, 0, to_speaker);
+		for (i = 0; i < BLOCK; i++) {
+			t = count / SAMPLE_RATE;
+			with_sine += to_speaker[i] * sin(2 * M_PI * TONE_HZ * t);
+			with_cosine += to_speaker[i] * cos(2 * M_PI * TONE_HZ * t);
+			sum += to_speaker[i];
+			squares += (double)to_speaker[i] * to_speaker[i];
+			count++;
+		}
+	}
+	tone = 2.0 * sqrt(with_sine * with_sine + with_cosine * with_cosine) / count;
+	mean = sum / count;
+	return sqrt(fmax(0, squares / count - mean * mean - tone * tone / 2))
+		/ (tone / sqrt(2));
+}
+
+static void check_off_the_dial(double carrier_hz) {
+	static const int off_hz[] = { -800, -200, 0, 200, 800 };
+	char what[100];
+	double share;
+	unsigned k;
+
+	for (k = 0; k < sizeof(off_hz) / sizeof(off_hz[0]); k++) {
+		share = besides_the_tone(carrier_hz + off_hz[k]);
+		snprintf(what, sizeof(what), "a station %+d Hz from the dial is heard"
+			" clean: %.1f%% besides the tone", off_hz[k], 100 * share);
+		expect(share < CLEAN_SHARE, what);
+	}
+}
+
 //how strong each of four frequencies is in what goes to the transmitter
 #define SENT_HZ 4
 
@@ -220,6 +278,7 @@ int main(void) {
 			"a station at 24 kHz is out of the passband");
 	}
 
+	check_off_the_dial(carrier_hz);
 	check_sending(carrier_hz);
 
 	if (checks_failed > 0) {
