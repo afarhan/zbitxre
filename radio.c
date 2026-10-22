@@ -35,8 +35,8 @@
 //           or FAST, as in zbitxv2, which starts with SLOW.
 //   TX      OFF or ON: whether the radio is transmitting. Setting it ON
 //           goes to transmit, if the mode in use can transmit: USB, LSB,
-//           CW, CWR and 2TONE can; AM cannot yet, and VOIP never does,
-//           and setting TX ON in either is refused. Changing the mode or the band goes back to
+//           CW, CWR, AM and 2TONE can; VOIP never does, and setting TX ON
+//           in it is refused. Changing the mode or the band goes back to
 //           receive first.
 //
 //   MYCALLSIGN, MYGRID   the station's callsign and its grid, as text, in a

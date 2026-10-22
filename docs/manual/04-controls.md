@@ -48,7 +48,7 @@ the rest are in the list on the right.
 | **IF** | 0–100, step 1 | 60 | Yes | The gain of the sound card's input, where the second IF comes in. |
 | **DRIVE** | 0–100, step 1 | 40 | Yes | The transmitter's drive. The radio scales it for the band in use. |
 | **AGC** | OFF / SLOW / MED / FAST | SLOW | Yes | How fast the receiver's gain follows the signal. |
-| **TX** | OFF / ON | OFF | No | Whether the radio is transmitting. It is not a row of the list: in the voice modes, RADE and 2TONE it is worked by the TX and RX buttons on the bottom row, and by the microphone's PTT. Modes that cannot transmit, AM for now and VOIP always, refuse it. The radio goes back to receive by itself after two minutes of continuous transmission. |
+| **TX** | OFF / ON | OFF | No | Whether the radio is transmitting. It is not a row of the list: in the voice modes, RADE and 2TONE it is worked by the TX and RX buttons on the bottom row, and by the microphone's PTT. VOIP, which never transmits, refuses it. The radio goes back to receive by itself after two minutes of continuous transmission. |
 
 Beside them on the top row are **STEP** and **VFO**, which belong to the
 group PANEL and are described under "Behind the scenes", and **OFFSET**,

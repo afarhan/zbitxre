@@ -42,7 +42,9 @@ meter shows the power and the SWR.
   DRIVE gives about the same power on every band.
 - **MIC** sets how hard your voice drives the transmitter. Raise it until
   the power meter peaks on your speech, and no further.
-- **AM** receives only for now; TX is refused in AM.
+- **AM** transmits a carrier with both sidebands, out to 3 kHz either side.
+  The carrier alone is a quarter of the power at the peaks of full
+  modulation, which is as far as MIC can take it.
 
 ## CW and CWR
 

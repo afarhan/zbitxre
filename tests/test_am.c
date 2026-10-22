@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Ashhar Farhan
 //
 // test_am.c — that the AM filter is around the carrier, wherever the board
-// puts it.
+// puts it, and that AM is sent there too.
 //
 // It needs no radio; it is built with tests/hw_stand_ins.c. The receiver is set up for the zbitx's first board, put
 // in AM with the AGC off, and given an AM station: a carrier with a 400 Hz
@@ -24,6 +24,14 @@
 //
 // How strong the tone is, is measured the way a tone decoder does it: the
 // samples are multiplied by a sine and a cosine of 400 Hz and summed.
+//
+// Then the radio transmits in AM, the microphone given a 1 kHz tone that
+// modulates it to half. What goes to the transmitter must have its carrier
+// on the centre bin, where the radio is tuned, and a sideband 1 kHz either
+// side of it, each a quarter of the carrier, as AM at half modulation has.
+// zbitxv2 sent its carrier at 24 kHz, wherever the radio worked; on the
+// zbitx, at bin 600, that is 4 kHz off the frequency, and there must be
+// nothing there.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +54,13 @@
 #define MEASURED_BLOCKS 45
 #define LEAST_REJECTION 100.0
 #define ANSWER_MAX 100
+#define MIC_TONE_HZ 1000.0
+// the microphone's samples are halved on the way in, and modems/modem_am.c
+// takes 200000000 as full modulation: this is half
+#define MIC_LEVEL 2.0e8
+#define SIDEBAND_SHARE 0.25
+#define SIDEBAND_SLACK 0.03
+#define LEAST_CARRIER 1000.0
 
 static int checks_failed;
 static double seconds;
@@ -65,10 +80,11 @@ static void ask(char *request) {
 	sdr_request(request, answer);
 }
 
-static void one_block(double carrier_hz, int32_t *to_speaker) {
+static int32_t to_transmitter[BLOCK];
+
+static void one_block(double carrier_hz, double mic_level, int32_t *to_speaker) {
 	static int32_t from_receiver[BLOCK];
 	static int32_t from_microphone[BLOCK];
-	static int32_t to_transmitter[BLOCK];
 	struct audio_block block;
 	double envelope;
 	int i;
@@ -77,6 +93,8 @@ static void one_block(double carrier_hz, int32_t *to_speaker) {
 		envelope = 1.0 + DEPTH * sin(2 * M_PI * TONE_HZ * seconds);
 		from_receiver[i] = (int32_t)(LEVEL * envelope
 			* sin(2 * M_PI * carrier_hz * seconds));
+		from_microphone[i] = (int32_t)(mic_level
+			* sin(2 * M_PI * MIC_TONE_HZ * seconds));
 		seconds += 1.0 / SAMPLE_RATE;
 	}
 	block.from_receiver = from_receiver;
@@ -97,13 +115,13 @@ static double tone_heard(double carrier_hz) {
 	int i;
 
 	for (b = 0; b < WARM_UP_BLOCKS; b++)
-		one_block(carrier_hz, to_speaker);
+		one_block(carrier_hz, 0, to_speaker);
 
 	with_sine = 0;
 	with_cosine = 0;
 	count = 0;
 	for (b = 0; b < MEASURED_BLOCKS; b++) {
-		one_block(carrier_hz, to_speaker);
+		one_block(carrier_hz, 0, to_speaker);
 		for (i = 0; i < BLOCK; i++) {
 			t = count / SAMPLE_RATE;
 			with_sine += to_speaker[i] * sin(2 * M_PI * TONE_HZ * t);
@@ -112,6 +130,60 @@ static double tone_heard(double carrier_hz) {
 		}
 	}
 	return 2.0 * sqrt(with_sine * with_sine + with_cosine * with_cosine) / count;
+}
+
+//how strong each of four frequencies is in what goes to the transmitter
+#define SENT_HZ 4
+
+static void sent(const double *hz, double *strength) {
+	static int32_t to_speaker[BLOCK];
+	double with_sine[SENT_HZ] = { 0 };
+	double with_cosine[SENT_HZ] = { 0 };
+	double t;
+	long count;
+	int b;
+	int i;
+	int k;
+
+	for (b = 0; b < WARM_UP_BLOCKS; b++)
+		one_block(0, MIC_LEVEL, to_speaker);
+	count = 0;
+	for (b = 0; b < MEASURED_BLOCKS; b++) {
+		one_block(0, MIC_LEVEL, to_speaker);
+		for (i = 0; i < BLOCK; i++) {
+			t = count / SAMPLE_RATE;
+			for (k = 0; k < SENT_HZ; k++) {
+				with_sine[k] += to_transmitter[i] * sin(2 * M_PI * hz[k] * t);
+				with_cosine[k] += to_transmitter[i] * cos(2 * M_PI * hz[k] * t);
+			}
+			count++;
+		}
+	}
+	for (k = 0; k < SENT_HZ; k++)
+		strength[k] = 2.0 * sqrt(with_sine[k] * with_sine[k]
+			+ with_cosine[k] * with_cosine[k]) / count;
+}
+
+static void check_sending(double carrier_hz) {
+	double hz[SENT_HZ] = { carrier_hz, carrier_hz - MIC_TONE_HZ,
+		carrier_hz + MIC_TONE_HZ, MIDDLE_HZ };
+	double strength[SENT_HZ];
+	char answer[ANSWER_MAX];
+
+	ask("tx_power=40");
+	sdr_request("tx=on", answer);
+	expect(answer[0] == 'o', "AM is let transmit");
+	sent(hz, strength);
+	ask("tx=off");
+	printf("          sent: carrier %.0f, lower %.0f, upper %.0f, at 24 kHz %.0f\n",
+		strength[0], strength[1], strength[2], strength[3]);
+	expect(strength[0] > LEAST_CARRIER, "the carrier is sent on the centre bin");
+	expect(fabs(strength[1] / strength[0] - SIDEBAND_SHARE) < SIDEBAND_SLACK
+			&& fabs(strength[2] / strength[0] - SIDEBAND_SHARE) < SIDEBAND_SLACK,
+		"with both sidebands, each a quarter of the carrier at half modulation");
+	if (carrier_hz != MIDDLE_HZ)
+		expect(strength[3] * LEAST_REJECTION < strength[0],
+			"and nothing at 24 kHz, where zbitxv2 sent its carrier");
 }
 
 int main(void) {
@@ -148,10 +220,12 @@ int main(void) {
 			"a station at 24 kHz is out of the passband");
 	}
 
+	check_sending(carrier_hz);
+
 	if (checks_failed > 0) {
 		printf("%d checks failed\n", checks_failed);
 		return EXIT_FAILURE;
 	}
-	printf("AM filter: all checks passed\n");
+	printf("AM: all checks passed\n");
 	return EXIT_SUCCESS;
 }

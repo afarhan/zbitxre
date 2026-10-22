@@ -486,12 +486,12 @@ static void check_transmitting(int one, int other) {
 	int filter_pin = board_filter_for(TX_TEST_HZ)->pin;
 
 	say(one, "BAND 20M\n");
-	say(one, "MODE AM\n");
+	say(one, "MODE VOIP\n");
 	hear(one, heard);
 	say(one, "TX ON\n");
 	hear(one, heard);
 	expect(has(heard, "ERROR TX") && gpio_read(board->transmitter_pin) == 0,
-		"TX ON in AM, which cannot transmit yet, is refused and keys nothing");
+		"TX ON in VOIP, which never transmits, is refused and keys nothing");
 
 	say(one, "MODE 2TONE\n");
 	say(one, "DRIVE 40\n");

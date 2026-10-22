@@ -61,7 +61,8 @@
 // receiving. The modem of the mode in use says what is to be sent: its
 // tx() is given the block of samples from the microphone and fills a block
 // with the audio to transmit, the microphone's for SSB, two tones for
-// 2TONE. tx_process() does the rest, as zbitxv2 did: the forward FFT, the
+// 2TONE, a steady level with the microphone's added for AM. tx_process()
+// does the rest, as zbitxv2 did: the forward FFT, the
 // transmit filter, the unwanted sideband cut off, the bins moved up to the
 // IF at center_bin, and back to samples for the sound card, at the level
 // the band and the drive call for. A mode whose modem has no tx() does not
@@ -1053,11 +1054,11 @@ static void tx_process(
 			__imag__ fft_out[i] = 0;
 		}
 
-	//now rotate to the tx_bin
-	//rememeber the AM is already a carrier modulated at 24 KHz
+	//now rotate to the tx_bin. AM's carrier is a steady level, at bin 0,
+	//and lands on center_bin with its two sidebands either side of it;
+	//zbitxv2 made it at 24 KHz and did not move it, which is not where
+	//a radio that works at bin 600 listens
 	int shift = center_bin;
-	if (r->mode == MODE_AM)
-		shift = 0;
 	for (i = 0; i < MAX_BINS; i++){
 		int b = i + shift;
 		if (b >= MAX_BINS)
@@ -1524,14 +1525,16 @@ void sdr_request(char *request, char *response){
 		// converts to a second IF of 26.999 - 27.025 = 26 KHz
 		// Effectively, if a signal moves up, so does the second IF
 
+		//AM is sent from the carrier, at nothing, out to 3 kHz either
+		//side of it, before it is moved up to center_bin
 		if (rx_wanted->mode == MODE_AM){
 			filter_tune(tx_list->filter,
-				(1.0 * 20000)/96000.0,
-				(1.0 * 30000)/96000.0 ,
+				(1.0 * -3000)/96000.0,
+				(1.0 * 3000)/96000.0 ,
 				5);
 			filter_tune(tx_filter,
-				(1.0 * 20000)/96000.0,
-				(1.0 * 30000)/96000.0 ,
+				(1.0 * -3000)/96000.0,
+				(1.0 * 3000)/96000.0 ,
 				5);
 		}
 		else if (rx_wanted->mode == MODE_LSB || rx_wanted->mode == MODE_CWR){
