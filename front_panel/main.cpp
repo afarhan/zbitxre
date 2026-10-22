@@ -11,7 +11,7 @@
 //
 //   y 0     STEP | FREQ 144 | VFO, OFFSET, DRIVE, AGC, IF, VOL
 //   y 48    a button for each band, 10M to 80M, and MODE
-//   y 96    a column of buttons on the left, 48 wide: LOG, SET, TERM
+//   y 96    a column of buttons on the left, 48 wide: LOG, SET
 //           beside it, 288 wide: a line of text, 16 high, the status
 //           line, for what the radio has to say, and in CW for what is
 //           read off the air; under it, from y 112, the graph, 64 rows,
@@ -56,14 +56,14 @@
 // missed; when it ends, the line goes back to what was last said. The
 // radio's FT8_DO is two buttons in the left column, under LOG and SET: CQ,
 // which starts calling CQ, and HALT, which stops whatever is being sent and
-// ends the contact. TERM, which is not written yet, is not shown in FT8,
-// since only four buttons fit in the column. TX_PITCH, where in the
+// ends the contact. TX_PITCH, where in the
 // passband we send, is in the list on the right, and so is SIDETONE, how
 // loud our own transmission is.
 //
 // There was a dim MENU at the right end of the bottom row, for nothing
 // written; the author had it taken away, and the list has a fourth row in
-// its place in every mode, as FT8's had.
+// its place in every mode, as FT8's had. A dim TERM under SET, for nothing
+// written either, went the same way on 22 October 2026.
 //
 // The time in UTC is in the top right corner of the frequency's box, small
 // as the box's title is, in every mode, as the radio sends it each second:
@@ -84,8 +84,6 @@
 // waterfall's painting is stopped while the list is there.
 //
 // SET opens the settings and LOG the logbook, which are in screens.cpp.
-// TERM is for whatever else; it is not written yet, so its button is shown
-// dim and does nothing.
 //
 // The frequency is shown with the VFO in use before it, A: or B:, and a
 // click of the knob while the frequency is selected goes to the other VFO.
@@ -184,7 +182,7 @@
 #define TILE_WIDTH 48
 #define FREQ_LEFT 48
 #define FREQ_WIDTH 144
-#define COLUMN_BUTTONS 3
+#define COLUMN_BUTTONS 2
 #define FT8_CQ_ROW 2
 #define FT8_HALT_ROW 3
 #define MACROS 6
@@ -223,7 +221,6 @@
 #define COLOUR_VOIP_ON 0x2050C0
 #define COLOUR_TITLE 0x00FFFF
 #define COLOUR_VALUE 0xFFFFFF
-#define COLOUR_DIM 0x506070
 #define COLOUR_WITH_FOCUS 0xFFC000
 #define COLOUR_WITHOUT 0x405060
 
@@ -318,7 +315,7 @@ static const char *const band_names[BANDS] = {
 };
 
 //the buttons down the left, and the macros' on the bottom row in CW
-static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM" };
+static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET" };
 #define MACRO_GROUP "CW"
 #define MESSAGES_GROUP "FT8"
 #define MACRO_CONTROL "MACRO"
@@ -383,7 +380,6 @@ static const struct footer *footer_in_use;
 static struct widget list_widget[LIST_ROWS];
 static lv_obj_t *span_label;
 static lv_obj_t *spectrum_area;
-static lv_obj_t *term_button;
 static lv_obj_t *cq_button;
 static lv_obj_t *halt_button;
 //in CW, KBD and ESC in the same places, as the window has them
@@ -636,7 +632,6 @@ static void lay_out(){
 	messages_set_shown(is_showing_messages);
 	if (spectrum_area != NULL){
 		set_hidden(spectrum_area, is_showing_messages);
-		set_hidden(term_button, is_showing_messages || !strcmp(group, MACRO_GROUP));
 		set_hidden(cq_button, !is_showing_messages);
 		set_hidden(halt_button, !is_showing_messages);
 		set_hidden(kbd_button, strcmp(group, MACRO_GROUP) != 0);
@@ -1283,16 +1278,6 @@ static void row_create(struct widget *w, int x, int y, int width){
 	lv_obj_align(w->value, LV_ALIGN_RIGHT_MID, -ROW_PAD, 0);
 }
 
-//a button for something that is not written yet
-static lv_obj_t *dim_button_create(int x, int y, const char *label){
-	lv_obj_t *box = box_create(x, y, TILE_WIDTH, ROW_HEIGHT);
-	lv_obj_t *text = text_create(box, &lv_font_montserrat_12, COLOUR_DIM);
-
-	lv_label_set_text(text, label);
-	lv_obj_align(text, LV_ALIGN_CENTER, 0, 0);
-	return box;
-}
-
 static void on_set_touched(lv_event_t *e){
 	(void)e;
 	screens_open_settings();
@@ -1361,17 +1346,13 @@ static void screen_create(){
 	lv_obj_set_style_pad_all(main_screen, 0, 0);
 	lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-	//what these are for is not written yet, so they are dim and do nothing
 	for (i = 0; i < COLUMN_BUTTONS; i++){
 		if (!strcmp(column_names[i], "SET"))
 			live_button_create(0, STATUS_TOP + i * ROW_HEIGHT, "SET", on_set_touched);
-		else if (!strcmp(column_names[i], "LOG"))
-			live_button_create(0, STATUS_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
 		else
-			term_button = dim_button_create(0, STATUS_TOP + i * ROW_HEIGHT,
-				column_names[i]);
+			live_button_create(0, STATUS_TOP + i * ROW_HEIGHT, "LOG", on_log_touched);
 	}
-	//in FT8, CQ where TERM is and HALT under it; shown by lay_out()
+	//in FT8, CQ under SET and HALT under it; shown by lay_out()
 	cq_button = live_button_create(0, STATUS_TOP + FT8_CQ_ROW * ROW_HEIGHT, "CQ",
 		on_cq_touched);
 	halt_button = live_button_create(0, STATUS_TOP + FT8_HALT_ROW * ROW_HEIGHT, "HALT",
