@@ -12,3 +12,4 @@
 void jtty_poll_bins(void (*tell)(int bin, int hz, const char *text));
 void jtty_resend_bins(void);
 int jtty_take_chosen_text(char *text, int room);
+int jtty_take_sent(char *text, int room);

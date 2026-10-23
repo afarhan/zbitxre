@@ -21,6 +21,16 @@
 // the pitch it was sent at. A message typed and then stopped with
 // JTTY_DO ESC must not be sent.
 //
+// Then typing live, as the window's KBD sends with PLAY on: the first part
+// of a line is given, JTTY_LIVE, "~" for a space, and sent; after a while
+// the rest is typed a character every 0.6 s, more slowly than JTTY sends,
+// so that the radio runs out of whole words and sends filler frames; and
+// the radio is left to end the message itself when the typing has stopped. What was sent is played
+// into the receiver: the line must be read whole in its bin, each word
+// whole, the fillers being spaces; the radio must have said, JTTY_SENT,
+// every character it took, so that the window's box empties; and it must
+// have gone back to receive by itself.
+//
 // Last, tests/jtty_wsjtx_sample.wav, the sample WSJT-X 3.3 comes with,
 // samples/JTTY/260807_134110.wav, is given to the library's receiver as it
 // is, at 12000 a second, and must read as WSJT-X reads it, which its user
@@ -70,6 +80,15 @@
 #define BIN_LOWEST_HZ 200
 #define BIN_WIDTH_HZ 125
 #define SAMPLE_CHUNK 1000
+#define LIVE_FIRST "CQ~CQ~DE~VU2ESE~"
+#define LIVE_REST "VU2ESE~PSE~K"
+#define LIVE_READ "CQ CQ DE VU2ESE VU2ESE PSE K | "
+#define LIVE_HZ "2500"
+#define LIVE_PAUSE_S 3
+// the rest is typed a character at a time, more slowly than it is sent, so
+// that the radio runs out of whole words and sends filler
+#define LIVE_TYPING_BLOCKS ((long)SAMPLE_RATE * 6 / 10 / BLOCK)
+#define LIVE_MOST_BLOCKS ((long)60 * SAMPLE_RATE / BLOCK)
 
 static int checks_failed;
 static struct timespec next_block;
@@ -273,8 +292,96 @@ static void test_sending_and_reading(void) {
 	expect(!modem->wants_tx(), "and JTTY_DO ESC stops it");
 	jtty_poll_bins(keep_bin);
 	snprintf(said, sizeof(said), "and its bin says so: \"%.*s\"", SHOWN_MOST, bin_text[bin]);
-	expect(strstr(bin_text[bin], "tnx fer qso | (stopped) | ") != NULL, said);
+	expect(strstr(bin_text[bin], " (stopped) | ") != NULL, said);
 	free(transmitted);
+}
+
+static void type_live(const char *text) {
+	char one[2] = { 0, 0 };
+
+	for (; *text != 0; text++) {
+		one[0] = *text;
+		control_set("JTTY_LIVE", one, ORIGIN_NONE, why, sizeof(why));
+	}
+}
+
+static void test_live(void) {
+	static int32_t silence[BLOCK];
+	static int32_t to_speaker[BLOCK];
+	static int32_t to_transmitter[BLOCK];
+	static int32_t from_receiver[BLOCK];
+	const struct modem *modem = modem_find("JTTY");
+	int32_t *sent = calloc(LIVE_MOST_BLOCKS * BLOCK, sizeof(int32_t));
+	char said_sent[SAID_ROOM] = "";
+	const char *rest = LIVE_REST;
+	char one[2] = { 0, 0 };
+	char taken[SAID_ROOM];
+	char said[SAID_ROOM];
+	char typed[SAID_ROOM];
+	long blocks = 0;
+	long pause_blocks = (long)LIVE_PAUSE_S * SAMPLE_RATE / BLOCK;
+	long b;
+	long i;
+	double peak = 0;
+	double scale = 0;
+	unsigned seed = NOISE_SEED;
+	int bin = (atoi(LIVE_HZ) - BIN_LOWEST_HZ) / BIN_WIDTH_HZ;
+	int is_wanted;
+
+	printf(" typed live, with a pause in the middle\n");
+	if (modem == NULL || sent == NULL)
+		return;
+	control_set("JTTY_RX", LIVE_HZ, ORIGIN_NONE, why, sizeof(why));
+	type_live(LIVE_FIRST);
+	expect(modem->wants_tx(), "the first character typed begins an over");
+	control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+	do {
+		if (blocks >= pause_blocks && *rest != 0
+				&& (blocks - pause_blocks) % LIVE_TYPING_BLOCKS == 0) {
+			one[0] = *rest++;
+			type_live(one);
+		}
+		one_block(silence, silence, to_speaker, sent + blocks * BLOCK, 1);
+		blocks++;
+		is_wanted = modem->wants_tx();
+		while (jtty_take_sent(taken, sizeof(taken)) > 0
+				&& strlen(said_sent) + strlen(taken) < sizeof(said_sent))
+			memcpy(said_sent + strlen(said_sent), taken, strlen(taken) + 1);
+	} while (is_wanted && blocks < LIVE_MOST_BLOCKS);
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	snprintf(said, sizeof(said), "it went back to receive by itself, after %.1f s",
+		(double)blocks * BLOCK / SAMPLE_RATE);
+	expect(!is_wanted, said);
+	snprintf(typed, sizeof(typed), "%s%s", LIVE_FIRST, LIVE_REST);
+	for (i = 0; typed[i] != 0; i++) {
+		if (typed[i] == '~')
+			typed[i] = ' ';
+	}
+	snprintf(said, sizeof(said), "and said it took every character: \"%s\"", said_sent);
+	expect(!strcmp(said_sent, typed), said);
+
+	for (i = 0; i < blocks * BLOCK; i++) {
+		if (fabs((double)sent[i]) > peak)
+			peak = fabs((double)sent[i]);
+	}
+	if (peak > 0)
+		scale = RECEIVED_PEAK / peak;
+	clock_gettime(CLOCK_MONOTONIC, &next_block);
+	for (b = 0; b < blocks + (long)QUIET_AFTER_S * SAMPLE_RATE / BLOCK; b++) {
+		for (i = 0; i < BLOCK; i++) {
+			from_receiver[i] = (int32_t)(NOISE_RMS * gaussian(&seed));
+			if (b < blocks)
+				from_receiver[i] += (int32_t)(scale * sent[b * BLOCK + i]);
+		}
+		one_block(from_receiver, silence, to_speaker, to_transmitter, 1);
+		modem->wants_tx();
+	}
+	jtty_poll_bins(keep_bin);
+	snprintf(said, sizeof(said), "it is read whole in its bin, %d: \"%.*s\"", bin, SHOWN_MOST,
+		bin_text[bin]);
+	expect(strlen(bin_text[bin]) >= strlen(LIVE_READ)
+		&& !strcmp(bin_text[bin] + strlen(bin_text[bin]) - strlen(LIVE_READ), LIVE_READ), said);
+	free(sent);
 }
 
 static void take_sample_frame(const jtty_frame *frame, void *user) {
@@ -328,6 +435,7 @@ int main(void) {
 	}
 	radio_open();
 	test_sending_and_reading();
+	test_live();
 	teardown();
 	test_wsjtx_sample();
 	if (checks_failed) {

@@ -321,16 +321,29 @@
 //
 // THE KEYBOARD FOR JTTY
 //
-// JTTY sends a line at a time, and in JTTY the column has KBD and ESC as
-// in CW. KBD brings up the same keyboard, in the same place, over the
-// bins; the chosen bin's text is still on the status line above it. What
-// is typed goes into the box above the keys, and SEND at its right gives
-// the line to the radio, JTTY_TEXT, and empties the box: in pieces cut at
-// spaces, of at most JTTY_PIECE characters, a control's value being at
-// most 63; the radio sends them one after the other. On a keyboard
-// plugged in, a key struck brings KBD up with it in the box, Backspace
-// rubs out, and Enter is SEND. ESC, in the column or on the keyboard,
-// stops what the radio is sending, JTTY_DO ESC, and empties the box.
+// JTTY is typed as CW is, the author's design of 23 October 2026: "i open
+// the keyboard. until i start to type, the rx continues unless i press the
+// 'play' icon just like in cw ... if the typing is paused, it goes back to
+// rx. if i resume typing, it starts to transmit again ... i can stop
+// transmitting by pausing the transmit". In JTTY the column has KBD and
+// ESC. KBD brings up the same keyboard in the lower part of the window,
+// the bins still in view above it, the chosen one scrolled into sight,
+// and its text on the status line. What is typed goes into the box above
+// the keys while the radio listens. PLAY gives the box to the radio,
+// JTTY_LIVE, and each character typed after it goes as it is typed, "~"
+// for a space; the radio sends whole words as they are finished, and goes
+// back to receive by itself when the typing has stopped for a few
+// seconds, and to transmit again when it starts; modems/modem_jtty.c says
+// how. As the radio takes each character it says so, JTTY_SENT, and the
+// character is taken off the front of the box, which so always holds
+// what has still to go. PAUSE stops the radio, JTTY_DO ESC, and what it
+// had not taken stays in the box for the next PLAY. Rubbing out takes the
+// last character out of the box, and, while playing, out of the radio's
+// too, JTTY_DO RUBOUT, if it has not gone. ESC, in the column or on the
+// keyboard, stops the radio, empties the box and pauses; CLOSE, or KBD
+// again, puts the keyboard away. On a keyboard plugged in, a key struck
+// brings KBD up with it in the box, Backspace rubs out, and Enter and the
+// space bar are a space, as in CW.
 //
 // THE TUNING WHEEL
 //
@@ -751,11 +764,15 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define FT8_DO_CONTROL "FT8_DO"
 #define CW_DO_CONTROL "CW_DO"
 #define CW_TEXT_CONTROL "CW_TEXT"
-#define JTTY_TEXT_CONTROL "JTTY_TEXT"
 #define JTTY_DO_CONTROL "JTTY_DO"
 #define JTTY_BOX_ROOM 180
+#define JTTY_LIVE_CONTROL "JTTY_LIVE"
+#define JTTY_SPACE_SENT '~'
+// a value is at most 63 characters, so the box is given in pieces
 #define JTTY_PIECE 60
-#define JTTY_SEND_LABEL "SEND"
+// the bins keep this much of the height under the status line while the
+// keyboard is up
+#define BINS_ABOVE_KEYS 88
 // a space on its own would be lost on the way; the radio takes this for one
 #define CW_TEXT_SPACE "_"
 // how much of what was sent the keyboard's box keeps in view
@@ -950,7 +967,9 @@ static char cw_box[CW_BOX_ROOM + 1];
 static int is_cw_playing;
 static GtkWidget *jtty_keys;
 static GtkWidget *jtty_box_label;
+static GtkWidget *jtty_play_button;
 static char jtty_box[JTTY_BOX_ROOM + 1];
+static int is_jtty_playing;
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1329,6 +1348,7 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 
 static void show_cw_keys(int is_shown);
 static void show_jtty_keys(int is_shown);
+static void take_jtty_sent(const char *text);
 static void take_cw_sent(const char *text);
 
 // the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
@@ -2081,6 +2101,10 @@ static void handle_line(const char *name, char *value) {
 	if (!strcmp(name, "CW")) {
 		set_class(status_label, "qso", 0);
 		take_cw_line(value);
+		return;
+	}
+	if (!strcmp(name, "JTTY_SENT")) {
+		take_jtty_sent(value);
 		return;
 	}
 	if (!strcmp(name, "CW_SENT")) {
@@ -2921,66 +2945,115 @@ static void show_jtty_box(void) {
 
 	snprintf(with_mark, sizeof(with_mark), "%s_", jtty_box);
 	gtk_label_set_text(GTK_LABEL(jtty_box_label), with_mark);
+	if (is_jtty_playing)
+		gtk_button_set_label(GTK_BUTTON(jtty_play_button), CW_PAUSE_LABEL);
+	else
+		gtk_button_set_label(GTK_BUTTON(jtty_play_button), CW_PLAY_LABEL);
+	set_class(jtty_play_button, "in-use", is_jtty_playing);
 }
 
+// the chosen bin's row into sight in what the keyboard leaves of the list
+static void scroll_to_chosen_bin(void) {
+	GtkAdjustment *scroll = gtk_scrolled_window_get_vadjustment(
+		GTK_SCROLLED_WINDOW(bins_scroller));
+	int chosen = jtty_bin_of(atoi(value_of(JTTY_RX_CONTROL)));
+	GtkAllocation where;
+
+	gtk_widget_get_allocation(bin_rows[chosen], &where);
+	gtk_adjustment_set_value(scroll, where.y);
+}
+
+// the keyboard has the lower part, and the bins what is above it
 static void show_jtty_keys(int is_shown) {
-	if (is_shown)
+	int bins_height = PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT;
+
+	if (is_shown) {
 		show_jtty_box();
-	gtk_widget_set_visible(jtty_keys, is_shown);
-}
-
-// the box to the radio, in pieces cut at spaces, and emptied
-static void send_jtty_box(void) {
-	char piece[JTTY_PIECE + 1];
-	const char *rest = jtty_box;
-	size_t length;
-	size_t cut;
-
-	while (*rest == ' ')
-		rest++;
-	while (*rest != 0) {
-		length = strlen(rest);
-		cut = length;
-		if (cut > JTTY_PIECE) {
-			cut = JTTY_PIECE;
-			while (cut > 0 && rest[cut] != ' ')
-				cut--;
-			if (cut == 0)
-				cut = JTTY_PIECE;
-		}
-		snprintf(piece, sizeof(piece), "%.*s", (int)cut, rest);
-		send_line(JTTY_TEXT_CONTROL, piece);
-		rest += cut;
-		while (*rest == ' ')
-			rest++;
+		bins_height = BINS_ABOVE_KEYS;
 	}
-	jtty_box[0] = 0;
-	show_jtty_box();
+	put_again(bins_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH, bins_height);
+	gtk_widget_set_visible(jtty_keys, is_shown);
+	if (is_shown)
+		scroll_to_chosen_bin();
 }
 
-static void on_jtty_send(GtkButton *button, gpointer unused) {
-	(void)button;
-	(void)unused;
-	send_jtty_box();
+// text for JTTY_LIVE, a space as "~", which a value cannot end with; in
+// pieces, a value being at most a control's
+static void send_jtty_live(const char *text) {
+	char piece[JTTY_PIECE + 1];
+	size_t length;
+	size_t i;
+
+	while (*text != 0) {
+		length = strlen(text);
+		if (length > JTTY_PIECE)
+			length = JTTY_PIECE;
+		for (i = 0; i < length; i++) {
+			piece[i] = text[i];
+			if (piece[i] == ' ')
+				piece[i] = JTTY_SPACE_SENT;
+		}
+		piece[length] = 0;
+		send_line(JTTY_LIVE_CONTROL, piece);
+		text += length;
+	}
 }
 
-// ESC: what the radio is sending is stopped, and the box emptied
-static void stop_jtty_sending(void) {
-	send_line(JTTY_DO_CONTROL, "ESC");
-	jtty_box[0] = 0;
-	show_jtty_box();
-}
-
+// a character typed: into the box, and to the radio at once while playing
 static void type_jtty_character(char c) {
 	size_t length = strlen(jtty_box);
+	char one[2] = { 0, 0 };
 
 	if (length >= JTTY_BOX_ROOM)
 		return;
-	jtty_box[length] = g_ascii_toupper(c);
+	one[0] = g_ascii_toupper(c);
+	jtty_box[length] = one[0];
 	jtty_box[length + 1] = 0;
+	if (is_jtty_playing)
+		send_jtty_live(one);
 	show_jtty_box();
 }
 
+// the radio says it has taken these: each, if it is the first of the box,
+// is taken out of it
+static void take_jtty_sent(const char *text) {
+	const char *at;
+	char c;
+
+	for (at = text; *at != 0; at++) {
+		c = *at;
+		if (c == JTTY_SPACE_SENT)
+			c = ' ';
+		if (jtty_box[0] != 0 && g_ascii_toupper(jtty_box[0]) == g_ascii_toupper(c))
+			memmove(jtty_box, jtty_box + 1, strlen(jtty_box));
+	}
+	if (jtty_keys != NULL)
+		show_jtty_box();
+}
+
+// PLAY: the box to the radio, and what is typed after it as it is typed;
+// PAUSE: the radio stops, and what it had not taken stays in the box
+static void on_jtty_play(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	is_jtty_playing = !is_jtty_playing;
+	if (is_jtty_playing)
+		send_jtty_live(jtty_box);
+	else
+		send_line(JTTY_DO_CONTROL, "ESC");
+	show_jtty_box();
+}
+
+// ESC: the radio stopped, the box emptied, and the keyboard paused
+static void stop_jtty_sending(void) {
+	send_line(JTTY_DO_CONTROL, "ESC");
+	jtty_box[0] = 0;
+	is_jtty_playing = 0;
+	show_jtty_box();
+}
+
+// the rub-out takes the last character out of the box, and while playing
+// out of the radio's, if it has not gone
 static void on_jtty_key(char key) {
 	size_t length = strlen(jtty_box);
 
@@ -2991,6 +3064,8 @@ static void on_jtty_key(char key) {
 	if (key == KEYBOARD_RUB_OUT) {
 		if (length > 0)
 			jtty_box[length - 1] = 0;
+		if (length > 0 && is_jtty_playing)
+			send_line(JTTY_DO_CONTROL, "RUBOUT");
 		show_jtty_box();
 		return;
 	}
@@ -3932,21 +4007,19 @@ static gboolean on_key_in_cw(const GdkEventKey *event) {
 	return TRUE;
 }
 
-// in JTTY a key struck goes into KBD's box, bringing it up; Enter sends
-// the box and Backspace rubs out
+// in JTTY a key struck goes into KBD's box, bringing it up, and to the
+// radio while playing; Enter is a space, as in CW, and Backspace rubs out
 static gboolean on_key_in_jtty(const GdkEventKey *event) {
 	guint32 letter = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
 
 	if (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK))
 		return FALSE;
-	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter) {
-		send_jtty_box();
-		return TRUE;
-	}
 	if (event->keyval == GDK_KEY_BackSpace) {
 		on_jtty_key(KEYBOARD_RUB_OUT);
 		return TRUE;
 	}
+	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
+		letter = ' ';
 	if (letter < ' ' || letter >= 127)
 		return FALSE;
 	if (!gtk_widget_get_visible(jtty_keys))
@@ -5165,11 +5238,11 @@ static void create_cw_keys(void) {
 		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
 }
 
-// JTTY's KBD: the line being typed, SEND beside it, and the keys, where
-// CW's KBD is
+// JTTY's KBD: what is still to go, PLAY beside it, and the keys, in the
+// lower part of where CW's KBD is
 static void create_jtty_keys(void) {
 	GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	GtkWidget *send = gtk_button_new_with_label(JTTY_SEND_LABEL);
+	GtkWidget *send = gtk_button_new_with_label(CW_PLAY_LABEL);
 
 	jtty_keys = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	jtty_box_label = gtk_label_new("");
@@ -5180,7 +5253,8 @@ static void create_jtty_keys(void) {
 	gtk_style_context_add_class(gtk_widget_get_style_context(send), "key");
 	gtk_widget_set_can_focus(send, FALSE);
 	gtk_widget_set_size_request(send, px_across(CW_PLAY_WIDTH), -1);
-	g_signal_connect(send, "clicked", G_CALLBACK(on_jtty_send), NULL);
+	g_signal_connect(send, "clicked", G_CALLBACK(on_jtty_play), NULL);
+	jtty_play_button = send;
 	gtk_box_pack_start(GTK_BOX(line), jtty_box_label, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(line), send, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(jtty_keys), line, FALSE, FALSE, 0);
@@ -5188,8 +5262,8 @@ static void create_jtty_keys(void) {
 	gtk_widget_show_all(jtty_keys);
 	gtk_widget_hide(jtty_keys);
 	gtk_widget_set_no_show_all(jtty_keys, TRUE);
-	put(jtty_keys, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, PANEL_WIDTH - GRAPH_LEFT,
-		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
+	put(jtty_keys, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT + BINS_ABOVE_KEYS,
+		PANEL_WIDTH - GRAPH_LEFT, PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT - BINS_ABOVE_KEYS);
 }
 
 // the tuning wheel's box, made last so that it lies over the list of

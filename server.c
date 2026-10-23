@@ -124,6 +124,13 @@
 //     jtty
 //     JTTY_BIN 10 1507 RAN ALL NIGHT ON BAND NOISE - NO FALSE DECODES! |
 //
+// While a message is typed live, the characters each frame takes from
+// what was typed go to every client as the frame is made, a space as "~",
+// so that a client keeps in its box only what has still to go, as CW_SENT
+// does in CW:
+//
+//     JTTY_SENT CQ~CQ
+//
 // SAY is a remark: why something asked for was not done, how a thing
 // went. WARN is one the operator has to act on before what was asked can
 // be done, a callsign or a grid not set; a client may show it more boldly.
@@ -552,6 +559,18 @@ void server_on_answer(void (*answer)(const char *line)) {
 
 void server_on_bins_asked(void (*resend)(void)) {
 	resend_the_bins = resend;
+}
+
+void server_send_jtty_sent(const char *text) {
+	char marked[LINE_MAX_LENGTH];
+	int i;
+
+	snprintf(marked, sizeof(marked), "%s", text);
+	for (i = 0; marked[i] != 0; i++) {
+		if (marked[i] == ' ')
+			marked[i] = '~';
+	}
+	tell_everyone("JTTY_SENT", marked);
 }
 
 void server_send_jtty_bin(int bin, int hz, const char *text) {

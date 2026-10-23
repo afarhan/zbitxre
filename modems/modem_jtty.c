@@ -32,6 +32,8 @@
 // goes into the bin it is sent in, in small letters, so that both sides of
 // a chat are read in one place. A message stopped with JTTY_DO ESC is
 // followed there by "(stopped)", since it was not sent, or not all of it.
+// A filler frame, sent while a station typing live has no whole word to
+// send, is a space, and a run of spaces is one, as WSJT-X shows them.
 //
 // The radio program asks for the bins that have changed, with
 // jtty_poll_bins(), and sends each to the clients as a line; server.c
@@ -67,21 +69,61 @@
 //
 // SENDING
 //
-// The operator's text comes as the action JTTY_TEXT, a line at a time, at
-// most a control's value long, 63 characters; a client cuts a longer line
-// into pieces. Up to PENDING_MOST lines wait their turn, so that what is
-// typed while a message is going out follows it. wants_tx(), which the
-// thread that owns the controls asks many times a second, takes the next
-// line when nothing is being sent: it is packed into frames by the
-// library, jtty_pack() and jtty_encode(), and made into sound at the sound
-// card's rate by ft8_signal.c's synth_gfsk(), JTTY's tones gliding as
-// FT8's do, after TX_LEAD_S of silence for the radio to have gone over
-// to transmit. The audio thread then plays it out, at FT8's level, and is
-// heard in the speaker at JTTY_SIDETONE's level. The radio stays in
-// transmit while a line is waiting, so that lines typed one after another
-// go in one over. JTTY_DO ESC stops what is being sent and drops what
-// waits. Which thread has the sound is in tx_state, as in modem_ft8.c,
-// which says why.
+// What is sent goes a frame at a time. The frames wait in a queue, and two
+// buffers each hold the sound of one: while the audio thread plays one
+// out, wants_tx(), which the thread that owns the controls asks many times
+// a second, makes the next into the other, with ft8_signal.c's
+// synth_gfsk() at the sound card's rate, JTTY's tones gliding as FT8's do.
+// It makes no more than one frame ahead, so that what is typed live is
+// never long behind. The first frame of an over has TX_LEAD_S of silence
+// before it, for the radio to have gone over to transmit. Each frame rises
+// and falls at its ends, and a receiver reads each frame on its own, by
+// its own synchronising tones. The audio thread plays at FT8's level,
+// heard in the speaker at JTTY_SIDETONE's. As each frame is made its text
+// goes into the bin it is sent in, in small letters, so that both sides
+// of a chat are read in one place and are seen to go as they go. Which
+// thread has a buffer is in its state, EMPTY, READY or PLAYING, changed
+// with atomic operations, as modem_ft8.c's tx_state is, which says why.
+//
+// Text comes to be sent in two ways.
+//
+// A whole line, JTTY_TEXT, at most a control's value long, 63 characters,
+// as the web page's Enter sends it: it is packed into the fewest frames by
+// the library, jtty_pack(), which uses the compact forms of callsigns,
+// exchanges and phrases, and its frames are put in the queue, up to
+// PENDING_MOST lines, so that what is typed while a line goes follows it
+// in the same over.
+//
+// Live, as CW's KBD sends, the author's design of 23 October 2026: the
+// window keeps what is typed in a box, and while its PLAY is on gives it to
+// the radio, JTTY_LIVE, with each character after as it is struck, "~" for
+// a space, since a value cannot end in one. The first begins an over. It is
+// WSJT-X 3.3's live entry: whenever a frame is wanted, what has been typed
+// up to its last space, whole words, is taken, five characters to a frame
+// of plain text, JTTY_TEXT5, the last of them filled out with spaces; a
+// word still being typed waits, and JTTY_DO RUBOUT takes back its last
+// character. While no whole word is waiting, a filler frame, FILLER,
+// "<<<<<", is sent, which WSJT-X and this radio's receiver take for a
+// space; spaces alone waiting go as a filler too. So a
+// frame never splits a word, and the filler falls only between words,
+// where WSJT-X reads it as a space. When nothing has been typed for
+// LIVE_IDLE_S, what is left goes, the last frame marked as the end of the
+// message, a filler if nothing was left, and the radio goes back to
+// receive: "if the typing is paused, it goes back to rx. if i resume
+// typing, it starts to transmit again". A live message that has gone on
+// for LIVE_MOST_S is ended in the same way, before the radio's own limit
+// on transmitting. Live text goes at most five characters a frame, some
+// 32 words a minute, and without the compact forms. A line, JTTY_TEXT, is
+// refused while a live message is going.
+//
+// As each live frame is made, the characters it takes from what was typed
+// are kept for jtty_take_sent(), and the radio program tells the clients,
+// JTTY_SENT, so that the window takes them off the front of its box, as
+// CW_SENT does in CW: the box always holds what has still to go.
+//
+// JTTY_DO ESC, the window's PAUSE, stops what is being sent at once and
+// drops what waits; the window keeps in its box what had not gone, for the
+// next PLAY. The bin says "(stopped)".
 //
 // WHERE IT IS SENT
 //
@@ -98,7 +140,10 @@
 //                  JTTY_TX stays where it was set, for a pile-up.
 //   JTTY_SIDETONE  how loud what is sent is in the speaker, 0 to 100.
 //   JTTY_TEXT      a line to send.
-//   JTTY_DO        ESC: stop sending, and drop what waits.
+//   JTTY_LIVE      characters typed, to go live.
+//   JTTY_DO        ESC: stop sending, and drop what waits. RUBOUT: take
+//                  back the last character typed live, if it has not
+//                  gone.
 //
 // JTTY_SPLIT is registered before JTTY_RX and JTTY_TX, so that the
 // settings, which are read in the order of the controls, have it in place
@@ -139,13 +184,21 @@
 #define BIN_SEPARATOR " | "
 #define NEW_OVER_S 4.0
 #define NS_PER_S 1000000000.0
-#define TONES_MOST (JTTY_MAX_FRAMES * JTTY_SYMBOLS)
 #define SYMBOL_SECONDS ((float)JTTY_SPS / JTTY_SAMPLE_RATE)
 #define SYMBOL_BT 2.0f
 #define SAMPLES_A_SYMBOL (JTTY_SPS * DECIMATION)
 #define TX_LEAD_S 0.25
 #define TX_LEAD_SAMPLES ((int)(TX_LEAD_S * SOUND_CARD_RATE))
-#define TX_WAVE_ROOM (TX_LEAD_SAMPLES + TONES_MOST * SAMPLES_A_SYMBOL)
+#define SLOTS 2
+#define SLOT_ROOM (TX_LEAD_SAMPLES + JTTY_SYMBOLS * SAMPLES_A_SYMBOL)
+#define FRAMES_QUEUED_MOST (PENDING_MOST * JTTY_MAX_FRAMES)
+#define LIVE_ROOM 240
+#define TEXT5_LENGTH 5
+#define FILLER "<<<<<"
+#define SPACE_TYPED '~'
+#define LIVE_IDLE_S 5.0
+#define LIVE_MOST_S 100.0
+#define SENT_ROOM 256
 // FT8's level: a seventh of full scale
 #define TX_DIVISOR 7.0
 // the speaker's peak with the sidetone at its loudest, as CW's
@@ -160,10 +213,10 @@
 // a frame's text and the space after it
 #define FRAME_TEXT_ROOM (TEXT_ROOM + 1)
 
-enum tx_state {
-	TX_IDLE,
-	TX_ARMED,
-	TX_SENDING,
+enum slot_state {
+	SLOT_EMPTY,
+	SLOT_READY,
+	SLOT_PLAYING,
 };
 
 struct bin {
@@ -191,15 +244,26 @@ static pthread_mutex_t bins_lock = PTHREAD_MUTEX_INITIALIZER;
 static int chosen_bin;
 static char chosen_new[CHOSEN_TEXT_KEPT + 1];
 
-static float *tx_wave;
-static int tx_wave_samples;
-static long tx_pos;
-static atomic_int tx_state;
 static atomic_int tx_hz;
 static atomic_int sidetone_level;
 static int32_t sidetone_output[MAX_BINS/2];
-static char pending[PENDING_MOST][CONTROL_VALUE_MAX];
-static int pending_count;
+// the two buffers, filled by the thread that owns the controls, in turn,
+// and played by the audio thread in the same turn
+static float *slot_wave[SLOTS];
+static int slot_samples[SLOTS];
+static atomic_int slot_state[SLOTS];
+static unsigned long slots_filled;
+static atomic_ulong slots_played;
+static long slot_pos;
+// for the thread that owns the controls: the frames waiting, what is being
+// typed live, and the characters of it sent, for the clients
+static uint64_t queued[FRAMES_QUEUED_MOST];
+static int queued_count;
+static char live[LIVE_ROOM + 1];
+static int is_live;
+static double live_began;
+static double live_typed_at;
+static char sent_new[SENT_ROOM + 1];
 
 static double seconds_now(void) {
 	struct timespec now;
@@ -218,15 +282,24 @@ static int bin_of(int hz) {
 	return bin;
 }
 
-// the newest characters are kept, the oldest let go to make room
-static void append_text(struct bin *b, const char *text) {
+// the newest characters are kept, the oldest let go to make room; a run
+// of spaces is one
+static void append_text(struct bin *b, const char *given) {
+	char text[FRAME_TEXT_ROOM];
 	size_t had = strlen(b->text);
-	size_t adding = strlen(text);
+	size_t adding = 0;
 	size_t dropped;
+	char before = 0;
 
-	if (adding > JTTY_BIN_TEXT_KEPT)
-		text += adding - JTTY_BIN_TEXT_KEPT;
-	adding = strlen(text);
+	if (had > 0)
+		before = b->text[had - 1];
+	for (; *given != 0 && adding < sizeof(text) - 1; given++) {
+		if (*given == ' ' && before == ' ')
+			continue;
+		text[adding++] = *given;
+		before = *given;
+	}
+	text[adding] = 0;
 	if (had + adding > JTTY_BIN_TEXT_KEPT) {
 		dropped = had + adding - JTTY_BIN_TEXT_KEPT;
 		memmove(b->text, b->text + dropped, had - dropped + 1);
@@ -270,6 +343,8 @@ static int ends_with(const char *text, const char *end) {
 static void end_message(struct bin *b) {
 	size_t length = strlen(b->text);
 
+	if (ends_with(b->text, BIN_SEPARATOR))
+		return;
 	while (length > 0 && b->text[length - 1] == ' ')
 		b->text[--length] = 0;
 	if (length > 0 && !ends_with(b->text, BIN_SEPARATOR))
@@ -308,6 +383,8 @@ static void take_frame(const jtty_frame *frame, void *user) {
 	snprintf(text, sizeof(text), "%s", frame->text);
 	if (jtty_atom_unpack(frame->payload, &atom, &eom) == 0 && atom.kind != JTTY_TEXT5)
 		snprintf(text, sizeof(text), "%s ", frame->text);
+	if (!strcmp(frame->text, FILLER))
+		snprintf(text, sizeof(text), " ");
 	if (frame->eom)
 		printf("jtty: %4.0f Hz  %s  (end)\n", frame->frequency, frame->text);
 	else
@@ -424,77 +501,193 @@ void jtty_resend_bins(void) {
 
 /* sending */
 
-// the next line waiting is made into sound, and is in its bin in small
-// letters; 0, or -1 if there was none or it could not be packed
-static int arm_the_next(void) {
-	static uint8_t tones[TONES_MOST];
-	uint64_t frames[JTTY_MAX_FRAMES];
-	char sent[TEXT_ROOM];
-	char text[CONTROL_VALUE_MAX];
-	int count;
-	int pitch = atomic_load(&tx_hz);
+static int is_sending(void) {
 	int i;
 
-	if (pending_count == 0)
-		return -1;
-	snprintf(text, sizeof(text), "%s", pending[0]);
-	pending_count--;
-	memmove(pending[0], pending[1], (size_t)pending_count * sizeof(pending[0]));
-	count = jtty_pack(text, JTTY_UNKNOWN, frames, sent);
-	if (count <= 0)
-		return -1;
-	for (i = 0; i < count; i++) {
-		if (jtty_encode(frames[i], tones + i * JTTY_SYMBOLS) != 0)
-			return -1;
-	}
-	memset(tx_wave, 0, TX_LEAD_SAMPLES * sizeof(tx_wave[0]));
-	synth_gfsk(tones, count * JTTY_SYMBOLS, (float)pitch, SYMBOL_BT, SYMBOL_SECONDS,
-		SOUND_CARD_RATE, tx_wave + TX_LEAD_SAMPLES);
-	tx_wave_samples = TX_LEAD_SAMPLES + count * JTTY_SYMBOLS * SAMPLES_A_SYMBOL;
-	printf("jtty: sending at %d Hz, %d frames: %s\n", pitch, count, sent);
-	fflush(stdout);
-	for (i = 0; sent[i] != 0; i++)
-		sent[i] = (char)tolower((unsigned char)sent[i]);
-	add_to_bin(pitch, sent, 1, 0);
-	atomic_store(&tx_state, TX_ARMED);
-	return 0;
-}
-
-static int jtty_wants_tx(void) {
-	if (atomic_load(&tx_state) != TX_IDLE)
-		return 1;
-	while (pending_count > 0) {
-		if (arm_the_next() == 0)
+	for (i = 0; i < SLOTS; i++) {
+		if (atomic_load(&slot_state[i]) != SLOT_EMPTY)
 			return 1;
 	}
 	return 0;
 }
 
+static void queue_frame(uint64_t payload) {
+	if (queued_count < FRAMES_QUEUED_MOST)
+		queued[queued_count++] = payload;
+}
+
+// a frame of five characters of plain text, the live one's
+static int queue_text5(const char *five, int is_end) {
+	jtty_atom atom;
+	uint64_t payload;
+
+	memset(&atom, 0, sizeof(atom));
+	atom.kind = JTTY_TEXT5;
+	snprintf(atom.text, sizeof(atom.text), "%.*s", TEXT5_LENGTH, five);
+	if (jtty_atom_pack(&atom, is_end, &payload) != 0)
+		return -1;
+	queue_frame(payload);
+	return 0;
+}
+
+// characters a live frame took from what was typed, for the clients
+static void note_sent(const char *text, int count) {
+	size_t had = strlen(sent_new);
+
+	if (had + count > SENT_ROOM)
+		return;
+	memcpy(sent_new + had, text, count);
+	sent_new[had + count] = 0;
+}
+
+// the next live frame: the whole words typed, five characters at a time, a
+// filler while there are none, and the end when typing has stopped
+static void take_live_frame(void) {
+	char five[TEXT5_LENGTH + 1];
+	double now = seconds_now();
+	int is_idle = now - live_typed_at > LIVE_IDLE_S || now - live_began > LIVE_MOST_S;
+	int whole = 0;
+	size_t count;
+	int is_end;
+	int i;
+
+	if (!is_live)
+		return;
+	for (i = 0; live[i] != 0; i++) {
+		if (live[i] == ' ')
+			whole = i + 1;
+	}
+	if (is_idle)
+		whole = (int)strlen(live);
+	// spaces alone are not worth a frame: a filler is a space to a receiver
+	for (i = 0; i < whole && live[i] == ' '; i++)
+		;
+	if (i == whole && whole > 0) {
+		note_sent(live, whole);
+		memmove(live, live + whole, strlen(live) - whole + 1);
+		whole = 0;
+	}
+	if (whole == 0) {
+		is_end = is_idle;
+		queue_text5(FILLER, is_end);
+		if (is_end)
+			is_live = 0;
+		return;
+	}
+	count = (size_t)whole;
+	if (count > TEXT5_LENGTH)
+		count = TEXT5_LENGTH;
+	memset(five, ' ', TEXT5_LENGTH);
+	five[TEXT5_LENGTH] = 0;
+	memcpy(five, live, count);
+	is_end = is_idle && count == strlen(live);
+	queue_text5(five, is_end);
+	note_sent(live, (int)count);
+	memmove(live, live + count, strlen(live) - count + 1);
+	if (is_end)
+		is_live = 0;
+}
+
+// the next frame waiting is made into sound in the buffer whose turn it
+// is, with the over's lead before it if it is the over's first, and goes
+// into its bin in small letters
+static void fill_a_slot(void) {
+	uint8_t tones[JTTY_SYMBOLS];
+	char text[FRAME_TEXT_ROOM];
+	int slot = (int)(slots_filled % SLOTS);
+	int pitch = atomic_load(&tx_hz);
+	int lead = 0;
+	jtty_atom atom;
+	int eom = 0;
+	int i;
+
+	if (atomic_load(&slot_state[slot]) != SLOT_EMPTY)
+		return;
+	for (i = 0; i < SLOTS; i++) {
+		if (atomic_load(&slot_state[i]) == SLOT_READY)
+			return;
+	}
+	if (queued_count == 0)
+		take_live_frame();
+	if (queued_count == 0)
+		return;
+	if (!is_sending())
+		lead = TX_LEAD_SAMPLES;
+	if (jtty_encode(queued[0], tones) != 0)
+		memset(tones, 0, sizeof(tones));
+	text[0] = 0;
+	if (jtty_atom_unpack(queued[0], &atom, &eom) == 0)
+		jtty_atom_render(&atom, text);
+	queued_count--;
+	memmove(queued, queued + 1, (size_t)queued_count * sizeof(queued[0]));
+	memset(slot_wave[slot], 0, lead * sizeof(slot_wave[slot][0]));
+	synth_gfsk(tones, JTTY_SYMBOLS, (float)pitch, SYMBOL_BT, SYMBOL_SECONDS, SOUND_CARD_RATE,
+		slot_wave[slot] + lead);
+	slot_samples[slot] = lead + JTTY_SYMBOLS * SAMPLES_A_SYMBOL;
+	atomic_store(&slot_state[slot], SLOT_READY);
+	slots_filled++;
+	if (eom)
+		printf("jtty: sending at %d Hz  %s  (end)\n", pitch, text);
+	else
+		printf("jtty: sending at %d Hz  %s\n", pitch, text);
+	fflush(stdout);
+	if (!strcmp(text, FILLER))
+		snprintf(text, sizeof(text), " ");
+	else if (atom.kind != JTTY_TEXT5)
+		strncat(text, " ", sizeof(text) - strlen(text) - 1);
+	for (i = 0; text[i] != 0; i++)
+		text[i] = (char)tolower((unsigned char)text[i]);
+	add_to_bin(pitch, text, eom, 0);
+}
+
+static int jtty_wants_tx(void) {
+	fill_a_slot();
+	return is_sending() || queued_count > 0 || is_live;
+}
+
+// the next buffer in turn, if it is ready, is begun
+static int begin_a_slot(void) {
+	int slot = (int)(atomic_load(&slots_played) % SLOTS);
+	int ready = SLOT_READY;
+
+	if (atomic_compare_exchange_strong(&slot_state[slot], &ready, SLOT_PLAYING))
+		slot_pos = 0;
+	return atomic_load(&slot_state[slot]) == SLOT_PLAYING;
+}
+
 static void tx_jtty(const int32_t *mic, double *samples) {
 	double peak = SIDETONE_PEAK * atomic_load(&sidetone_level) / SIDETONE_HIGHEST;
-	int armed = TX_ARMED;
+	int slot;
+	int is_playing = begin_a_slot();
 	int i;
 
 	(void)mic;
-	memset(sidetone_output, 0, sizeof(sidetone_output));
-	if (atomic_compare_exchange_strong(&tx_state, &armed, TX_SENDING))
-		tx_pos = 0;
-	if (atomic_load(&tx_state) != TX_SENDING) {
-		memset(samples, 0, MAX_BINS/2 * sizeof(samples[0]));
-		speaker_play(sidetone_output, MAX_BINS/2);
-		return;
-	}
 	for (i = 0; i < MAX_BINS/2; i++) {
 		samples[i] = 0;
-		if (tx_pos < tx_wave_samples) {
-			samples[i] = tx_wave[tx_pos] / TX_DIVISOR;
-			sidetone_output[i] = (int32_t)(tx_wave[tx_pos] * peak);
-		}
-		tx_pos++;
+		sidetone_output[i] = 0;
+		if (!is_playing)
+			continue;
+		slot = (int)(atomic_load(&slots_played) % SLOTS);
+		samples[i] = slot_wave[slot][slot_pos] / TX_DIVISOR;
+		sidetone_output[i] = (int32_t)(slot_wave[slot][slot_pos] * peak);
+		slot_pos++;
+		if (slot_pos < slot_samples[slot])
+			continue;
+		atomic_store(&slot_state[slot], SLOT_EMPTY);
+		atomic_fetch_add(&slots_played, 1);
+		is_playing = begin_a_slot();
 	}
 	speaker_play(sidetone_output, MAX_BINS/2);
-	if (tx_pos >= tx_wave_samples)
-		atomic_store(&tx_state, TX_IDLE);
+}
+
+// what live frames have taken from what was typed, since it was last asked
+int jtty_take_sent(char *text, int room) {
+	int count;
+
+	snprintf(text, room, "%s", sent_new);
+	count = (int)strlen(text);
+	memmove(sent_new, sent_new + count, strlen(sent_new) - count + 1);
+	return count;
 }
 
 /* the controls */
@@ -551,33 +744,88 @@ static int apply_sidetone(struct control *c, const char *value, char *why, int r
 static int apply_text(struct control *c, const char *value, char *why, int room) {
 	uint64_t frames[JTTY_MAX_FRAMES];
 	char normalized[TEXT_ROOM];
+	int count;
+	int i;
 
 	(void)c;
 	if (!atomic_load(&is_working)) {
 		snprintf(why, room, "JTTY could not be started: see the terminal");
 		return -1;
 	}
-	if (pending_count >= PENDING_MOST) {
-		snprintf(why, room, "%d messages are waiting to be sent already", PENDING_MOST);
+	if (is_live) {
+		snprintf(why, room, "a message is being typed live: pause it first");
 		return -1;
 	}
-	if (jtty_pack(value, JTTY_UNKNOWN, frames, normalized) <= 0) {
+	count = jtty_pack(value, JTTY_UNKNOWN, frames, normalized);
+	if (count <= 0) {
 		snprintf(why, room, "nothing in that can be sent");
 		return -1;
 	}
-	snprintf(pending[pending_count], sizeof(pending[0]), "%s", value);
-	pending_count++;
+	if (queued_count + count > FRAMES_QUEUED_MOST) {
+		snprintf(why, room, "too much is waiting to be sent already");
+		return -1;
+	}
+	for (i = 0; i < count; i++)
+		queue_frame(frames[i]);
+	printf("jtty: to send, %d frames: %s\n", count, normalized);
+	fflush(stdout);
+	return 0;
+}
+
+// characters typed, "~" for a space: the first begins a live message;
+// one with no place in JTTY's alphabet is sent as "#", as the library does
+static int apply_live(struct control *c, const char *value, char *why, int room) {
+	jtty_atom atom;
+	uint64_t payload;
+	size_t length = strlen(live);
+	char typed;
+
+	(void)c;
+	if (!atomic_load(&is_working)) {
+		snprintf(why, room, "JTTY could not be started: see the terminal");
+		return -1;
+	}
+	for (; *value != 0 && length < LIVE_ROOM; value++) {
+		typed = (char)toupper((unsigned char)*value);
+		if (typed == SPACE_TYPED)
+			typed = ' ';
+		memset(&atom, 0, sizeof(atom));
+		atom.kind = JTTY_TEXT5;
+		atom.text[0] = typed;
+		if (jtty_atom_pack(&atom, 0, &payload) != 0)
+			typed = '#';
+		live[length++] = typed;
+	}
+	live[length] = 0;
+	if (!is_live) {
+		is_live = 1;
+		live_began = seconds_now();
+	}
+	live_typed_at = seconds_now();
 	return 0;
 }
 
 static int apply_do(struct control *c, const char *value, char *why, int room) {
+	size_t length = strlen(live);
+	int was_sending = is_sending() || queued_count > 0 || is_live;
+	int i;
+
 	(void)c;
-	(void)value;
 	(void)why;
 	(void)room;
-	pending_count = 0;
-	if (atomic_exchange(&tx_state, TX_IDLE) != TX_IDLE)
-		add_to_bin(atomic_load(&tx_hz), "(stopped)", 1, 0);
+	if (!strcmp(value, "RUBOUT")) {
+		if (length > 0)
+			live[length - 1] = 0;
+		return 0;
+	}
+	queued_count = 0;
+	is_live = 0;
+	live[0] = 0;
+	for (i = 0; i < SLOTS; i++)
+		atomic_store(&slot_state[i], SLOT_EMPTY);
+	slots_filled = atomic_load(&slots_played);
+	if (was_sending)
+		add_to_bin(atomic_load(&tx_hz), " (stopped)", 1, 0);
 	return 0;
 }
 
@@ -609,9 +857,14 @@ static struct control text_control = {
 	.choices = "", .apply = apply_text,
 };
 
+static struct control live_control = {
+	.group = "JTTY", .name = "JTTY_LIVE", .kind = CONTROL_ACTION,
+	.choices = "", .apply = apply_live,
+};
+
 static struct control do_control = {
 	.group = "JTTY", .name = "JTTY_DO", .kind = CONTROL_ACTION,
-	.choices = "ESC", .apply = apply_do,
+	.choices = "ESC/RUBOUT", .apply = apply_do,
 };
 
 static void jtty_start(void) {
@@ -621,19 +874,27 @@ static void jtty_start(void) {
 		.candidate_capacity = CANDIDATES_MOST,
 		.decode_budget = DECODES_A_CHUNK,
 	};
+	int i;
 
 	control_register(&split_control);
 	control_register(&rx_control);
 	control_register(&tx_control);
 	control_register(&sidetone_control);
 	control_register(&text_control);
+	control_register(&live_control);
 	control_register(&do_control);
 	atomic_store(&tx_hz, atoi(tx_control.value));
 	chosen_bin = bin_of(atoi(rx_control.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));
-	tx_wave = malloc(TX_WAVE_ROOM * sizeof(tx_wave[0]));
+	for (i = 0; i < SLOTS; i++) {
+		slot_wave[i] = malloc(SLOT_ROOM * sizeof(slot_wave[i][0]));
+		if (slot_wave[i] == NULL) {
+			printf("jtty: there is not the memory for it\n");
+			return;
+		}
+	}
 	receiver = jtty_rx_create(&config);
-	if (receiver == NULL || tx_wave == NULL) {
+	if (receiver == NULL) {
 		printf("jtty: there is not the memory for it\n");
 		return;
 	}

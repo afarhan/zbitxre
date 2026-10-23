@@ -33,3 +33,4 @@ void server_send_cw(const char *text);
 void server_send_cw_sent(const char *text);
 void server_on_bins_asked(void (*resend)(void));
 void server_send_jtty_bin(int bin, int hz, const char *text);
+void server_send_jtty_sent(const char *text);

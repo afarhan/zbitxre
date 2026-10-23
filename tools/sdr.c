@@ -1872,6 +1872,14 @@ static void follow_sound_card(long now) {
 	}
 }
 
+// what JTTY's live frames have taken from what was typed, to the clients
+static void tell_jtty_sent(void) {
+	char sent[JTTY_BIN_TEXT_ROOM];
+
+	if (jtty_take_sent(sent, sizeof(sent)) > 0)
+		server_send_jtty_sent(sent);
+}
+
 static void main_loop(void) {
 	struct pollfd polls[1 + SERVER_POLLS];
 	int count;
@@ -1898,6 +1906,7 @@ static void main_loop(void) {
 		utc_send();
 		panel_cw_poll(now_ms());
 		jtty_poll_bins(server_send_jtty_bin);
+		tell_jtty_sent();
 		ft8_qso_poll();
 		panel_messages_poll();
 		server_send_messages();

@@ -152,6 +152,17 @@ all gone:
 A client that has just connected sends `jtty`, and is sent every bin that has
 something in it. What is sent is a line at a time, `JTTY_TEXT`, an action that
 takes a control's value of text, 63 characters; a longer line is sent in pieces.
+Or it is typed live, as the window's KBD does with PLAY on: `JTTY_LIVE` gives the
+characters as they are struck, `~` for a space, and the first begins an over; the
+radio sends whole words as they are finished, a filler frame between them when
+the typing is behind, and ends the message and goes back to receive when the
+typing has stopped for a few seconds. As it takes the characters it says so, to
+every client, so that a client's box holds only what has still to go:
+
+    JTTY_LIVE C
+    JTTY_SENT CQ~CQ
+
+`JTTY_DO RUBOUT` takes back the last character typed live, if it has not gone.
 `JTTY_DO ESC` stops what is being sent and drops what waits. `JTTY_RX` is the
 pitch of the station being chatted with, and `JTTY_TX`, where the radio sends,
 follows it unless `JTTY_SPLIT` is `ON`. `modems/modem_jtty.c` says more.
