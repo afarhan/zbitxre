@@ -748,6 +748,7 @@ static const char *const band_names[BANDS] = {
 static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", "" };
 #define MACRO_GROUP "CW"
 #define MACRO_CONTROL "MACRO"
+#define JTTY_MACRO_CONTROL "JTTY_MACRO"
 #define MESSAGES_GROUP "FT8"
 #define JTTY_GROUP "JTTY"
 #define JTTY_RX_CONTROL "JTTY_RX"
@@ -1323,11 +1324,13 @@ static void take_start_of_minute(void) {
 }
 
 // what is at a place on the bottom row in the mode in use: the button's
-// label and what a click on it sends, or nothing
+// label and what a click on it sends, or nothing. In CW and JTTY the
+// places are the mode's macros, each mode's own
 static int footer_button_at(int slot, char *label, char *control, char *choice, int room) {
 	const struct footer_button *b;
-	struct known *macros = find_known(MACRO_CONTROL);
 	const char *group = mode_group();
+	const char *macro_name = MACRO_CONTROL;
+	struct known *macros;
 
 	for (b = footer_buttons; b->group != NULL; b++) {
 		if (b->slot == slot && !strcmp(b->group, group)) {
@@ -1337,12 +1340,15 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 			return 1;
 		}
 	}
-	if (strcmp(group, MACRO_GROUP) || macros == NULL)
+	if (strcmp(group, MACRO_GROUP) && strcmp(group, JTTY_GROUP))
 		return 0;
-	if (!choice_at(macros->choices, slot, choice, room))
+	if (!strcmp(group, JTTY_GROUP))
+		macro_name = JTTY_MACRO_CONTROL;
+	macros = find_known(macro_name);
+	if (macros == NULL || !choice_at(macros->choices, slot, choice, room))
 		return 0;
 	snprintf(label, room, "%s", choice);
-	snprintf(control, room, "%s", MACRO_CONTROL);
+	snprintf(control, room, "%s", macro_name);
 	return 1;
 }
 

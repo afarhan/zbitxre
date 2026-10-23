@@ -35,6 +35,12 @@
 // window's buttons and the web page, is left out until there is something
 // for it to work.
 //
+// A mode may have macros of its own: JTTY has data/jtty.mc. Each file is
+// read into a set of its own, struct macro_set, with macro_set_load(), and
+// the macro_set_ functions work on the set they are given. zbitxv2's
+// functions, macro_load(), macro_labels(), macro_key() and macro_exec(),
+// work on the set CW uses, as they always did.
+//
 // For the thread that owns the controls.
 
 #include <stdio.h>
@@ -50,13 +56,7 @@
 #define LABELS_BETWEEN '/'
 #define NO_KEY (-1)
 
-struct macro {
-	int fn_key;
-	char	label[MACRO_MAX_LABEL];
-	char 	text[MACRO_MAX_TEXT];
-};
-
-static struct macro macro_table[MACRO_MAX];
+static struct macro_set cw_set;
 static char is_running = 0;
 
 static const char *field_str(const char *name){
@@ -68,6 +68,8 @@ static const char *field_str(const char *name){
 }
 
 void macro_label(int fn_key, char *label){
+	const struct macro *macro_table = cw_set.table;
+
 	*label = 0;
 
 	for (int i = 0; i < MACRO_MAX; i++){
@@ -81,7 +83,8 @@ void macro_label(int fn_key, char *label){
 
 //the labels in the order of the file, with a / between them, for a control's
 //choices; a / in a label is shown as a -
-void macro_labels(char *labels, int room){
+void macro_set_labels(const struct macro_set *set, char *labels, int room){
+	const struct macro *macro_table = set->table;
 	int used = 0;
 
 	labels[0] = 0;
@@ -103,7 +106,8 @@ void macro_labels(char *labels, int room){
 }
 
 //the function key of the first macro with a label, as macro_labels() gave it
-int macro_key(const char *label){
+int macro_set_key(const struct macro_set *set, const char *label){
+	const struct macro *macro_table = set->table;
 	char shown[MACRO_MAX_LABEL];
 
 	for (int i = 0; i < MACRO_MAX && macro_table[i].label[0] != 0; i++){
@@ -117,7 +121,8 @@ int macro_key(const char *label){
 	return NO_KEY;
 }
 
-int  macro_load(const char *filename){
+int macro_set_load(struct macro_set *set, const char *filename){
+	struct macro *macro_table = set->table;
 	char macro_line[MACRO_LINE_MAX];
 	char full_path[MACRO_PATH_MAX];
 
@@ -127,7 +132,7 @@ int  macro_load(const char *filename){
 	if(!pf)
 		return -1;
 
-	memset(macro_table, 0, sizeof(macro_table));
+	memset(set->table, 0, sizeof(set->table));
 	int i = 0;
 	while (i < MACRO_MAX){
 		if (fgets(macro_line, sizeof(macro_line) - 1, pf) == NULL)
@@ -225,8 +230,9 @@ static char *macro_expand_short_var(char v, char *dest, int room){
 	return dest;
 }
 
-int macro_exec(int key, char *dest, int room){
-	struct macro *m = NULL;
+int macro_set_exec(const struct macro_set *set, int key, char *dest, int room){
+	const struct macro *macro_table = set->table;
+	const struct macro *m = NULL;
 
 	int i;
 	for(i = 0; i < MACRO_MAX; i++)
@@ -240,7 +246,7 @@ int macro_exec(int key, char *dest, int room){
 
 	char *q = dest;
 	char *end = dest + room - 1;
-	char *p = m->text;
+	const char *p = m->text;
 	char var[MACRO_VAR_MAX];
 	char in_var = 0;
 
@@ -276,4 +282,22 @@ int macro_exec(int key, char *dest, int room){
 		}
 	}
 	return 0;
+}
+
+/* zbitxv2's, for the set CW uses */
+
+void macro_labels(char *labels, int room){
+	macro_set_labels(&cw_set, labels, room);
+}
+
+int macro_key(const char *label){
+	return macro_set_key(&cw_set, label);
+}
+
+int macro_load(const char *filename){
+	return macro_set_load(&cw_set, filename);
+}
+
+int macro_exec(int key, char *dest, int room){
+	return macro_set_exec(&cw_set, key, dest, room);
 }

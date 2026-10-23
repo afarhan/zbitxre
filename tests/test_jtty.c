@@ -31,6 +31,10 @@
 // every character it took, so that the window's box empties; and it must
 // have gone back to receive by itself.
 //
+// A macro of data/jtty.mc, the sample for a chat, setup/jtty.mc, is sent as
+// a line is: "CQ", with the station's callsign and grid, must go as
+// "CQ VU2ESE MK97", the form WSJT-X reports to PSK Reporter.
+//
 // Last, tests/jtty_wsjtx_sample.wav, the sample WSJT-X 3.3 comes with,
 // samples/JTTY/260807_134110.wav, is given to the library's receiver as it
 // is, at 12000 a second, and must read as WSJT-X reads it, which its user
@@ -386,6 +390,34 @@ static void test_live(void) {
 	free(sent);
 }
 
+static void test_macro(void) {
+	static int32_t silence[BLOCK];
+	static int32_t to_speaker[BLOCK];
+	static int32_t to_transmitter[BLOCK];
+	const struct modem *modem = modem_find("JTTY");
+	int bin = (atoi(LIVE_HZ) - BIN_LOWEST_HZ) / BIN_WIDTH_HZ;
+	long blocks = 0;
+	char said[SAID_ROOM];
+
+	printf(" a macro\n");
+	if (modem == NULL)
+		return;
+	control_set("MYCALLSIGN", "VU2ESE", ORIGIN_NONE, why, sizeof(why));
+	control_set("MYGRID", "MK97FJ", ORIGIN_NONE, why, sizeof(why));
+	expect(control_set("JTTY_MACRO", "CQ", ORIGIN_NONE, why, sizeof(why)) == 0,
+		"the macro CQ of data/jtty.mc is taken");
+	control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+	while (modem->wants_tx() && blocks < LIVE_MOST_BLOCKS) {
+		one_block(silence, silence, to_speaker, to_transmitter, 0);
+		blocks++;
+	}
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	jtty_poll_bins(told, keep_bin);
+	snprintf(said, sizeof(said), "and is sent as CQ VU2ESE MK97: \"%.*s\"", SHOWN_MOST,
+		bin_text[bin]);
+	expect(strstr(bin_text[bin], "cq vu2ese mk97 | ") != NULL, said);
+}
+
 static void take_sample_frame(const jtty_frame *frame, void *user) {
 	size_t length = strlen(sample_read);
 
@@ -438,6 +470,7 @@ int main(void) {
 	radio_open();
 	test_sending_and_reading();
 	test_live();
+	test_macro();
 	teardown();
 	test_wsjtx_sample();
 	if (checks_failed) {

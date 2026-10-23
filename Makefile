@@ -116,9 +116,9 @@ PANEL_DRIVE  = /media/$(USER)/RPI-RP2
 
 .PHONY: all check radio clean panel panel-release panel-flash gui remote FORCE
 
-all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) $(REMOTE) data/cw.mc
+all: $(HOST_TESTS) $(RADIO_TESTS) $(TOOLS) $(REMOTE) data/cw.mc data/jtty.mc
 
-check: $(HOST_TESTS) data/cw.mc
+check: $(HOST_TESTS) data/cw.mc data/jtty.mc
 	$(BUILD)/test_si5351_math
 	$(BUILD)/test_am
 	$(BUILD)/test_link
@@ -160,6 +160,10 @@ $(BUILD):
 # repository; a radio that has none is given the sample
 data/cw.mc: | $(BUILD)
 	cp setup/cw.mc data/cw.mc
+
+# and JTTY's, which is swapped for another for DX, a contest or a chat
+data/jtty.mc: | $(BUILD)
+	cp setup/jtty.mc data/jtty.mc
 
 # the list is made afresh on every build, because a modem taken out of
 # modems/ leaves no newer file behind to say so; it replaces the old list

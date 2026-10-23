@@ -21,7 +21,8 @@
 //           controls and the mode's own, which scrolls; a tap on the
 //           frequency lays the tuning wheel over it
 //   row 7   under the waterfall, six places for the mode's own buttons:
-//           TX and RX in the voice modes, the CW macros in CW
+//           TX and RX in the voice modes, the CW macros in CW, JTTY's
+//           macros, data/jtty.mc's, in JTTY
 //
 // In JTTY there is no graph or waterfall, the author having found them of
 // little use there (23 October 2026), and all of their place under the
@@ -543,7 +544,8 @@
   }
 
   function show() {
-    var group = modeGroup(), macros = schema.MACRO ? schema.MACRO.choices : [], i;
+    var group = modeGroup(), macroControl = group === "JTTY" ? schema.JTTY_MACRO : schema.MACRO;
+    var macros = macroControl ? macroControl.choices : [], i;
     tiles.STEP.value.textContent = own.STEP;
     tiles.VFO.value.textContent = own.VFO;
     tiles.OFFSET.value.textContent = own.OFFSET;
@@ -609,7 +611,7 @@
       return ["", "TX", "RX", "", "", ""][place];
     }
     if (group === "2TONE") { return ["TX", "RX", "", "", "", ""][place]; }
-    if (group === "CW") { return macros[place] || ""; }
+    if (group === "CW" || group === "JTTY") { return macros[place] || ""; }
     return "";
   }
 
@@ -930,6 +932,7 @@
     if (label === "TX") { startSending(); }
     else if (label === "RX") { stopSending(); }
     else if (label && modeGroup() === "CW") { send("MACRO " + label); }
+    else if (label && modeGroup() === "JTTY") { send("JTTY_MACRO " + label); }
   }
 
   function columnTapped(place) {

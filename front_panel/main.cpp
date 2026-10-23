@@ -884,16 +884,26 @@ static void show_bands(){
 
 //the macros' buttons are there in CW only, as many as the radio has macros
 //for and the row has room for, each with its macro's label
-static void show_macros(){
-	struct panel_control *macro = controls_find(MACRO_CONTROL);
-	struct panel_control one;
+//the mode's macros, CW's or JTTY's, each its own: MACRO or JTTY_MACRO
+static struct panel_control *macros_in_use(){
 	char group[CONTROL_TEXT_MAX];
+
+	mode_group(group, sizeof(group));
+	if (!strcmp(group, MACRO_GROUP))
+		return controls_find(MACRO_CONTROL);
+	if (!strcmp(group, JTTY_GROUP))
+		return controls_find("JTTY_MACRO");
+	return NULL;
+}
+
+static void show_macros(){
+	struct panel_control *macro = macros_in_use();
+	struct panel_control one;
 	char label[SHOWN_MAX];
 	int i;
 
-	mode_group(group, sizeof(group));
 	for (i = 0; i < MACROS; i++){
-		if (macro == NULL || strcmp(group, MACRO_GROUP) || i >= controls_choices(macro)){
+		if (macro == NULL || i >= controls_choices(macro)){
 			set_hidden(macro_widget[i].box, true);
 			continue;
 		}
@@ -1189,11 +1199,11 @@ static void on_band_touched(lv_event_t *e){
 //a macro's button: the radio is told to send that macro. It is told each
 //time the button is touched, since a macro is something done, not set
 static void macro_touched(int which){
-	struct panel_control *macro = controls_find(MACRO_CONTROL);
+	struct panel_control *macro = macros_in_use();
 
 	if (macro == NULL || which >= controls_choices(macro))
 		return;
-	Serial.printf("%s %d\n", MACRO_CONTROL, which);
+	Serial.printf("%s %d\n", macro->d.name, which);
 	i2c_link_changed(macro->d.number, which);
 }
 

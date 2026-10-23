@@ -13,8 +13,10 @@
 //
 // the pitch of the station last heard in it, or where the bin begins if
 // none has been, dimmed; and the newest of its text, as much of its end as
-// fits. Thirteen rows are in view; a bar at the right edge says where in
-// the 24 the view is, as the messages' does.
+// fits. They have the waterfall's place and no more, so that the bottom
+// row keeps JTTY's macros, data/jtty.mc's, as CW's row keeps CW's: ten
+// rows are in view, and a bar at the right edge says where in the 24 the
+// view is, as the messages' does.
 //
 // The chosen bin is the one the radio listens to, JTTY_RX, and its row is
 // lit. A touch on a row chooses it: JTTY_RX is put at the pitch of the
@@ -49,8 +51,8 @@
 #define IN_BIN_HZ 25
 #define BIN_TEXT_ROOM 81
 #define BINS_TOP WATERFALL_TOP
-#define BINS_HEIGHT (SCREEN_BOTTOM - BINS_TOP)
-#define ROWS 13
+#define BINS_HEIGHT WATERFALL_HEIGHT
+#define ROWS 10
 #define COLUMNS 2
 #define HZ_COLUMN 0
 #define TEXT_COLUMN 1

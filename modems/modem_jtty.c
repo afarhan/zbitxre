@@ -143,6 +143,11 @@
 //                  JTTY_TX stays where it was set, for a pile-up.
 //   JTTY_SIDETONE  how loud what is sent is in the speaker, 0 to 100.
 //   JTTY_TEXT      a line to send.
+//   JTTY_MACRO     a macro of data/jtty.mc to send, by its label, as a
+//                  line is; macros.c says what is in a macro. data/jtty.mc
+//                  is the one file of JTTY's macros, swapped for another
+//                  for DX, a contest or a chat; setup/jtty.mc, a chat's,
+//                  is the sample a radio starts with.
 //   JTTY_LIVE      characters typed, to go live.
 //   JTTY_DO        ESC: stop sending, and drop what waits. RUBOUT: take
 //                  back the last character typed live, if it has not
@@ -167,6 +172,7 @@
 #include "modem.h"
 #include "ft8_signal.h"
 #include "jtty_lib/jtty.h"
+#include "macros.h"
 #include "modem_jtty.h"
 
 #define JTTY_LOW_HZ 50
@@ -203,6 +209,8 @@
 #define LIVE_IDLE_S 5.0
 #define LIVE_MOST_S 100.0
 #define SENT_ROOM 256
+#define MACRO_FILE "jtty"
+#define MACRO_CHOICES_MAX 200
 // FT8's level: a seventh of full scale
 #define TX_DIVISOR 7.0
 // the speaker's peak with the sidetone at its loudest, as CW's
@@ -744,13 +752,13 @@ static int apply_sidetone(struct control *c, const char *value, char *why, int r
 	return 0;
 }
 
-static int apply_text(struct control *c, const char *value, char *why, int room) {
+// a line to go whole, packed into the fewest frames, after what waits
+static int queue_line(const char *value, char *why, int room) {
 	uint64_t frames[JTTY_MAX_FRAMES];
 	char normalized[TEXT_ROOM];
 	int count;
 	int i;
 
-	(void)c;
 	if (!atomic_load(&is_working)) {
 		snprintf(why, room, "JTTY could not be started: see the terminal");
 		return -1;
@@ -773,6 +781,24 @@ static int apply_text(struct control *c, const char *value, char *why, int room)
 	printf("jtty: to send, %d frames: %s\n", count, normalized);
 	fflush(stdout);
 	return 0;
+}
+
+static int apply_text(struct control *c, const char *value, char *why, int room) {
+	(void)c;
+	return queue_line(value, why, room);
+}
+
+static struct macro_set macros;
+
+static int apply_macro(struct control *c, const char *value, char *why, int room) {
+	char text[MACRO_MAX_TEXT];
+
+	(void)c;
+	if (macro_set_exec(&macros, macro_set_key(&macros, value), text, sizeof(text)) < 0) {
+		snprintf(why, room, "no such macro");
+		return -1;
+	}
+	return queue_line(text, why, room);
 }
 
 // characters typed, "~" for a space: the first begins a live message;
@@ -860,6 +886,24 @@ static struct control text_control = {
 	.choices = "", .apply = apply_text,
 };
 
+static char macro_choices[MACRO_CHOICES_MAX];
+
+static struct control macro_control = {
+	.group = "JTTY", .name = "JTTY_MACRO", .kind = CONTROL_ACTION,
+	.choices = macro_choices, .apply = apply_macro,
+};
+
+// the macros are read from data/jtty.mc; with no such file there are none
+static void load_the_macros(void) {
+	if (macro_set_load(&macros, MACRO_FILE) < 0) {
+		printf("no JTTY macros: data/%s.mc is not there\n", MACRO_FILE);
+		return;
+	}
+	macro_set_labels(&macros, macro_choices, sizeof(macro_choices));
+	if (macro_choices[0] != 0)
+		control_register(&macro_control);
+}
+
 static struct control live_control = {
 	.group = "JTTY", .name = "JTTY_LIVE", .kind = CONTROL_ACTION,
 	.choices = "", .apply = apply_live,
@@ -886,6 +930,7 @@ static void jtty_start(void) {
 	control_register(&text_control);
 	control_register(&live_control);
 	control_register(&do_control);
+	load_the_macros();
 	atomic_store(&tx_hz, atoi(tx_control.value));
 	chosen_bin = bin_of(atoi(rx_control.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));
