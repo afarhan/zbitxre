@@ -754,9 +754,9 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define JTTY_BINS 24
 #define JTTY_LOWEST_HZ 200
 #define JTTY_BIN_HZ 125
-// an empty bin is chosen at a pitch that puts a signal's four tones, 94 Hz
-// wide, in its middle
-#define JTTY_IN_BIN_HZ 16
+// an empty bin is chosen a step of JTTY_RX's, 25 Hz, above where it begins,
+// which puts a signal's four tones, 94 Hz wide, inside it
+#define JTTY_IN_BIN_HZ 25
 #define JTTY_TEXT_ROOM 96
 #define JTTY_HZ_ROOM 12
 // the pitch's column, four figures and a space

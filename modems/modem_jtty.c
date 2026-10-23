@@ -207,6 +207,10 @@
 #define PENDING_MOST 3
 #define PITCH_LOWEST 200
 #define PITCH_HIGHEST 3100
+// the author's step for both, 23 October 2026; a station chosen in a bin
+// is listened to at the step nearest it, which JTTY's receivers take in
+// their stride, WSJT-X looking 50 Hz either side
+#define PITCH_STEP 25
 #define TEXT_ROOM (JTTY_BIN_TEXT_ROOM)
 #define CHOSEN_TEXT_KEPT 160
 #define CHOSEN_BEGINS "  "
@@ -836,13 +840,13 @@ static struct control split_control = {
 
 static struct control rx_control = {
 	.group = "JTTY", .name = "JTTY_RX", .kind = CONTROL_NUMBER,
-	.min = PITCH_LOWEST, .max = PITCH_HIGHEST, .step = 1,
+	.min = PITCH_LOWEST, .max = PITCH_HIGHEST, .step = PITCH_STEP,
 	.value = "1500", .apply = apply_rx,
 };
 
 static struct control tx_control = {
 	.group = "JTTY", .name = "JTTY_TX", .kind = CONTROL_NUMBER,
-	.min = PITCH_LOWEST, .max = PITCH_HIGHEST, .step = 1,
+	.min = PITCH_LOWEST, .max = PITCH_HIGHEST, .step = PITCH_STEP,
 	.value = "1500", .apply = apply_tx,
 };
 

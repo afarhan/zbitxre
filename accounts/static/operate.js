@@ -157,9 +157,10 @@
   var points = [], spanHz = 0, envelope = null;
   var cwRead = "", marked = null, logQuery = "";
   var JTTY_BINS = 24, JTTY_LOWEST_HZ = 200, JTTY_BIN_HZ = 125, JTTY_PIECE = 60;
-  // a bin with nothing heard in it is chosen at a pitch that sets the
-  // signal in the bin's middle: its four tones are 94 Hz wide
-  var JTTY_IN_BIN_HZ = 16;
+  // a bin with nothing heard in it is chosen a step of JTTY_RX's, 25 Hz,
+  // above where it begins, which puts a signal's four tones, 94 Hz wide,
+  // inside it
+  var JTTY_IN_BIN_HZ = 25;
   var binText = [], binHz = [], binRows = [], jttySaid = null;
 
   function stored(name, otherwise) {
