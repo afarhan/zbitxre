@@ -343,7 +343,10 @@
     }
     if (name === "CONTROL") { takeSchema(value); return; }
     if (name === "MESSAGE") { takeMessage(value); return; }
-    if (name === "CW") { cwRead = (cwRead + value).slice(-80); say(cwRead); return; }
+    // the letters heard in CW are held to the line's right end: the line
+    // cuts what is too long, and once it filled, the newest letters were
+    // the ones cut, to be seen only when as many more had come in after
+    if (name === "CW") { cwRead = (cwRead + value).slice(-80); say(cwRead, "cw"); return; }
     if (name === "SAY" || name === "ERROR") { say(value); return; }
     if (name === "WARN") { say(value, "warning"); return; }
     if (name === "QSO") { say(value, value ? "qso" : ""); return; }
@@ -914,7 +917,8 @@
       var row = make("div", "row", null, list);
       make("div", "title", name, row);
       var r = { name: name, box: row, value: make("div", "value", "", row) };
-      if (control && control.kind !== "text") {
+      // BW has no control of its own name: the one it sets is chosen at the tap
+      if (name === "BW" || (control && control.kind !== "text")) {
         row.addEventListener("click", function () { adjust(rowControl(name)); });
       }
       rows.push(r);

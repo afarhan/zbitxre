@@ -42,6 +42,7 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
     min-width: 0; min-height: 0; position: relative; }
 #status { height: 4.6vh; line-height: 4.6vh; font-size: 3vh; color: #9ab; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; padding: 0 0.4vw; background: #000; }
+#status.cw { display: flex; justify-content: flex-end; }
 #status.qso { color: #fff; background: #b02020; }
 #status.voip { color: #fff; background: #2050c0; }
 #status.warning { color: #ffe000; font-weight: bold; }
