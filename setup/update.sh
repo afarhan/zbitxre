@@ -166,6 +166,9 @@ if ! make --quiet sdr; then
 	failed "the build failed; the radio is as it was"
 fi
 mkdir -p data && echo "$after" > "$BUILT_FROM"
+# a mode's sample macros, for a radio that has none: JTTY's came after
+# install.sh had put CW's there. One the operator has is never replaced
+[ -f data/jtty.mc ] || cp setup/jtty.mc data/jtty.mc
 if pkg-config --exists gtk+-3.0 2>/dev/null; then
 	say "building the GTK client"
 	make --quiet gui || say "GTK client build failed; old one kept"

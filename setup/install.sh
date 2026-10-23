@@ -245,6 +245,7 @@ if [ ! -f data/sbitx.db ] && [ -f "$OLD/sbitx.db" ]; then
 	say "took the logbook from $OLD/sbitx.db"
 fi
 [ -f data/cw.mc ] || cp setup/cw.mc data/cw.mc
+[ -f data/jtty.mc ] || cp setup/jtty.mc data/jtty.mc
 
 # 6. the boot configuration of a zbitx
 if [ "$radio" = zbitx ]; then
