@@ -253,6 +253,7 @@ enum selection {
 	ON_A_CONTROL,
 	ON_THE_LIST,
 	ON_THE_MESSAGES,
+	ON_THE_BINS,
 };
 
 //a place on the screen, and what LVGL has made there
@@ -317,6 +318,7 @@ static const char *const band_names[BANDS] = {
 //the buttons down the left, and the macros' on the bottom row in CW
 static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET" };
 #define MACRO_GROUP "CW"
+#define JTTY_GROUP "JTTY"
 #define MESSAGES_GROUP "FT8"
 #define MACRO_CONTROL "MACRO"
 
@@ -382,10 +384,11 @@ static lv_obj_t *span_label;
 static lv_obj_t *spectrum_area;
 static lv_obj_t *cq_button;
 static lv_obj_t *halt_button;
-//in CW, KBD and ESC in the same places, as the window has them
+//in CW and JTTY, KBD and ESC in the same places, as the window has them
 static lv_obj_t *kbd_button;
 static lv_obj_t *esc_button;
 static bool is_showing_messages;
+static bool is_showing_bins;
 
 
 //the controls in the list, the row at the top of what is in view, and the
@@ -512,6 +515,15 @@ static void keep_on_the_radio(const char *name, int32_t value){
 	i2c_link_changed(c->d.number, value);
 }
 
+static void show();
+
+//a number of the radio's set from elsewhere on the panel, as JTTY's bins
+//set JTTY_RX: the radio is told, and the screen shown again
+void main_set_number(const char *name, int32_t value){
+	keep_on_the_radio(name, value);
+	show();
+}
+
 //a VFO chosen: the dial of the one left is kept, and the other's taken up
 static void choose_vfo(int vfo){
 	if (vfo == vfo_in_use)
@@ -627,25 +639,32 @@ static void lay_out(){
 			footer_widget[i].control = controls_find(footer->tiles[i].control);
 	}
 
-	//the mode's messages take the place of the graph and the waterfall
+	//the mode's messages, FT8's, or its bins, JTTY's, take the place of the
+	//graph and the waterfall
 	is_showing_messages = !strcmp(group, MESSAGES_GROUP);
+	is_showing_bins = !strcmp(group, JTTY_GROUP);
 	messages_set_shown(is_showing_messages);
+	bins_set_shown(is_showing_bins);
 	if (spectrum_area != NULL){
-		set_hidden(spectrum_area, is_showing_messages);
+		bool is_typed = !strcmp(group, MACRO_GROUP) || is_showing_bins;
+
+		set_hidden(spectrum_area, is_showing_messages || is_showing_bins);
 		set_hidden(cq_button, !is_showing_messages);
 		set_hidden(halt_button, !is_showing_messages);
-		set_hidden(kbd_button, strcmp(group, MACRO_GROUP) != 0);
-		set_hidden(esc_button, strcmp(group, MACRO_GROUP) != 0);
-		//KBD's keyboard is CW's alone
-		if (strcmp(group, MACRO_GROUP) != 0)
+		set_hidden(kbd_button, !is_typed);
+		set_hidden(esc_button, !is_typed);
+		//KBD's keyboard is CW's and JTTY's
+		if (!is_typed)
 			screens_cw_keys_hide();
 	}
 	main_paint_when_free();
 	if (selected == ON_THE_MESSAGES && !is_showing_messages)
 		selected = ON_FREQUENCY;
+	if (selected == ON_THE_BINS && !is_showing_bins)
+		selected = ON_FREQUENCY;
 
-	//what CW read is not shown in another mode
-	if (strcmp(group, MACRO_GROUP) != 0 && is_cw_newest){
+	//what CW read, or JTTY's chosen bin, is not shown in another mode
+	if (strcmp(group, MACRO_GROUP) != 0 && !is_showing_bins && is_cw_newest){
 		is_cw_newest = false;
 		status_show();
 	}
@@ -1028,6 +1047,7 @@ static void show(){
 	show_macros();
 	show_list();
 	messages_set_selected(selected == ON_THE_MESSAGES);
+	bins_set_selected(selected == ON_THE_BINS);
 }
 
 /* changing a control */
@@ -1317,8 +1337,8 @@ static void on_halt_touched(lv_event_t *e){
 	ft8_do("HALT");
 }
 
-//CW's two: the keyboard that sends as it is typed, and ESC, which stops
-//what is being sent, the radio's action CW_DO
+//CW's two, and JTTY's: the keyboard that sends as it is typed, and ESC,
+//which stops what is being sent, the radio's action CW_DO or JTTY_DO
 static void on_kbd_touched(lv_event_t *e){
 	(void)e;
 	screens_open_cw_keys();
@@ -1326,6 +1346,9 @@ static void on_kbd_touched(lv_event_t *e){
 
 static void on_esc_touched(lv_event_t *e){
 	struct panel_control *c = controls_find("CW_DO");
+
+	if (is_showing_bins)
+		c = controls_find("JTTY_DO");
 
 	(void)e;
 	if (c != NULL)
@@ -1421,6 +1444,7 @@ static void screen_create(){
 
 	//FT8's messages, in the same place, shown only in FT8
 	messages_create();
+	bins_create();
 
 	//the time, small, at the top right of the frequency's box, across from
 	//its title
@@ -1733,6 +1757,8 @@ void main_knob_turned(int steps){
 		change(selected_control, moves);
 	if (selected == ON_THE_MESSAGES)
 		messages_scroll(moves);
+	if (selected == ON_THE_BINS)
+		bins_scroll(moves);
 	if (selected == ON_THE_LIST && listed_count > 0){
 		if (is_changing_the_marked_row)
 			change(listed[list_mark], moves);
@@ -1802,6 +1828,10 @@ void main_select(const char *name){
 		selected = ON_THE_MESSAGES;
 		is_changing_the_marked_row = false;
 	}
+	else if (!strcmp(name, "BINS") && is_showing_bins){
+		selected = ON_THE_BINS;
+		is_changing_the_marked_row = false;
+	}
 	else if (button != NOWHERE)
 		footer_button_touched(button);
 	else if (is_showing_messages && (!strcmp(name, "CQ") || !strcmp(name, "HALT")))
@@ -1818,12 +1848,13 @@ void main_select(const char *name){
 //the graph and the waterfall are painted straight to the glass, over
 //whatever LVGL has drawn there, so they are painted only while nothing lies
 //over them: no screen open, KBD's keys not up, and the mode not FT8, whose
-//messages take their place. Every opening and closing asks this, and it
+//messages take their place, nor JTTY, whose bins do. Every opening and closing asks this, and it
 //alone says: on 19 October 2026 the author found the spectrum painted over
 //the callsign's keys, painting having been turned on by KBD's keys closing
 //while SET was open
 void main_paint_when_free(){
-	waterfall_set_painting(!screens_is_open() && !screens_cw_keys_up() && !is_showing_messages);
+	waterfall_set_painting(!screens_is_open() && !screens_cw_keys_up() && !is_showing_messages
+		&& !is_showing_bins);
 }
 
 void main_ui(){

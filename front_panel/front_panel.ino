@@ -243,6 +243,7 @@ void loop() {
   i2c_link_slice();
   screens_slice();
   messages_slice();
+  bins_slice();
   waterfall_slice();
   meter_slice();
   updater_slice();

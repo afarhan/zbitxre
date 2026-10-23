@@ -175,6 +175,8 @@ static void on_took_bytes(int control, const uint8_t *bytes, int count){
 		screens_log_part(bytes, count);
 	if (control == LINK_MESSAGES)
 		messages_part(bytes, count);
+	if (control == LINK_JTTY_BINS)
+		bins_part(bytes, count);
 	if (control == LINK_SAY && count <= LINK_SAY_MAX){
 		memcpy(said_text, bytes, count);
 		said_text[count] = 0;

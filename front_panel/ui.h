@@ -100,6 +100,14 @@ void messages_set_selected(bool selected);
 void messages_scroll(int steps);
 void messages_show_newest();
 bool messages_answer_marked();
+// JTTY's bins, in JTTY, in the same place
+void bins_create();
+void bins_part(const uint8_t *bytes, int count);
+void bins_slice();
+void bins_set_shown(bool shown);
+void bins_set_selected(bool selected);
+void bins_scroll(int steps);
+void main_set_number(const char *name, int32_t value);
 
 // the link, for text
 void i2c_link_send_text(int number, const char *text);

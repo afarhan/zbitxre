@@ -1633,10 +1633,20 @@ static void log_create(){
    empties the box and pauses. CLOSE, KBD again, or a long press of the
    knob puts the keyboard away. What goes to the radio goes as a text, a
    part at a time; while one is on its way, what is to go after it waits
-   and goes next, all of it in one text. */
+   and goes next, all of it in one text.
+
+   In JTTY the same keyboard types JTTY live, as the window's does: what
+   PLAY gives the radio goes as JTTY_LIVE, a space as "~", PAUSE is
+   JTTY_DO ESC, and the radio sends whole words as they are finished and
+   goes back to receive by itself when the typing stops; modem_jtty.c on
+   the radio says how. What each frame took comes back on LINK_CW_SENT
+   and is taken off the front of the box, as in CW. The rub-out, while
+   playing, takes back from the radio too, JTTY_DO RUBOUT, a character it
+   has been given but not yet sent. */
 
 #define CW_BOX_ROOM 60
 #define CW_TEXT_SPACE '_'
+#define JTTY_TEXT_SPACE '~'
 #define CW_LINE_HEIGHT 28
 #define CW_PLAY_WIDTH 56
 //the room it lies in, as main.cpp has the screen: right of the column,
@@ -1668,14 +1678,22 @@ static void cw_box_show(){
 		lv_label_set_text(cw_play_label, LV_SYMBOL_PLAY);
 }
 
-//text to go to the radio: added to what waits, a space as "_"
+static bool is_jtty(){
+	return controls_is("MODE", "JTTY");
+}
+
+//text to go to the radio: added to what waits, a space as "_", or in
+//JTTY as "~"
 static void cw_to_go_add(const char *text){
 	size_t waiting = strlen(cw_to_go);
 	const char *at;
+	char space = CW_TEXT_SPACE;
 
+	if (is_jtty())
+		space = JTTY_TEXT_SPACE;
 	for (at = text; *at != 0 && waiting < sizeof(cw_to_go) - 1; at++){
 		if (*at == ' ')
-			cw_to_go[waiting++] = CW_TEXT_SPACE;
+			cw_to_go[waiting++] = space;
 		else
 			cw_to_go[waiting++] = *at;
 	}
@@ -1703,6 +1721,8 @@ static void cw_rub_out(){
 		cw_box[had - 1] = 0;
 	if (waiting > 0)
 		cw_to_go[waiting - 1] = 0;
+	else if (had > 0 && is_cw_playing && is_jtty())
+		send_action("JTTY_DO", "RUBOUT");
 	cw_box_show();
 }
 
@@ -1733,7 +1753,7 @@ void screens_cw_sent(const char *text){
 
 	for (at = text; *at != 0; at++){
 		c = *at;
-		if (c == CW_TEXT_SPACE)
+		if (c == CW_TEXT_SPACE || c == JTTY_TEXT_SPACE)
 			c = ' ';
 		if (cw_box[0] != 0 && toupper((unsigned char)cw_box[0]) == toupper((unsigned char)c))
 			memmove(cw_box, cw_box + 1, strlen(cw_box));
@@ -1749,6 +1769,8 @@ static void on_cw_play(lv_event_t *e){
 	cw_to_go[0] = 0;
 	if (is_cw_playing)
 		cw_to_go_add(cw_box);
+	else if (is_jtty())
+		send_action("JTTY_DO", "ESC");
 	else
 		send_action("CW_DO", "ESC");
 	cw_box_show();
@@ -1779,8 +1801,10 @@ static void cw_send_waiting(){
 	if (cw_to_go[0] == 0 || i2c_link_is_sending_text())
 		return;
 	c = controls_find("CW_TEXT");
+	if (is_jtty())
+		c = controls_find("JTTY_LIVE");
 	if (c != NULL){
-		Serial.printf("CW_TEXT %s\n", cw_to_go);
+		Serial.printf("%s %s\n", c->d.name, cw_to_go);
 		i2c_link_send_text(c->d.number, cw_to_go);
 	}
 	cw_to_go[0] = 0;
