@@ -493,7 +493,7 @@ static struct control stack = {
 
 static struct control mode = {
 	.group = "RADIO", .name = "MODE", .kind = CONTROL_CHOICE,
-	.choices = "USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP",
+	.choices = "USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP",
 	.value = STARTING_MODE, .apply = apply_mode,
 };
 

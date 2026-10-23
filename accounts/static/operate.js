@@ -23,6 +23,18 @@
 //   row 7   under the waterfall, six places for the mode's own buttons:
 //           TX and RX in the voice modes, the CW macros in CW
 //
+// In JTTY the left half under the status line is the list of the bins:
+// the passband from 200 to 3200 Hz in 24 bins of 125 Hz, a row each, the
+// lowest at the top, each with what has been read in it, newest at the
+// right; modems/modem_jtty.c says what a bin is. A tap on a row chooses
+// that station to chat with, JTTY_RX, which the radio's own transmitter
+// follows unless JTTY_SPLIT is on; a tap on the graph chooses the pitch it
+// fell at. The chosen bin's row is lit, and its text runs along the status
+// line as CW's does. ABC, on the left, brings up the bar to type in, as in
+// CW, and on a computer a key struck brings it up too; Enter sends the
+// line, cut at spaces into pieces of at most JTTY_PIECE characters, a
+// control's value being at most 63, and ESC stops what is being sent.
+//
 // HOW IT REACHES THE RADIO
 //
 // A browser cannot make the plain connection the window makes. The page
@@ -143,6 +155,11 @@
   var work = null, isConnected = false, retry = null;
   var points = [], spanHz = 0, envelope = null;
   var cwRead = "", marked = null, logQuery = "";
+  var JTTY_BINS = 24, JTTY_LOWEST_HZ = 200, JTTY_BIN_HZ = 125, JTTY_PIECE = 60;
+  // a bin with nothing heard in it is chosen at a pitch that sets the
+  // signal in the bin's middle: its four tones are 94 Hz wide
+  var JTTY_IN_BIN_HZ = 16;
+  var binText = [], binHz = [], binRows = [], jttySaid = null;
 
   function stored(name, otherwise) {
     try { return window.localStorage.getItem("zbitx." + name) || otherwise; }
@@ -245,6 +262,8 @@
   views.id = "views";
   var messages = make("div", "", null, views);
   messages.id = "messages";
+  var bins = make("div", "", null, views);
+  bins.id = "bins";
   var scopeBox = make("div", "canvas-box", null, views);
   scopeBox.id = "scope-box";
   var scope = make("canvas", "", null, scopeBox);
@@ -347,6 +366,7 @@
     // cuts what is too long, and once it filled, the newest letters were
     // the ones cut, to be seen only when as many more had come in after
     if (name === "CW") { cwRead = (cwRead + value).slice(-80); say(cwRead, "cw"); return; }
+    if (name === "JTTY_BIN") { takeBin(value); return; }
     if (name === "SAY" || name === "ERROR") { say(value); return; }
     if (name === "WARN") { say(value, "warning"); return; }
     if (name === "QSO") { say(value, value ? "qso" : ""); return; }
@@ -383,8 +403,9 @@
       schema = {};
       order = [];
       messages.textContent = "";
+      clearBins();
       say("connected to " + words[1] + " through my.sbitx.net");
-      send("schema\nspectrum on\nmessages on\ntime");
+      send("schema\nspectrum on\nmessages on\ntime\njtty");
     } else if (words[0] === "busy") {
       say(NAME + " is being worked by another client; trying again");
     } else if (words[0] === "closed") {
@@ -420,6 +441,10 @@
     return mode;
   }
   function isFt8() { return modeGroup() === "FT8"; }
+  function isJtty() { return modeGroup() === "JTTY"; }
+  // the modes that show the passband from nothing to 4 kHz, and where a
+  // tap on the graph chooses a pitch
+  function isByPitch() { return isFt8() || isJtty(); }
   function isSending() { return values.TX === "ON"; }
   function isVoipSending() { return values.VOIP_TX === "ON"; }
 
@@ -552,9 +577,10 @@
     var labels = ["LOG", "SET", "TERM", ""];
     if (group === "CW") { labels[2] = "KEY"; labels[3] = "ESC"; }
     if (group !== "CW" && keyerBox.className !== "gone") { showKeyer(false); }
-    if (group !== "CW" && typingBar.className !== "gone") { showTyping(false); }
+    if (group !== "CW" && group !== "JTTY" && typingBar.className !== "gone") { showTyping(false); }
     tellKeyer();
     if (group === "FT8") { labels[2] = "CQ"; labels[3] = "HALT"; }
+    if (group === "JTTY") { labels[2] = "ABC"; labels[3] = "ESC"; }
     column.forEach(function (t, n) {
       t.value.textContent = labels[n];
       t.box.className = "tile button" + (labels[n] === "TERM" ? " dim" : "")
@@ -568,7 +594,8 @@
         + (label === "TX" && isVoipSending() ? " voip-on" : "")
         + (label === "RX" && !isSending() && !isVoipSending() ? " focused" : "");
     }
-    app.className = isFt8() ? "ft8" : "";
+    app.className = isFt8() ? "ft8" : isJtty() ? "jtty" : "";
+    showBins();
 
     showList();
     drawMeter();
@@ -798,9 +825,12 @@
   typingBox.setAttribute("autocorrect", "off");
   typingBox.setAttribute("enterkeyhint", "send");
   typingBox.placeholder = "type to send";
+  function placeTyping() {
+    typingBox.placeholder = isJtty() ? "type a line; Enter sends it" : "type to send";
+  }
   typingBar.appendChild(typingBox);
   make("button", "", "ESC", typingBar).addEventListener("click", function () {
-    send("CW_DO ESC");
+    send(isJtty() ? "JTTY_DO ESC" : "CW_DO ESC");
     typingBox.value = "";
     typedBefore = "";
     typingBox.focus();
@@ -810,6 +840,7 @@
   });
 
   function showTyping(on) {
+    placeTyping();
     typingBar.className = on ? "" : "gone";
     typingBox.value = "";
     typedBefore = "";
@@ -820,6 +851,8 @@
   // come to hold; what it holds beyond what it held is what was typed
   typingBox.addEventListener("input", function () {
     var now = typingBox.value;
+    // in JTTY a line is sent whole, on Enter
+    if (isJtty()) { return; }
     if (now.length > typedBefore.length && now.indexOf(typedBefore) === 0) {
       typeCw(now.slice(typedBefore.length));
     }
@@ -831,7 +864,12 @@
     typedBefore = now;
   });
   typingBox.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && isJtty()) {
+      e.preventDefault();
+      sendJttyLine(typingBox.value);
+      typingBox.value = "";
+      typedBefore = "";
+    } else if (e.key === "Enter") {
       e.preventDefault();
       typingBox.value += " ";
       typedBefore = typingBox.value;
@@ -843,6 +881,16 @@
   // a computer's keys, struck with nothing open to type in
   document.addEventListener("keydown", function (e) {
     var into = e.target && e.target.tagName;
+    // in JTTY a key struck brings up the bar to type the line in
+    if (isJtty() && isStarted && !e.ctrlKey && !e.altKey && !e.metaKey && into !== "INPUT"
+        && into !== "TEXTAREA" && veil.className !== "shown" && panel.className !== "shown"
+        && e.key.length === 1) {
+      e.preventDefault();
+      showTyping(true);
+      typingBox.value = e.key;
+      typedBefore = typingBox.value;
+      return;
+    }
     if (modeGroup() !== "CW" || !isStarted || e.ctrlKey || e.altKey || e.metaKey
         || into === "INPUT" || into === "TEXTAREA" || veil.className === "shown"
         || panel.className === "shown") {
@@ -887,7 +935,8 @@
     if (label === "LOG") { openLog(); }
     if (label === "SET") { openSettings(); }
     if (label === "KEY") { showKeyer(keyerBox.className === "gone"); }
-    if (label === "ESC") { send("CW_DO ESC"); }
+    if (label === "ABC") { showTyping(typingBar.className === "gone"); }
+    if (label === "ESC") { send(isJtty() ? "JTTY_DO ESC" : "CW_DO ESC"); }
     if (label === "CQ") { send("FT8_DO CQ"); }
     if (label === "HALT") { send("FT8_DO HALT"); }
   }
@@ -1080,7 +1129,7 @@
     var range = { low: 0, high: 0, first: 0, count: points.length };
     if (!spanHz || points.length < 2) { return range; }
     var hzAPoint = spanHz / points.length, middle = points.length / 2;
-    if (isFt8()) {
+    if (isByPitch()) {
       range.low = 0; range.high = 4000;
     } else {
       var chosen = parseFloat(values.SPAN || "25") * 1000;
@@ -1107,6 +1156,7 @@
       if (Number(values.FREQ || 0) < 10000000) { band.low = -2750; band.high = -250; }
     }
     if (mode === "FT8") { band.tuned = Number(values.TX_PITCH || 0); band.low = 50; band.high = 4000; }
+    if (mode === "JTTY") { band.tuned = Number(values.JTTY_RX || 0); band.low = 50; band.high = 4000; }
     if (mode === "CW") { band.tuned = pitch; band.low = pitch - bwCw / 2; band.high = pitch + bwCw / 2; }
     if (mode === "CWR") { band.tuned = -pitch; band.low = -pitch - bwCw / 2; band.high = -pitch + bwCw / 2; }
     return band;
@@ -1153,11 +1203,11 @@
       pen.moveTo(xOf(band.tuned), 0); pen.lineTo(xOf(band.tuned), graph); pen.stroke();
       pen.fillStyle = "#8fa1b0"; pen.font = (high * 0.055) + "px sans-serif";
       pen.textBaseline = "top";
-      if (!isFt8()) { pen.fillText(values.SPAN || "", 4, 3); }
+      if (!isByPitch()) { pen.fillText(values.SPAN || "", 4, 3); }
     }
     pen.imageSmoothingEnabled = false;
     pen.drawImage(fall, range.first, 0, range.count, fall.height, 0, graph, wide, high - graph);
-    if (band.tuned !== 0 || isFt8()) {
+    if (band.tuned !== 0 || isByPitch()) {
       pen.strokeStyle = "#ff4d4d"; pen.setLineDash([3, 3]); pen.beginPath();
       pen.moveTo(xOf(band.tuned), graph); pen.lineTo(xOf(band.tuned), high); pen.stroke();
       pen.setLineDash([]);
@@ -1165,14 +1215,14 @@
   }
 
   // a finger drawn along the graph tunes; a tap goes to the next span, or
-  // in FT8 puts our pitch where it fell
+  // in FT8 puts our pitch where it fell, and in JTTY the pitch listened to
   var held = null;
   scope.addEventListener("pointerdown", function (e) {
     held = { x: e.clientX, from: e.clientX, moved: false };
     scope.setPointerCapture(e.pointerId);
   });
   scope.addEventListener("pointermove", function (e) {
-    if (!held || isFt8()) { return; }
+    if (!held || isByPitch()) { return; }
     var steps = Math.trunc((held.x - e.clientX) / PIXELS_A_STEP);
     if (steps !== 0) {
       held.moved = true;
@@ -1184,12 +1234,13 @@
     var was = held;
     held = null;
     if (!was || was.moved || Math.abs(e.clientX - was.from) > 6) { return; }
-    if (isFt8()) {
-      var box = scope.getBoundingClientRect(), pitch = schema.TX_PITCH;
+    if (isByPitch()) {
+      var box = scope.getBoundingClientRect(), named = isJtty() ? "JTTY_RX" : "TX_PITCH";
+      var pitch = schema[named];
       if (pitch) {
         var hz = (e.clientX - box.left) * 4000 / box.width;
         hz = Math.round(hz / pitch.step) * pitch.step;
-        set("TX_PITCH", Math.max(pitch.min, Math.min(pitch.max, hz)));
+        set(named, Math.max(pitch.min, Math.min(pitch.max, hz)));
       }
     } else if (schema.SPAN) {
       var spans = schema.SPAN.choices, at = spans.indexOf(values.SPAN);
@@ -1207,7 +1258,7 @@
   var wheelPixels = 0;
   document.addEventListener("wheel", function (e) {
     var over = e.target.closest ? e.target : document.body;
-    if (!over.closest("#app") || over.closest("#list, #messages")) { return; }
+    if (!over.closest("#app") || over.closest("#list, #messages, #bins")) { return; }
     e.preventDefault();
     var pixels = -e.deltaY;
     if (e.deltaMode === 1) { pixels *= WHEEL_LINE_PIXELS; }
@@ -1430,6 +1481,84 @@
     while (messages.childNodes.length > 200) { messages.removeChild(messages.firstChild); }
     if (!marked) { messages.scrollTop = messages.scrollHeight; }
   }
+
+  /* JTTY's bins */
+
+  function binOf(hz) {
+    return Math.max(0, Math.min(JTTY_BINS - 1, Math.floor((hz - JTTY_LOWEST_HZ) / JTTY_BIN_HZ)));
+  }
+
+  function chosenBin() { return binOf(Number(values.JTTY_RX || 0)); }
+
+  function clearBins() {
+    binText = []; binHz = []; jttySaid = null;
+    showBins();
+  }
+
+  // "10 1507 RAN ALL NIGHT": the bin, the pitch last heard in it, its text
+  function takeBin(said) {
+    var first = said.indexOf(" "), second = said.indexOf(" ", first + 1);
+    if (first < 0) { return; }
+    var bin = Number(said.slice(0, first));
+    if (!(bin >= 0 && bin < JTTY_BINS)) { return; }
+    binHz[bin] = Number(said.slice(first + 1, second < 0 ? said.length : second));
+    binText[bin] = second < 0 ? "" : said.slice(second + 1);
+    showBins();
+  }
+
+  // a row for each bin, made once
+  function makeBinRows() {
+    var n;
+    for (n = 0; n < JTTY_BINS; n++) {
+      var row = make("div", "", null, bins);
+      make("span", "hz", String(JTTY_LOWEST_HZ + n * JTTY_BIN_HZ), row);
+      make("span", "text", "", row);
+      row.addEventListener("click", chooseBin.bind(null, n));
+      binRows.push(row);
+    }
+  }
+
+  // the station in the bin is listened to where it was last heard; an
+  // empty bin, in its middle
+  function chooseBin(n) {
+    var hz = binHz[n] || (JTTY_LOWEST_HZ + n * JTTY_BIN_HZ + JTTY_IN_BIN_HZ);
+    set("JTTY_RX", hz);
+  }
+
+  function showBins() {
+    var chosen = chosenBin(), n;
+    for (n = 0; n < binRows.length; n++) {
+      var text = binText[n] || "", look = (n === chosen ? "chosen" : "") + (text ? "" : " empty");
+      // a bin with a station in it is named by the pitch it was heard at,
+      // as WSJT-X names a signal; an empty one by where it begins
+      var hz = String(text && binHz[n] ? binHz[n] : JTTY_LOWEST_HZ + n * JTTY_BIN_HZ);
+      if (binRows[n].firstChild.textContent !== hz) { binRows[n].firstChild.textContent = hz; }
+      if (binRows[n].lastChild.textContent !== text) { binRows[n].lastChild.textContent = text; }
+      if (binRows[n].className !== look) { binRows[n].className = look; }
+    }
+    // the chosen bin's text runs along the status line, as CW's does, when
+    // it, or the choice, has changed
+    if (!isJtty()) { jttySaid = null; return; }
+    var said = binText[chosen] || ("JTTY: listening at " + (values.JTTY_RX || "") + " Hz");
+    if (said !== jttySaid) {
+      jttySaid = said;
+      say(said, "cw");
+    }
+  }
+
+  // a line typed, sent in pieces cut at spaces, each a control's value long
+  function sendJttyLine(line) {
+    var rest = line.toUpperCase().replace(/\s+/g, " ").trim(), piece, cut;
+    while (rest) {
+      piece = rest.slice(0, JTTY_PIECE);
+      cut = piece.lastIndexOf(" ");
+      if (rest.length > JTTY_PIECE && cut > 0) { piece = piece.slice(0, cut); }
+      send("JTTY_TEXT " + piece);
+      rest = rest.slice(piece.length).trim();
+    }
+  }
+
+  makeBinRows();
 
   /* the settings and the logbook, which come up over the page */
 

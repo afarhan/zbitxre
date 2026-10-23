@@ -1,0 +1,39 @@
+libjtty — the JTTY coding, by Oleg Belousov, R1CBU.
+
+    https://github.com/strijar/libjtty        GPL version 3, see COPYING
+
+These are the files of the library's src/ and include/ folders at its
+commit 74025b2 of 28 September 2026, "Memory optimization, stream
+decoder", put side by side in one folder. They are not changed here.
+NOTICE is the library's own account of where it comes from: it was written
+in C from WSJT-X 3.2.0-rc1, whose JTTY is in Fortran, and links nothing of
+WSJT-X. PROTOCOL.md is its account of the protocol.
+
+JTTY is WSJT-X's mode for typed text, from version 3.2: four tones 31.25 Hz
+apart, a frame of 1.888 seconds to every five characters or so, and no
+slots, so that an over begins when the operator sends it. What WSJT-X
+3.3.0-beta4 sends is what 3.2.0-rc1 sent: between the two the files of the
+protocol, lib/jtty/jtty_spec.f90, the coding and the waveform, are the
+same, and the source coding gained only a way to send a message in pieces
+and a code for text it cannot send.
+
+    registry    the alphabet, the control phrases, the ARRL sections
+    callsign    callsigns packed as FT8 packs them, in 28 bits
+    atom        each frame's 34 bits: a callsign, an exchange, a phrase, or
+                five characters of text
+    text        packs a text into the fewest frames, and back
+    crc         the 12 bit check on a frame
+    fec         the error correction: a tail-biting convolutional code,
+                and its Viterbi decoder
+    modulator   the tones made into sound, at 12000 a second
+    synchronizer, demodulator, receiver
+                find the frames in a stream of sound, and read them
+
+What the radio has of it is in modems/modem_jtty.c, which says how it is
+used. The sound sent is not made with the library's modulator, which works
+at 12000 a second, but at the sound card's rate with ft8_signal.c's
+synth_gfsk(), which makes the same signal: JTTY's tones glide as FT8's do.
+
+Measured against WSJT-X by its author, the library reads half its frames
+at -14.6 dB, where WSJT-X reads half at -16.0 dB; it does not take out a
+signal it has read to look under it, as WSJT-X does.

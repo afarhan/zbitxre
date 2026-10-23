@@ -32,7 +32,7 @@ HW_HEADERS  = hw/i2c.h hw/si5351.h hw/gpio.h hw/board.h hw/audio.h hw/panel.h hw
 	$(LINK_HEADERS)
 DSP_HEADERS = dsp/sdr.h modem.h control.h macros.h messages.h rtp_audio.h rtp_microphone.h rtp_voip.h modems/cw_keyer.h \
 	modems/cw_text.h modems/modem_cw.h modems/ft8_monitor.h modems/ft8_signal.h modems/modem_ft8.h \
-	modems/ft8_callsign_hash.h dsp/rade_codec.h
+	modems/ft8_callsign_hash.h modems/modem_jtty.h dsp/rade_codec.h
 HW          = hw/i2c.c hw/si5351.c hw/gpio.c hw/board.c hw/audio.c hw/panel.c hw/key.c \
 	hw/radio_clock.c hw/swr_bridge.c \
 	$(LINK)
@@ -47,6 +47,9 @@ KISS_FFT    = $(BUILD)/kiss_fft.o
 # FT8's coding is ft8_lib's, in modems/ft8_lib as zbitxv2 had it, and is
 # built in the same way; modems/ft8_lib/README says what it is
 FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard modems/ft8_lib/*.c))
+# and JTTY's is libjtty's, in modems/jtty_lib, built the same way;
+# modems/jtty_lib/README says what it is
+JTTY_LIB    = $(patsubst modems/jtty_lib/%.c,$(BUILD)/jtty_lib_%.o,$(wildcard modems/jtty_lib/*.c))
 # RADE, FreeDV's digital voice, is rade_c's, in modems/rade_c, on the part
 # of Opus in modems/opus_dnn; their READMEs say what they are. They are
 # built as they are, each file on its own with its warnings off, and with
@@ -78,7 +81,7 @@ RADE_LIB    = $(patsubst %,$(BUILD)/rade_c_%.o,$(RADE_C_FILES)) \
 	$(patsubst %,$(BUILD)/opus_top_%.o,$(OPUS_TOP_FILES)) \
 	$(BUILD)/rade_codec.o
 DSP         = core_sdr.c control.c macros.c messages.c rtp_audio.c rtp_microphone.c rtp_voip.c dsp/filter.c dsp/vfo.c $(KISS_FFT) \
-	$(MODEMS) $(MODEM_LIST) $(FT8_LIB) $(RADE_LIB)
+	$(MODEMS) $(MODEM_LIST) $(FT8_LIB) $(JTTY_LIB) $(RADE_LIB)
 RADIO_LIBS  = -lasound -lpthread -lm
 
 HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
@@ -89,7 +92,7 @@ HOST_TESTS  = $(BUILD)/test_si5351_math $(BUILD)/test_am $(BUILD)/test_link \
 	$(BUILD)/test_ft8_qso $(BUILD)/test_cw_decoder $(BUILD)/test_logger \
 	$(BUILD)/test_sbitxv3 $(BUILD)/test_sha256 $(BUILD)/test_rtp_audio \
 	$(BUILD)/test_rtp_microphone $(BUILD)/test_rtp_voip $(BUILD)/test_telephone $(BUILD)/test_cat \
-	$(BUILD)/test_rade_codec $(BUILD)/test_rade
+	$(BUILD)/test_rade_codec $(BUILD)/test_rade $(BUILD)/test_jtty
 RADIO_TESTS = $(BUILD)/test_si5351 $(BUILD)/test_board $(BUILD)/test_audio \
 	$(BUILD)/test_panel
 TOOLS       = sdr
@@ -141,6 +144,7 @@ check: $(HOST_TESTS) data/cw.mc
 	$(BUILD)/test_cat
 	$(BUILD)/test_rade_codec
 	$(BUILD)/test_rade
+	$(BUILD)/test_jtty
 
 radio: $(RADIO_TESTS)
 	$(BUILD)/test_si5351
@@ -217,6 +221,14 @@ $(BUILD)/test_rade: tests/test_rade.c radio.c server.c settings.c logbook.c radi
 	$(CC) $(CFLAGS) -o $@ tests/test_rade.c radio.c server.c settings.c logbook.c $(DSP) \
 		$(STAND_INS) -lpthread -lm -lsqlite3
 
+# JTTY sent and read back through the whole radio, at a sound card's pace,
+# and WSJT-X's sample recording read by the library
+$(BUILD)/test_jtty: tests/test_jtty.c radio.c server.c settings.c logbook.c radio.h \
+		server.h settings.h control.h logbook.h $(DSP) $(STAND_INS) $(DSP_HEADERS) \
+		$(HW_HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_jtty.c radio.c server.c settings.c logbook.c $(DSP) \
+		$(STAND_INS) -lpthread -lm -lsqlite3
+
 $(BUILD)/test_cw_keyer: tests/test_cw_keyer.c modems/cw_keyer.c modems/cw_keyer.h | $(BUILD)
 	$(CC) $(CFLAGS) -Imodems -o $@ tests/test_cw_keyer.c modems/cw_keyer.c -lm
 
@@ -286,6 +298,9 @@ $(BUILD)/test_rade_codec: tests/test_rade_codec.c dsp/rade_codec.h $(RADE_LIB) |
 	$(CC) $(CFLAGS) -o $@ tests/test_rade_codec.c $(RADE_LIB) -lm
 
 $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUILD)
+	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
+
+$(BUILD)/jtty_lib_%.o: modems/jtty_lib/%.c $(wildcard modems/jtty_lib/*.h) | $(BUILD)
 	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
 
 $(BUILD)/test_ft8: tests/test_ft8.c modems/ft8_monitor.c modems/ft8_monitor.h \

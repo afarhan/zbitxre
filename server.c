@@ -113,6 +113,17 @@
 //     CW CQ CQ DE VU
 //     CW 2ESE
 //
+// In JTTY, what has been read in each of the bins of the passband goes
+// to every client as it changes: the bin, counted from 0, the pitch of
+// what was last heard in it in Hz, and the newest of its text, all of it
+// that is kept and not only what is new, so that a client shows a bin's
+// line as it is told it. modems/modem_jtty.c says what a bin is and what
+// is in its text. A client that has just come sends jtty, and is told
+// every bin that has something in it:
+//
+//     jtty
+//     JTTY_BIN 10 1507 RAN ALL NIGHT ON BAND NOISE - NO FALSE DECODES! |
+//
 // SAY is a remark: why something asked for was not done, how a thing
 // went. WARN is one the operator has to act on before what was asked can
 // be done, a callsign or a grid not set; a client may show it more boldly.
@@ -251,6 +262,7 @@
 #define MESSAGE_LINE_MAX (MESSAGE_TEXT_ROOM + 48)
 #define ANSWER_WORD "answer "
 #define LOG_WORD "log"
+#define BINS_WORD "jtty"
 #define LOG_DELETE_WORD "logdel "
 #define LOG_ENTRIES_MAX 100
 #define LOG_LINE_MAX (12 * LOGBOOK_FIELD_MAX)
@@ -275,6 +287,7 @@ struct client {
 };
 
 static void (*answer_a_message)(const char *line);
+static void (*resend_the_bins)(void);
 
 static int listener = NOBODY;
 static struct client clients[SERVER_CLIENTS_MAX];
@@ -537,6 +550,17 @@ void server_on_answer(void (*answer)(const char *line)) {
 	answer_a_message = answer;
 }
 
+void server_on_bins_asked(void (*resend)(void)) {
+	resend_the_bins = resend;
+}
+
+void server_send_jtty_bin(int bin, int hz, const char *text) {
+	char said[LINE_MAX_LENGTH];
+
+	snprintf(said, sizeof(said), "%d %d %s", bin, hz, text);
+	tell_everyone("JTTY_BIN", said);
+}
+
 // to each client that asked, the messages copied since it was last sent
 // any, as many as there is room to queue for it
 void server_send_messages(void) {
@@ -716,6 +740,11 @@ static void handle_line(struct client *c, char *line) {
 	}
 	if (!strcmp(line, "messages off")) {
 		c->wants_messages = 0;
+		return;
+	}
+	if (!strcmp(line, BINS_WORD)) {
+		if (resend_the_bins != NULL)
+			resend_the_bins();
 		return;
 	}
 	if (!strncmp(line, ANSWER_WORD, strlen(ANSWER_WORD))) {

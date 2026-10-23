@@ -140,7 +140,7 @@ These are the reasons the source gives:
 | No space in the line, and not a request from section 3 | `ERROR <the whole line> a label and a value` |
 | No such control | `ERROR FOO no such control` |
 | Number out of range or not a whole number | `ERROR FREQ a number from 500000 to 30000000` |
-| Not one of the choices | `ERROR MODE one of USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP` |
+| Not one of the choices | `ERROR MODE one of USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP` |
 | The control's own code refused it | `ERROR <name> <its reason>`. Examples from the source: `ERROR TX this mode does not transmit`, `ERROR CLOCK the clock is set with TIME_SET`, `ERROR STACK the radio is not on a band`, `ERROR MACRO macros are sent in CW`, `ERROR MACRO no such macro`, `ERROR CW_TEXT text is sent in CW`, `ERROR CW_KEY one to twelve dots and dashes, and the gap before them in ms` |
 
 A misspelt request is treated as a control. For example, `spectrum on ` with
@@ -403,7 +403,7 @@ These lines are exactly what `tests/test_server.c` expects the server to send
 for these controls:
 
     CONTROL RADIO FREQ number 500000 30000000 1
-    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP
+    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP
     CONTROL CW WPM number 5 50 1
     CONTROL RADIO IF number 0 100 1
     CONTROL RADIO DRIVE number 0 100 1
@@ -429,7 +429,7 @@ table is the list in the source when this chapter was written, for reference.
 | RADIO | `FREQ` | number | 500000–30000000, step 1 | Hz |
 | RADIO | `BAND` | choice | `80M/60M/40M/30M/20M/17M/15M/12M/10M` | Setting it goes to where the operator last was on that band. The radio may report `OUT`, which cannot be set. |
 | BAND | `STACK` | number | 0–3 | The place in the band's stack of four memories |
-| RADIO | `MODE` | choice | `USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP` | |
+| RADIO | `MODE` | choice | `USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP` | |
 | RADIO | `AUDIO` | number | 0–100 | Volume |
 | RADIO | `IF` | number | 0–100 | Sound card input gain |
 | RADIO | `DRIVE` | number | 0–100 | |
@@ -727,7 +727,7 @@ Send something the radio will not take:
     FREQ 1
     ERROR FREQ a number from 500000 to 30000000
     MODE usb
-    ERROR MODE one of USB/LSB/CW/CWR/AM/FT8/2TONE/RADE1/RADE2/VOIP
+    ERROR MODE one of USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP
     hello
     ERROR hello a label and a value
 

@@ -1495,7 +1495,8 @@ void sdr_request(char *request, char *response){
 			rx_wanted->mode = MODE_2TONE;
 		else if (!strcmp(value, "TUNE"))
 			rx_wanted->mode = MODE_TUNE;
-		else if (!strcmp(value, "FT8"))
+		//JTTY is heard and sent on the upper sideband, as FT8 is
+		else if (!strcmp(value, "FT8") || !strcmp(value, "JTTY"))
 			rx_wanted->mode = MODE_FT8;
 		else if (!strcmp(value, "AM"))
 			rx_wanted->mode = MODE_AM;

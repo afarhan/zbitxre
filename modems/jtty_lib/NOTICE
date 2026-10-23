@@ -1,0 +1,18 @@
+JTTY C implementation
+
+This implementation was developed by studying the local WSJT-X source tree
+wsjtx-3.2.0-rc1. It is an independent C implementation at build/runtime level;
+it is not a clean-room implementation and is not a WSJT-X project release.
+
+Protocol constants, registries and reference test vectors originate from
+WSJT-X, by the WSJT Development Team and contributors, distributed under the
+GNU General Public License. This project is distributed under GPL version 3;
+see COPYING. No WSJT-X object code is linked into the C library.
+
+The optional tests/reference.f90 oracle links original WSJT-X files only when
+explicitly running the interoperability test. tests/wsjtx_pack.tsv records
+expected examples from tests/unit/jtty/test_jtty_pack.f90. The payload and
+channel vectors in tests/test_jtty.c come from jtty_source_encoding.txt and
+test_jtty_tbcc_code_profile.f90 respectively.
+
+See PROTOCOL.md and tests/reference.sha256 for the exact source inputs.

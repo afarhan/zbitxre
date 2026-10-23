@@ -81,6 +81,10 @@
 // line, and what zbitxv2's decoder reads is printed a line at a time, "cw
 // goertzel: CQ CQ DE VU2ESE"; panel_cw.c says how.
 //
+// In JTTY each frame is printed as it is read, "jtty: 1507 Hz  RAN A", and
+// what has been read in each bin of the passband goes to the network's
+// clients as it changes; modems/modem_jtty.c and server.c say how.
+//
 // "WIFI SCAN" lists the WiFi access points the radio can hear, on the
 // terminal and to the panel, whose WiFi screen asks for it; panel_wifi.c
 // says how.
@@ -242,6 +246,7 @@
 #include "panel_log.h"
 #include "panel_messages.h"
 #include "panel_cw.h"
+#include "modems/modem_jtty.h"
 #include "radio_clock.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
@@ -1892,6 +1897,7 @@ static void main_loop(void) {
 		messages_print();
 		utc_send();
 		panel_cw_poll(now_ms());
+		jtty_poll_bins(server_send_jtty_bin);
 		ft8_qso_poll();
 		panel_messages_poll();
 		server_send_messages();
@@ -1994,6 +2000,7 @@ int main(int argc, char **argv) {
 	panel_controls_describe();
 
 	server_on_answer(answer_message);
+	server_on_bins_asked(jtty_resend_bins);
 	panel_also_tell(server_say, server_warn, server_show_qso);
 	panel_cw_also_tell(server_send_cw);
 	panel_cw_also_tell_sent(server_send_cw_sent);

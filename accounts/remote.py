@@ -347,7 +347,7 @@ CONTROL_LINE = re.compile(r"^[A-Z][A-Z0-9_]* ?")
 TUNED_LINE = re.compile(r"^TUNED [0-9]{3,9} [A-Z0-9]{1,8}$")
 # what a radio sends that is not a control's value
 NOT_CONTROLS = ("SPECTRUM", "MODULATION", "MESSAGE", "CW", "SAY", "WARN", "QSO", "LOG",
-                "LOG_LIST", "TIME", "ERROR", "CONTROL")
+                "LOG_LIST", "TIME", "ERROR", "CONTROL", "JTTY_BIN")
 
 
 def proof(key, side, name, challenge, nonce):

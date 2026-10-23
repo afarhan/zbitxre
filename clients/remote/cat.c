@@ -161,7 +161,7 @@ static int is_vfo_name(const char *word) {
 }
 
 static const char *mode_said(const char *mode) {
-	if (!strcmp(mode, "FT8"))
+	if (!strcmp(mode, "FT8") || !strcmp(mode, "JTTY"))
 		return "PKTUSB";
 	if (!strcmp(mode, "2TONE") || mode[0] == 0)
 		return "USB";

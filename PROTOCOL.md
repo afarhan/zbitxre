@@ -62,7 +62,7 @@ because it was told one: it shows it, and that is all.
 that it can build itself without knowing beforehand what this radio has:
 
     CONTROL RADIO FREQ number 500000 30000000 1
-    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/2TONE/RADE2
+    CONTROL RADIO MODE choice USB/LSB/CW/CWR/AM/FT8/JTTY/2TONE/RADE1/RADE2/VOIP
     CONTROL CW WPM number 5 50 1
     CONTROL CW MACRO action CQ/RST/End
     CONTROL STATION MYCALLSIGN text
@@ -137,6 +137,24 @@ its line back after the word `answer`.
 **CW read off the air**, a few characters at a time:
 
     CW CQ CQ DE VU
+
+**JTTY read off the air.** In JTTY the passband from 200 to 3200 Hz is cut into
+24 bins of 125 Hz, and what has been read in each is kept. A bin goes to every
+client when it changes, all of what is kept of it and not only what is new: the
+bin, counted from 0 at the bottom, the pitch in Hz of what was last heard in it,
+which is where its lowest tone is, as WSJT-X gives a signal's frequency, and its
+newest 80 characters. ` | ` is the end of a message, what the radio sent itself
+is in small letters, and `(stopped)` follows a message stopped before it had
+all gone:
+
+    JTTY_BIN 10 1507 cq vu2ese | RAN ALL NIGHT ON BAND NOISE - NO FALSE DECODES! |
+
+A client that has just connected sends `jtty`, and is sent every bin that has
+something in it. What is sent is a line at a time, `JTTY_TEXT`, an action that
+takes a control's value of text, 63 characters; a longer line is sent in pieces.
+`JTTY_DO ESC` stops what is being sent and drops what waits. `JTTY_RX` is the
+pitch of the station being chatted with, and `JTTY_TX`, where the radio sends,
+follows it unless `JTTY_SPLIT` is `ON`. `modems/modem_jtty.c` says more.
 
 **Remarks.** `SAY` is a remark, `WARN` one the operator has to act on, and
 `QSO` how the FT8 contact under way stands, empty when it ends:

@@ -18,6 +18,10 @@
 // without the silence zbitxv2 put around it to fill the slot. When it
 // begins is modem_ft8.c's business.
 //
+// JTTY's tones glide in the same way, with the same filter, and
+// modem_jtty.c makes its sound with synth_gfsk() too, given its own tones,
+// its symbol of 32 ms and its pitch.
+//
 // A MESSAGE THAT CANNOT BE PACKED IS REFUSED
 //
 // The library packs every kind of message WSJT-X sends: /P and /R, CQ
@@ -71,7 +75,7 @@ static void gfsk_pulse(int n_spsym, float symbol_bt, float *pulse)
 /// The output waveform will contain n_sym symbols. The frequency of each
 /// sample is worked out as it is needed, from the symbols around it, where
 /// the library kept them all in an array as long as the sound.
-static void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt,
+void synth_gfsk(const uint8_t *symbols, int n_sym, float f0, float symbol_bt,
 	float symbol_period, int signal_rate, float *signal)
 {
 	int n_spsym = (int)(0.5f + signal_rate * symbol_period); // Samples per symbol
