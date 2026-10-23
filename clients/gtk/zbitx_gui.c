@@ -206,8 +206,7 @@
 // bin begins if none has been, and the newest of its text, against the
 // row's right end. modems/modem_jtty.c says what a bin is. A tap on a row
 // chooses that station, JTTY_RX, and the row is lit; its text runs along
-// the status line as CW's does. Typing in JTTY is not here yet: it is the
-// web page's.
+// the status line as CW's does.
 //
 // The two lists scroll, by the wheel, their bars, or a finger drawn up or
 // down them. A row's tap is a press and a release in one place: a finger
@@ -319,6 +318,19 @@
 // typed, and the space bar and Enter send a space. A key struck while a
 // macro is being sent stops the macro, which is the radio's doing, and
 // Escape stops whatever is being sent.
+//
+// THE KEYBOARD FOR JTTY
+//
+// JTTY sends a line at a time, and in JTTY the column has KBD and ESC as
+// in CW. KBD brings up the same keyboard, in the same place, over the
+// bins; the chosen bin's text is still on the status line above it. What
+// is typed goes into the box above the keys, and SEND at its right gives
+// the line to the radio, JTTY_TEXT, and empties the box: in pieces cut at
+// spaces, of at most JTTY_PIECE characters, a control's value being at
+// most 63; the radio sends them one after the other. On a keyboard
+// plugged in, a key struck brings KBD up with it in the box, Backspace
+// rubs out, and Enter is SEND. ESC, in the column or on the keyboard,
+// stops what the radio is sending, JTTY_DO ESC, and empties the box.
 //
 // THE TUNING WHEEL
 //
@@ -739,6 +751,11 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define FT8_DO_CONTROL "FT8_DO"
 #define CW_DO_CONTROL "CW_DO"
 #define CW_TEXT_CONTROL "CW_TEXT"
+#define JTTY_TEXT_CONTROL "JTTY_TEXT"
+#define JTTY_DO_CONTROL "JTTY_DO"
+#define JTTY_BOX_ROOM 180
+#define JTTY_PIECE 60
+#define JTTY_SEND_LABEL "SEND"
 // a space on its own would be lost on the way; the radio takes this for one
 #define CW_TEXT_SPACE "_"
 // how much of what was sent the keyboard's box keeps in view
@@ -931,6 +948,9 @@ static GtkWidget *cw_box_label;
 static GtkWidget *cw_play_button;
 static char cw_box[CW_BOX_ROOM + 1];
 static int is_cw_playing;
+static GtkWidget *jtty_keys;
+static GtkWidget *jtty_box_label;
+static char jtty_box[JTTY_BOX_ROOM + 1];
 static struct knob tuning_knob;
 static struct knob control_knob;
 static int control_button_pin;
@@ -1308,6 +1328,7 @@ static int footer_button_at(int slot, char *label, char *control, char *choice, 
 }
 
 static void show_cw_keys(int is_shown);
+static void show_jtty_keys(int is_shown);
 static void take_cw_sent(const char *text);
 
 // the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
@@ -1332,9 +1353,11 @@ static void show_buttons(void) {
 	for (i = 0; i < BANDS; i++)
 		set_class(band_box[i], "in-use", !strcmp(value_of("BAND"), band_names[i]));
 	logbook_window_set_macros(macros_in_use());
-	// KBD's keyboard is CW's alone
+	// KBD's keyboards are CW's and JTTY's, each its own
 	if (cw_keys != NULL && strcmp(mode_group(), MACRO_GROUP))
 		show_cw_keys(0);
+	if (jtty_keys != NULL && !is_jtty())
+		show_jtty_keys(0);
 	for (i = 0; i < FOOTER_TILES; i++) {
 		is_a_button = footer_button_at(i, label, control, choice, sizeof(label));
 		gtk_widget_set_visible(footer_box[i], is_a_button);
@@ -1354,7 +1377,7 @@ static void show_buttons(void) {
 		set_class(column_box[i], "dim", i != SET_ROW && i != LOG_ROW);
 		gtk_widget_set_visible(column_box[i], column_names[i][0] != 0);
 	}
-	if (!strcmp(mode_group(), MACRO_GROUP)) {
+	if (!strcmp(mode_group(), MACRO_GROUP) || is_jtty()) {
 		gtk_label_set_text(GTK_LABEL(column_label[CW_KBD_ROW]), "KBD");
 		set_class(column_box[CW_KBD_ROW], "dim", 0);
 		gtk_label_set_text(GTK_LABEL(column_label[CW_ESC_ROW]), "ESC");
@@ -2891,6 +2914,89 @@ static void on_cw_key(char key) {
 	type_cw_character(key);
 }
 
+/* KBD in JTTY */
+
+static void show_jtty_box(void) {
+	char with_mark[JTTY_BOX_ROOM + 2];
+
+	snprintf(with_mark, sizeof(with_mark), "%s_", jtty_box);
+	gtk_label_set_text(GTK_LABEL(jtty_box_label), with_mark);
+}
+
+static void show_jtty_keys(int is_shown) {
+	if (is_shown)
+		show_jtty_box();
+	gtk_widget_set_visible(jtty_keys, is_shown);
+}
+
+// the box to the radio, in pieces cut at spaces, and emptied
+static void send_jtty_box(void) {
+	char piece[JTTY_PIECE + 1];
+	const char *rest = jtty_box;
+	size_t length;
+	size_t cut;
+
+	while (*rest == ' ')
+		rest++;
+	while (*rest != 0) {
+		length = strlen(rest);
+		cut = length;
+		if (cut > JTTY_PIECE) {
+			cut = JTTY_PIECE;
+			while (cut > 0 && rest[cut] != ' ')
+				cut--;
+			if (cut == 0)
+				cut = JTTY_PIECE;
+		}
+		snprintf(piece, sizeof(piece), "%.*s", (int)cut, rest);
+		send_line(JTTY_TEXT_CONTROL, piece);
+		rest += cut;
+		while (*rest == ' ')
+			rest++;
+	}
+	jtty_box[0] = 0;
+	show_jtty_box();
+}
+
+static void on_jtty_send(GtkButton *button, gpointer unused) {
+	(void)button;
+	(void)unused;
+	send_jtty_box();
+}
+
+// ESC: what the radio is sending is stopped, and the box emptied
+static void stop_jtty_sending(void) {
+	send_line(JTTY_DO_CONTROL, "ESC");
+	jtty_box[0] = 0;
+	show_jtty_box();
+}
+
+static void type_jtty_character(char c) {
+	size_t length = strlen(jtty_box);
+
+	if (length >= JTTY_BOX_ROOM)
+		return;
+	jtty_box[length] = g_ascii_toupper(c);
+	jtty_box[length + 1] = 0;
+	show_jtty_box();
+}
+
+static void on_jtty_key(char key) {
+	size_t length = strlen(jtty_box);
+
+	if (key == KEYBOARD_CLOSE) {
+		show_jtty_keys(0);
+		return;
+	}
+	if (key == KEYBOARD_RUB_OUT) {
+		if (length > 0)
+			jtty_box[length - 1] = 0;
+		show_jtty_box();
+		return;
+	}
+	type_jtty_character(key);
+}
+
 /* a text of the settings, typed */
 
 static void type_a_character(char c) {
@@ -3617,6 +3723,12 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 	}
 	if (clicked == CW_ESC_ROW && !strcmp(mode_group(), MACRO_GROUP))
 		stop_cw_sending();
+	if (clicked == CW_KBD_ROW && is_jtty()) {
+		show_jtty_keys(!gtk_widget_get_visible(jtty_keys));
+		return TRUE;
+	}
+	if (clicked == CW_ESC_ROW && is_jtty())
+		stop_jtty_sending();
 	if (strcmp(mode_group(), MESSAGES_GROUP))
 		return TRUE;
 	if (clicked == FT8_CQ_ROW)
@@ -3820,6 +3932,29 @@ static gboolean on_key_in_cw(const GdkEventKey *event) {
 	return TRUE;
 }
 
+// in JTTY a key struck goes into KBD's box, bringing it up; Enter sends
+// the box and Backspace rubs out
+static gboolean on_key_in_jtty(const GdkEventKey *event) {
+	guint32 letter = gdk_keyval_to_unicode(gdk_keyval_to_upper(event->keyval));
+
+	if (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK))
+		return FALSE;
+	if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter) {
+		send_jtty_box();
+		return TRUE;
+	}
+	if (event->keyval == GDK_KEY_BackSpace) {
+		on_jtty_key(KEYBOARD_RUB_OUT);
+		return TRUE;
+	}
+	if (letter < ' ' || letter >= 127)
+		return FALSE;
+	if (!gtk_widget_get_visible(jtty_keys))
+		show_jtty_keys(1);
+	type_jtty_character((char)letter);
+	return TRUE;
+}
+
 static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	(void)widget;
 	(void)unused;
@@ -3833,9 +3968,11 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 		turn_selected(-1, 1);
 		return TRUE;
 	}
-	// Enter is a press, except in CW, where it sends a space
+	// Enter is a press, except in CW, where it sends a space, and in JTTY,
+	// where it sends the line
 	if ((event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter)
-			&& (!is_page_shown(PAGE_MAIN) || strcmp(mode_group(), MACRO_GROUP))) {
+			&& (!is_page_shown(PAGE_MAIN)
+			|| (strcmp(mode_group(), MACRO_GROUP) && !is_jtty()))) {
 		press_selected();
 		return TRUE;
 	}
@@ -3852,6 +3989,8 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	if (event->keyval == GDK_KEY_Escape) {
 		if (!strcmp(mode_group(), MACRO_GROUP))
 			stop_cw_sending();
+		if (is_jtty())
+			stop_jtty_sending();
 		focus = ON_FREQUENCY;
 		is_editing = 0;
 		show_values();
@@ -3859,6 +3998,8 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *event, gpointer unused) {
 	}
 	if (!strcmp(mode_group(), MACRO_GROUP))
 		return on_key_in_cw(event);
+	if (is_jtty())
+		return on_key_in_jtty(event);
 	return FALSE;
 }
 
@@ -5024,6 +5165,33 @@ static void create_cw_keys(void) {
 		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
 }
 
+// JTTY's KBD: the line being typed, SEND beside it, and the keys, where
+// CW's KBD is
+static void create_jtty_keys(void) {
+	GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	GtkWidget *send = gtk_button_new_with_label(JTTY_SEND_LABEL);
+
+	jtty_keys = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	jtty_box_label = gtk_label_new("");
+	add_label_class(jtty_box_label, "typed");
+	gtk_label_set_xalign(GTK_LABEL(jtty_box_label), 0);
+	gtk_label_set_ellipsize(GTK_LABEL(jtty_box_label), PANGO_ELLIPSIZE_START);
+	gtk_widget_set_size_request(jtty_box_label, -1, px_down(CW_SENT_HEIGHT));
+	gtk_style_context_add_class(gtk_widget_get_style_context(send), "key");
+	gtk_widget_set_can_focus(send, FALSE);
+	gtk_widget_set_size_request(send, px_across(CW_PLAY_WIDTH), -1);
+	g_signal_connect(send, "clicked", G_CALLBACK(on_jtty_send), NULL);
+	gtk_box_pack_start(GTK_BOX(line), jtty_box_label, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(line), send, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(jtty_keys), line, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(jtty_keys), keyboard_new("key", on_jtty_key), TRUE, TRUE, 0);
+	gtk_widget_show_all(jtty_keys);
+	gtk_widget_hide(jtty_keys);
+	gtk_widget_set_no_show_all(jtty_keys, TRUE);
+	put(jtty_keys, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, PANEL_WIDTH - GRAPH_LEFT,
+		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
+}
+
 // the tuning wheel's box, made last so that it lies over the list of
 // controls, and not shown until the frequency is tapped
 static void create_wheel(void) {
@@ -5058,6 +5226,7 @@ static GtkWidget *create_window(void) {
 	create_list();
 	create_wheel();
 	create_cw_keys();
+	create_jtty_keys();
 
 	pages = gtk_stack_new();
 	gtk_stack_add_named(GTK_STACK(pages), screen, PAGE_MAIN);
