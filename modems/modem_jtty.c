@@ -35,10 +35,13 @@
 // A filler frame, sent while a station typing live has no whole word to
 // send, is a space, and a run of spaces is one, as WSJT-X shows them.
 //
-// The radio program asks for the bins that have changed, with
-// jtty_poll_bins(), and sends each to the clients as a line; server.c
-// says how. jtty_resend_bins() marks them all changed, for a client that
-// has just come and has none.
+// Each bin counts its changes. Whoever shows the bins, the network's
+// clients and the front panel, keeps for each bin the count it was last
+// told, and asks with jtty_poll_bins() for those that have changed since;
+// its tell() says whether it took the bin, and one it had no room for is
+// offered again the next time. jtty_forget_told() has all of them told
+// again, for a client or a panel that has just come and has none. server.c
+// and panel_jtty.c say how each is sent.
 //
 // The front panel has no list of the bins: it is given the text of the
 // chosen bin, the one JTTY_RX is in, as it comes, and runs it along its
@@ -176,7 +179,8 @@
 #define CHUNK_SAMPLES 3072
 #define BIN_LOWEST_HZ 200
 #define BIN_WIDTH_HZ 125
-#define SEARCH_LOWEST_HZ 200.0
+// a whole number of the receiver's FFT bins, 7.8125 Hz: 25 of them
+#define SEARCH_LOWEST_HZ 195.3125
 #define SEARCH_HIGHEST_HZ 3199.0
 #define CANDIDATES_MOST 256
 #define DECODES_A_CHUNK 128
@@ -226,7 +230,7 @@ enum slot_state {
 struct bin {
 	int hz;
 	double heard_at;
-	int is_changed;
+	unsigned long changes;
 	char text[JTTY_BIN_TEXT_ROOM];
 };
 
@@ -372,7 +376,7 @@ static void add_to_bin(int hz, const char *text, int is_end, int is_heard) {
 	if (is_heard || b->hz == 0)
 		b->hz = hz;
 	b->heard_at = now;
-	b->is_changed = 1;
+	b->changes++;
 	pthread_mutex_unlock(&bins_lock);
 }
 
@@ -463,21 +467,20 @@ static void jtty_select(void) {
 
 /* the bins, for the radio program */
 
-void jtty_poll_bins(void (*tell)(int bin, int hz, const char *text)) {
+void jtty_poll_bins(unsigned long *told, jtty_bin_fn tell) {
 	char text[JTTY_BIN_TEXT_ROOM];
-	int is_changed;
+	unsigned long changes;
 	int hz;
 	int i;
 
 	for (i = 0; i < JTTY_BINS; i++) {
 		pthread_mutex_lock(&bins_lock);
-		is_changed = bins[i].is_changed;
-		bins[i].is_changed = 0;
+		changes = bins[i].changes;
 		hz = bins[i].hz;
 		snprintf(text, sizeof(text), "%s", bins[i].text);
 		pthread_mutex_unlock(&bins_lock);
-		if (is_changed)
-			tell(i, hz, text);
+		if (changes != told[i] && tell(i, hz, text))
+			told[i] = changes;
 	}
 }
 
@@ -492,15 +495,11 @@ int jtty_take_chosen_text(char *text, int room) {
 	return count;
 }
 
-void jtty_resend_bins(void) {
+void jtty_forget_told(unsigned long *told) {
 	int i;
 
-	pthread_mutex_lock(&bins_lock);
-	for (i = 0; i < JTTY_BINS; i++) {
-		if (bins[i].text[0] != 0)
-			bins[i].is_changed = 1;
-	}
-	pthread_mutex_unlock(&bins_lock);
+	for (i = 0; i < JTTY_BINS; i++)
+		told[i] = 0;
 }
 
 /* sending */

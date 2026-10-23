@@ -4,7 +4,29 @@ libjtty — the JTTY coding, by Oleg Belousov, R1CBU.
 
 These are the files of the library's src/ and include/ folders at its
 commit 74025b2 of 28 September 2026, "Memory optimization, stream
-decoder", put side by side in one folder. They are not changed here.
+decoder", put side by side in one folder. Four are changed here, each
+change marked "zbitxre:" where it is, to make the receiver fast enough for
+a Pi Zero 2 W, whose processor it took 86% of, searching the whole
+passband for one station; on 23 October 2026 the zbitx at 192.168.1.87
+fell behind on the bench, where every frame came with many copies of
+itself, and lost frames. With them it takes 31%:
+
+    synchronizer.c  the energies of each hop come from one FFT, kiss_fft's,
+                    of the last symbol's samples, in place of a sliding
+                    DFT of every bin updated at every sample; where a
+                    sample goes and when a hop comes are counted, not
+                    worked out with a 64-bit remainder, which a 32-bit Pi
+                    does in software; the score is in single precision
+    demodulator.c   a tone's energy by Goertzel's recursion, the four tones
+                    of a symbol as one vector, which NEON works together
+    receiver.c      a candidate's samples copied out of the ring with one
+                    remainder, not one a sample
+    internal.h      what the receiver keeps for the above
+
+The FFT needs the lowest frequency searched to be a whole number of its
+bins, 7.8125 Hz, which modem_jtty.c sees to. The library is otherwise as
+it was; its decodes of WSJT-X's sample are the same.
+
 NOTICE is the library's own account of where it comes from: it was written
 in C from WSJT-X 3.2.0-rc1, whose JTTY is in Fortran, and links nothing of
 WSJT-X. PROTOCOL.md is its account of the protocol.

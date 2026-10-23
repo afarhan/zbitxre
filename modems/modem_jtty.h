@@ -9,7 +9,9 @@
 #define JTTY_BINS 24
 #define JTTY_BIN_TEXT_ROOM 81
 
-void jtty_poll_bins(void (*tell)(int bin, int hz, const char *text));
-void jtty_resend_bins(void);
+typedef int (*jtty_bin_fn)(int bin, int hz, const char *text);
+
+void jtty_poll_bins(unsigned long *told, jtty_bin_fn tell);
+void jtty_forget_told(unsigned long *told);
 int jtty_take_chosen_text(char *text, int room);
 int jtty_take_sent(char *text, int room);

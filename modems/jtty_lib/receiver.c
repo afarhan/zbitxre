@@ -31,10 +31,12 @@ jtty_rx *jtty_rx_create(const jtty_rx_config *config) {
         return NULL;
 
     size_t bases = (size_t) floor((config->fmax - config->fmin) / JT_DF) + 1;
-    size_t bins = bases + 12, bytes = sizeof(jtty_rx), bank, energy, pending, recent, output;
-    size_t capacity = config->candidate_capacity;
+    size_t bins = bases + 12, bytes = sizeof(jtty_rx), fft, energy, pending, recent, output;
+    size_t capacity = config->candidate_capacity, fft_bytes = 0;
 
-    if (reserve(&bytes, bins, sizeof(jt_bin), _Alignof(jt_bin), &bank) ||
+    kiss_fft_alloc(JT_FFT_SIZE, 0, NULL, &fft_bytes);
+
+    if (reserve(&bytes, fft_bytes, 1, _Alignof(max_align_t), &fft) ||
         reserve(&bytes, bins * JT_ENERGY_ROWS, sizeof(float), _Alignof(float), &energy) ||
         reserve(&bytes, capacity, sizeof(jt_pending), _Alignof(jt_pending), &pending) ||
         reserve(&bytes, 2 * capacity, sizeof(jtty_frame), _Alignof(jtty_frame), &recent) ||
@@ -50,7 +52,7 @@ jtty_rx *jtty_rx_create(const jtty_rx_config *config) {
     rx->stats.memory_bytes = bytes;
     rx->bases = bases;
     rx->bins = bins;
-    rx->bank = (jt_bin *) ((unsigned char *) rx + bank);
+    rx->fft = kiss_fft_alloc(JT_FFT_SIZE, 0, (unsigned char *) rx + fft, &fft_bytes);
     rx->energy = (float *) ((unsigned char *) rx + energy);
     rx->pending = (jt_pending *) ((unsigned char *) rx + pending);
     rx->recent = (jtty_frame *) ((unsigned char *) rx + recent);
@@ -102,8 +104,15 @@ static void decode(jtty_rx *rx, jt_pending candidate) {
 
     size_t count = (size_t) (end - first);
 
-    for (size_t i = 0; i < count; i++)
-        rx->scratch[i] = rx->audio[(first + i) % JT_AUDIO_SIZE];
+    /* zbitxre: one remainder, not one a sample */
+    size_t at = (size_t) (first % JT_AUDIO_SIZE);
+
+    for (size_t i = 0; i < count; i++) {
+        rx->scratch[i] = rx->audio[at];
+        at++;
+        if (at == JT_AUDIO_SIZE)
+            at = 0;
+    }
 
     jt_candidate c = { (size_t) (candidate.sample - first), candidate.frequency, candidate.score };
     jt_refine(rx->scratch, count, &c);

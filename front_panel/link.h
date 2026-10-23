@@ -98,6 +98,12 @@ extern "C" {
 // since the last value, a kept, counted value of its characters: KBD takes
 // each out of its box of what is still to go
 #define LINK_CW_SENT 18
+// JTTY's bins that have changed, for the panel's list of them: a kept,
+// counted value, as many lines as fit, each the bin, its pitch and its
+// text with a | between them and a zero after; panel_jtty.c on the radio
+// says what is in a line
+#define LINK_JTTY_BINS 19
+#define LINK_JTTY_LINE_MAX 89
 
 struct link_wifi_point {
 	int8_t signal_dbm;

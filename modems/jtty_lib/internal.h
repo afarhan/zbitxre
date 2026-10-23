@@ -1,6 +1,7 @@
 #ifndef JTTY_INTERNAL_H
 #define JTTY_INTERNAL_H
 #include "jtty.h"
+#include "kiss_fft.h"
 #define JT_PI 3.1415926535897932384626433832795
 
 extern const char        jt_alphabet[];
@@ -39,6 +40,9 @@ int  jt_decode(jt_fec *work, const float scores[46][4], uint64_t *payload);
 #define JT_EPOCH         3072
 #define JT_REFINE_MARGIN 60
 #define JT_AUDIO_SIZE    (JTTY_FRAME_SAMPLES + JT_EPOCH + 2 * JT_REFINE_MARGIN)
+/* zbitxre: the energies of a hop are one FFT of the last symbol's samples,
+ * padded to this, whose bins are JT_DF apart */
+#define JT_FFT_SIZE      1536
 
 typedef struct {
     double wr, wi, dr, di, zr, zi, re, im;
@@ -57,7 +61,10 @@ struct jtty_rx {
     int            finished, busy;
     jt_fec         fec;
     float          audio[JT_AUDIO_SIZE], scratch[JTTY_FRAME_SAMPLES + 2 * JT_REFINE_MARGIN];
-    jt_bin        *bank;
+    kiss_fft_cfg   fft;
+    kiss_fft_cpx   fft_in[JT_FFT_SIZE], fft_out[JT_FFT_SIZE];
+    size_t         fft_first, audio_at, until_hop, energy_row;
+    uint64_t       rows;
     float         *energy;
     jt_pending    *pending;
     jtty_frame    *recent, *output;

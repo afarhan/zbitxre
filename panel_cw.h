@@ -9,3 +9,4 @@
 void panel_cw_poll(long now_ms);
 void panel_cw_also_tell(void (*read)(const char *text));
 void panel_cw_also_tell_sent(void (*sent)(const char *text));
+void panel_cw_add_sent(const char *text);

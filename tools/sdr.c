@@ -247,6 +247,7 @@
 #include "panel_messages.h"
 #include "panel_cw.h"
 #include "modems/modem_jtty.h"
+#include "panel_jtty.h"
 #include "radio_clock.h"
 #include "rtp_audio.h"
 #include "rtp_microphone.h"
@@ -1492,6 +1493,7 @@ static void on_panel_record(int control, int32_t value) {
 	if (control == LINK_HELLO) {
 		printf("panel: HELLO, version %d\n", (int)value);
 		panel_controls_describe();
+		panel_jtty_resend();
 		fflush(stdout);
 		return;
 	}
@@ -1872,12 +1874,28 @@ static void follow_sound_card(long now) {
 	}
 }
 
+// what of JTTY's bins the network's clients have been told
+static unsigned long told_clients[JTTY_BINS];
+
 // what JTTY's live frames have taken from what was typed, to the clients
+// and the panel
 static void tell_jtty_sent(void) {
 	char sent[JTTY_BIN_TEXT_ROOM];
 
-	if (jtty_take_sent(sent, sizeof(sent)) > 0)
-		server_send_jtty_sent(sent);
+	if (jtty_take_sent(sent, sizeof(sent)) <= 0)
+		return;
+	server_send_jtty_sent(sent);
+	panel_cw_add_sent(sent);
+}
+
+// JTTY's bins to the network's clients, which have room for every one
+static int tell_a_client_bin(int bin, int hz, const char *text) {
+	server_send_jtty_bin(bin, hz, text);
+	return 1;
+}
+
+static void resend_client_bins(void) {
+	jtty_forget_told(told_clients);
 }
 
 static void main_loop(void) {
@@ -1905,7 +1923,8 @@ static void main_loop(void) {
 		messages_print();
 		utc_send();
 		panel_cw_poll(now_ms());
-		jtty_poll_bins(server_send_jtty_bin);
+		jtty_poll_bins(told_clients, tell_a_client_bin);
+		panel_jtty_poll();
 		tell_jtty_sent();
 		ft8_qso_poll();
 		panel_messages_poll();
@@ -2009,7 +2028,7 @@ int main(int argc, char **argv) {
 	panel_controls_describe();
 
 	server_on_answer(answer_message);
-	server_on_bins_asked(jtty_resend_bins);
+	server_on_bins_asked(resend_client_bins);
 	panel_also_tell(server_say, server_warn, server_show_qso);
 	panel_cw_also_tell(server_send_cw);
 	panel_cw_also_tell_sent(server_send_cw_sent);

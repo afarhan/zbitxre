@@ -1,21 +1,32 @@
 #include "internal.h"
 #include <math.h>
 
-void jt_correlate(const float *audio, size_t start, double f0, float scores[4]) {
-    for (int k = 0; k < 4; k++) {
-        double angle = 2 * JT_PI * (f0 + k * 31.25) / 12000;
-        double wr = cos(angle), wi = -sin(angle), zr = 1, zi = 0, re = 0, im = 0;
+/* zbitxre: each tone's energy over the symbol by Goertzel's recursion, one
+ * multiply a sample, in place of a rotating phasor, six; the four tones
+ * are the four lanes of one vector, so that NEON on a Pi works them
+ * together; it is the same energy, and this was most of what a Pi Zero 2 W
+ * spent receiving. */
+typedef float jt_four __attribute__((vector_size(16)));
 
-        for (size_t i = 0; i < JTTY_SPS; i++) {
-            double x = audio[start + i];
-            re += x * zr;
-            im += x * zi;
-            double r = zr * wr - zi * wi;
-            zi = zr * wi + zi * wr;
-            zr = r;
-        }
-        scores[k] = (float) ((re * re + im * im) / (JTTY_SPS * JTTY_SPS));
+void jt_correlate(const float *audio, size_t start, double f0, float scores[4]) {
+    jt_four coefficient, before = { 0, 0, 0, 0 }, before_that = { 0, 0, 0, 0 }, now, x, power;
+
+    for (int k = 0; k < 4; k++)
+        coefficient[k] = (float) (2 * cos(2 * JT_PI * (f0 + k * 31.25) / 12000));
+
+    for (size_t i = 0; i < JTTY_SPS; i++) {
+        float sample = audio[start + i];
+
+        x = (jt_four) { sample, sample, sample, sample };
+        now = x + coefficient * before - before_that;
+        before_that = before;
+        before = now;
     }
+
+    power = before * before + before_that * before_that - coefficient * before * before_that;
+
+    for (int k = 0; k < 4; k++)
+        scores[k] = power[k] / (JTTY_SPS * JTTY_SPS);
 }
 
 double jt_sync_score(const float *audio, size_t start, double f0) {

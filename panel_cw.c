@@ -36,6 +36,10 @@
 //   the radio says it has begun to send it, the author's asking of 18
 //   October 2026.
 //
+//   and in JTTY, what each live frame took of what was typed, given with
+//   panel_cw_add_sent(), to the panel as LINK_CW_SENT, for its keyboard's
+//   box, as what CW's keyer has begun is;
+//
 //   and in JTTY, what is read in the bin chosen, JTTY_RX's, which
 //   jtty_take_chosen_text() gives as it comes: to the panel only, in the
 //   same run of text, which is where the panel shows what it is chatting
@@ -75,6 +79,13 @@ static void (*also_sent)(const char *text);
 
 void panel_cw_also_tell(void (*read)(const char *text)) {
 	also_read = read;
+}
+
+// what JTTY's live frames have taken of what was typed: to the panel as
+// what CW's keyer has begun is, for its keyboard's box
+void panel_cw_add_sent(const char *text) {
+	for (; *text != 0 && sent_waiting_count < WAITING_MAX; text++)
+		sent_waiting[sent_waiting_count++] = *text;
 }
 
 void panel_cw_also_tell_sent(void (*sent)(const char *text)) {

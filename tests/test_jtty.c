@@ -95,6 +95,7 @@ static struct timespec next_block;
 static char why[WHY_ROOM];
 static char bin_text[JTTY_BINS][JTTY_BIN_TEXT_ROOM];
 static int bin_hz[JTTY_BINS];
+static unsigned long told[JTTY_BINS];
 static char sample_read[JTTY_BIN_TEXT_ROOM * 2];
 static int sample_frames;
 static double sample_frequency;
@@ -156,9 +157,10 @@ static void one_block(int32_t *from_receiver, int32_t *from_microphone, int32_t 
 	hw_stand_in_block(&block);
 }
 
-static void keep_bin(int bin, int hz, const char *text) {
+static int keep_bin(int bin, int hz, const char *text) {
 	bin_hz[bin] = hz;
 	snprintf(bin_text[bin], sizeof(bin_text[bin]), "%s", text);
+	return 1;
 }
 
 static int is_set_to(const char *name, const char *value) {
@@ -253,7 +255,7 @@ static void test_sending_and_reading(void) {
 	expect(lasted_s > FRAME_S * 0.95
 		&& fabs(lasted_s / FRAME_S - floor(lasted_s / FRAME_S + 0.5)) < 0.02, said);
 	expect(!modem->wants_tx(), "and when it has gone the modem wants to send no more");
-	jtty_poll_bins(keep_bin);
+	jtty_poll_bins(told, keep_bin);
 	snprintf(said, sizeof(said), "it is in its bin, %d, in small letters: \"%.*s\"", bin,
 		SHOWN_MOST, bin_text[bin]);
 	expect(strstr(bin_text[bin], "cq vu2ese vu2ese") != NULL, said);
@@ -272,7 +274,7 @@ static void test_sending_and_reading(void) {
 		one_block(from_receiver, silence, to_speaker, to_transmitter, 1);
 		modem->wants_tx();
 	}
-	jtty_poll_bins(keep_bin);
+	jtty_poll_bins(told, keep_bin);
 	snprintf(wanted, sizeof(wanted), "%s | ", TYPED);
 	snprintf(said, sizeof(said), "with noise, it is read into the same bin, at %d Hz: \"%.*s\"",
 		bin_hz[bin], SHOWN_MOST, bin_text[bin]);
@@ -290,7 +292,7 @@ static void test_sending_and_reading(void) {
 	expect(modem->wants_tx(), "a second line is to be sent");
 	control_set("JTTY_DO", "ESC", ORIGIN_NONE, why, sizeof(why));
 	expect(!modem->wants_tx(), "and JTTY_DO ESC stops it");
-	jtty_poll_bins(keep_bin);
+	jtty_poll_bins(told, keep_bin);
 	snprintf(said, sizeof(said), "and its bin says so: \"%.*s\"", SHOWN_MOST, bin_text[bin]);
 	expect(strstr(bin_text[bin], " (stopped) | ") != NULL, said);
 	free(transmitted);
@@ -376,7 +378,7 @@ static void test_live(void) {
 		one_block(from_receiver, silence, to_speaker, to_transmitter, 1);
 		modem->wants_tx();
 	}
-	jtty_poll_bins(keep_bin);
+	jtty_poll_bins(told, keep_bin);
 	snprintf(said, sizeof(said), "it is read whole in its bin, %d: \"%.*s\"", bin, SHOWN_MOST,
 		bin_text[bin]);
 	expect(strlen(bin_text[bin]) >= strlen(LIVE_READ)

@@ -47,8 +47,9 @@ KISS_FFT    = $(BUILD)/kiss_fft.o
 # FT8's coding is ft8_lib's, in modems/ft8_lib as zbitxv2 had it, and is
 # built in the same way; modems/ft8_lib/README says what it is
 FT8_LIB     = $(patsubst modems/ft8_lib/%.c,$(BUILD)/ft8_lib_%.o,$(wildcard modems/ft8_lib/*.c))
-# and JTTY's is libjtty's, in modems/jtty_lib, built the same way;
-# modems/jtty_lib/README says what it is
+# and JTTY's is libjtty's, in modems/jtty_lib, built the same way, and on
+# a 32-bit ARM told to use NEON as RADE is, RADE_ARM below; a Pi Zero 2 W
+# needs it to keep up; modems/jtty_lib/README says what it is
 JTTY_LIB    = $(patsubst modems/jtty_lib/%.c,$(BUILD)/jtty_lib_%.o,$(wildcard modems/jtty_lib/*.c))
 # RADE, FreeDV's digital voice, is rade_c's, in modems/rade_c, on the part
 # of Opus in modems/opus_dnn; their READMEs say what they are. They are
@@ -177,10 +178,12 @@ sdr: tools/sdr.c tools/start_check.c tools/start_check.h radio.c server.c \
 		panel_controls.c panel_wifi.c panel_wifi.h wifi.c wifi.h settings.c settings.h radio.h \
 		panel_log.c panel_log.h logbook.c logbook.h \
 		panel_messages.c panel_messages.h ft8_qso.c ft8_qso.h panel_cw.c panel_cw.h \
+		panel_jtty.c panel_jtty.h \
 		logger.c logger.h server.h control.h meter.c meter.h \
 		panel_controls.h $(DSP) $(HW) $(DSP_HEADERS) $(HW_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -Itools -o $@ tools/sdr.c tools/start_check.c radio.c server.c \
 		panel_controls.c panel_wifi.c wifi.c panel_log.c panel_messages.c ft8_qso.c panel_cw.c \
+		panel_jtty.c \
 		logbook.c logger.c settings.c meter.c \
 		$(DSP) $(HW) $(RADIO_LIBS) -lsqlite3
 
@@ -301,7 +304,7 @@ $(BUILD)/ft8_lib_%.o: modems/ft8_lib/%.c $(wildcard modems/ft8_lib/*.h) | $(BUIL
 	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
 
 $(BUILD)/jtty_lib_%.o: modems/jtty_lib/%.c $(wildcard modems/jtty_lib/*.h) | $(BUILD)
-	$(CC) -std=gnu11 -O2 -g -w -c -o $@ $<
+	$(CC) -std=gnu11 -O2 -g -w $(RADE_ARM) -Idsp/kiss_fft -c -o $@ $<
 
 $(BUILD)/test_ft8: tests/test_ft8.c modems/ft8_monitor.c modems/ft8_monitor.h \
 		modems/ft8_signal.c modems/ft8_signal.h modems/ft8_callsign_hash.c \
