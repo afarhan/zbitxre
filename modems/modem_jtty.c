@@ -38,6 +38,12 @@
 // says how. jtty_resend_bins() marks them all changed, for a client that
 // has just come and has none.
 //
+// The front panel has no list of the bins: it is given the text of the
+// chosen bin, the one JTTY_RX is in, as it comes, and runs it along its
+// status line as it does CW's. jtty_take_chosen_text() gives what has been
+// added to that bin since it was last asked; when another bin is chosen,
+// all of that bin's text comes first. panel_cw.c sends it.
+//
 // Each frame is also printed on the terminal as it is read:
 //
 //     jtty: 1507 Hz  RAN A
@@ -149,6 +155,8 @@
 #define PITCH_LOWEST 200
 #define PITCH_HIGHEST 3100
 #define TEXT_ROOM (JTTY_BIN_TEXT_ROOM)
+#define CHOSEN_TEXT_KEPT 160
+#define CHOSEN_BEGINS "  "
 // a frame's text and the space after it
 #define FRAME_TEXT_ROOM (TEXT_ROOM + 1)
 
@@ -178,6 +186,10 @@ static atomic_int is_working;
 
 static struct bin bins[JTTY_BINS];
 static pthread_mutex_t bins_lock = PTHREAD_MUTEX_INITIALIZER;
+// the chosen bin, and what has been added to it and not yet taken; both
+// under bins_lock
+static int chosen_bin;
+static char chosen_new[CHOSEN_TEXT_KEPT + 1];
 
 static float *tx_wave;
 static int tx_wave_samples;
@@ -223,6 +235,30 @@ static void append_text(struct bin *b, const char *text) {
 	memcpy(b->text + had, text, adding + 1);
 }
 
+// the newest of the chosen bin's text, kept until it is taken
+static void append_chosen(const char *text) {
+	size_t had = strlen(chosen_new);
+	size_t adding = strlen(text);
+
+	if (adding > CHOSEN_TEXT_KEPT)
+		text += adding - CHOSEN_TEXT_KEPT;
+	adding = strlen(text);
+	if (had + adding > CHOSEN_TEXT_KEPT) {
+		memmove(chosen_new, chosen_new + had + adding - CHOSEN_TEXT_KEPT,
+			CHOSEN_TEXT_KEPT - adding + 1);
+		had = CHOSEN_TEXT_KEPT - adding;
+	}
+	memcpy(chosen_new + had, text, adding + 1);
+}
+
+// text added to a bin, and to what the panel is to be given if the bin is
+// the chosen one
+static void append_to(struct bin *b, const char *text) {
+	append_text(b, text);
+	if (b - bins == chosen_bin)
+		append_chosen(text);
+}
+
 static int ends_with(const char *text, const char *end) {
 	size_t length = strlen(text);
 	size_t end_length = strlen(end);
@@ -237,7 +273,7 @@ static void end_message(struct bin *b) {
 	while (length > 0 && b->text[length - 1] == ' ')
 		b->text[--length] = 0;
 	if (length > 0 && !ends_with(b->text, BIN_SEPARATOR))
-		append_text(b, BIN_SEPARATOR);
+		append_to(b, BIN_SEPARATOR);
 }
 
 // what is read or sent at a pitch goes to its bin; a bin long silent
@@ -251,7 +287,7 @@ static void add_to_bin(int hz, const char *text, int is_end, int is_heard) {
 	pthread_mutex_lock(&bins_lock);
 	if (b->heard_at > 0 && now - b->heard_at > NEW_OVER_S)
 		end_message(b);
-	append_text(b, text);
+	append_to(b, text);
 	if (is_end)
 		end_message(b);
 	if (is_heard || b->hz == 0)
@@ -364,6 +400,17 @@ void jtty_poll_bins(void (*tell)(int bin, int hz, const char *text)) {
 	}
 }
 
+int jtty_take_chosen_text(char *text, int room) {
+	int count;
+
+	pthread_mutex_lock(&bins_lock);
+	snprintf(text, room, "%s", chosen_new);
+	chosen_new[0] = 0;
+	pthread_mutex_unlock(&bins_lock);
+	count = (int)strlen(text);
+	return count;
+}
+
 void jtty_resend_bins(void) {
 	int i;
 
@@ -463,10 +510,21 @@ static int apply_split(struct control *c, const char *value, char *why, int room
 	return 0;
 }
 
+// another bin chosen: what the panel shows begins again, with all of it
+static void choose_bin(int bin) {
+	pthread_mutex_lock(&bins_lock);
+	if (bin != chosen_bin) {
+		chosen_bin = bin;
+		snprintf(chosen_new, sizeof(chosen_new), "%s%s", CHOSEN_BEGINS, bins[bin].text);
+	}
+	pthread_mutex_unlock(&bins_lock);
+}
+
 static int apply_rx(struct control *c, const char *value, char *why, int room) {
 	(void)c;
 	(void)why;
 	(void)room;
+	choose_bin(bin_of(atoi(value)));
 	if (strcmp(control_get("JTTY_SPLIT"), "ON")) {
 		atomic_store(&tx_hz, atoi(value));
 		control_update("JTTY_TX", value);
@@ -571,6 +629,7 @@ static void jtty_start(void) {
 	control_register(&text_control);
 	control_register(&do_control);
 	atomic_store(&tx_hz, atoi(tx_control.value));
+	chosen_bin = bin_of(atoi(rx_control.value));
 	atomic_store(&sidetone_level, atoi(sidetone_control.value));
 	tx_wave = malloc(TX_WAVE_ROOM * sizeof(tx_wave[0]));
 	receiver = jtty_rx_create(&config);

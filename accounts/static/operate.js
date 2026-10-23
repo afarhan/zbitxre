@@ -23,14 +23,15 @@
 //   row 7   under the waterfall, six places for the mode's own buttons:
 //           TX and RX in the voice modes, the CW macros in CW
 //
-// In JTTY the left half under the status line is the list of the bins:
-// the passband from 200 to 3200 Hz in 24 bins of 125 Hz, a row each, the
-// lowest at the top, each with what has been read in it, newest at the
-// right; modems/modem_jtty.c says what a bin is. A tap on a row chooses
-// that station to chat with, JTTY_RX, which the radio's own transmitter
-// follows unless JTTY_SPLIT is on; a tap on the graph chooses the pitch it
-// fell at. The chosen bin's row is lit, and its text runs along the status
-// line as CW's does. ABC, on the left, brings up the bar to type in, as in
+// In JTTY there is no graph or waterfall, the author having found them of
+// little use there (23 October 2026), and all of their place under the
+// status line is the list of the bins: the passband from 200 to 3200 Hz
+// in 24 bins of 125 Hz, a row each, the lowest at the top, each with what
+// has been read in it, newest at the right; modems/modem_jtty.c says what
+// a bin is. A tap on a row chooses that station to chat with, JTTY_RX,
+// which the radio's own transmitter follows unless JTTY_SPLIT is on. The
+// chosen bin's row is lit, and its text runs along the status line as
+// CW's does. ABC, on the left, brings up the bar to type in, as in
 // CW, and on a computer a key struck brings it up too; Enter sends the
 // line, cut at spaces into pieces of at most JTTY_PIECE characters, a
 // control's value being at most 63, and ESC stops what is being sent.

@@ -36,6 +36,13 @@
 //   the radio says it has begun to send it, the author's asking of 18
 //   October 2026.
 //
+//   and in JTTY, what is read in the bin chosen, JTTY_RX's, which
+//   jtty_take_chosen_text() gives as it comes: to the panel only, in the
+//   same run of text, which is where the panel shows what it is chatting
+//   with; it has no list of the bins. The clients over the network have
+//   the bins themselves, from the server. modems/modem_jtty.c says what a
+//   bin is.
+//
 // For the thread that owns the controls.
 
 #include <stdio.h>
@@ -46,6 +53,7 @@
 #include "panel_cw.h"
 #include "modems/modem_cw.h"
 #include "modems/cw_text.h"
+#include "modems/modem_jtty.h"
 
 #define LINE_MAX 60
 #define IDLE_MS 3000
@@ -122,6 +130,9 @@ void panel_cw_poll(long now_ms) {
 		last_read_ms = now_ms;
 	if (line_count > 0 && now_ms - last_read_ms > IDLE_MS)
 		print_the_line();
+	count = jtty_take_chosen_text(read, sizeof(read));
+	for (i = 0; i < count && waiting_count < WAITING_MAX; i++)
+		waiting[waiting_count++] = read[i];
 	if (waiting_count == 0 || panel_is_waiting(LINK_CW_TEXT))
 		return;
 	memcpy(part, waiting, waiting_count);

@@ -55,6 +55,7 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
 #bins { display: none; flex: 1; min-width: 0; overflow-y: auto; background: #101820;
     font-family: monospace; font-size: 3.1vh; line-height: 1.35; }
 .jtty #bins { display: block; }
+.jtty #scope-box { display: none; }
 #bins div { display: flex; white-space: nowrap; padding: 0 0.4vw; cursor: pointer; }
 #bins div:nth-child(even) { background: #1c2834; }
 #bins div.chosen { background: #604800; }

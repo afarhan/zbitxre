@@ -197,6 +197,18 @@
 // passband is the modem's own, 50 to 4000 Hz, and is not the voice modes'
 // bandwidth.
 //
+// In JTTY there is no graph and no waterfall: the author found them of
+// little use there, on 23 October 2026, and the whole of their place, down
+// to the foot of the window, is the list of the bins, so that a row shows
+// as much of what is said as it can. The passband from 200 to 3200 Hz is
+// in 24 bins of 125 Hz, a row each, the lowest at the top, as the web page
+// has it: each row the pitch of the station last heard in it, or where the
+// bin begins if none has been, and the newest of its text, against the
+// row's right end. modems/modem_jtty.c says what a bin is. A tap on a row
+// chooses that station, JTTY_RX, and the row is lit; its text runs along
+// the status line as CW's does. Typing in JTTY is not here yet: it is the
+// web page's.
+//
 // The two lists scroll, by the wheel, their bars, or a finger drawn up or
 // down them. A row's tap is a press and a release in one place: a finger
 // that moves is scrolling, and selects nothing.
@@ -550,6 +562,8 @@
 #define MESSAGES_SHOWN_MAX 200
 #define MESSAGE_FIELDS 4
 #define MESSAGE_SIZE 8
+// JTTY's bins have the whole width, and their text the status line's size
+#define BIN_SIZE STATUS_SIZE
 #define MESSAGES_WIDTH (GRAPH_WIDTH / 2)
 #define MARK_KEPT_FOR_S 30
 #define SLOT_SECONDS 15
@@ -710,6 +724,18 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET", "TERM", 
 #define MACRO_GROUP "CW"
 #define MACRO_CONTROL "MACRO"
 #define MESSAGES_GROUP "FT8"
+#define JTTY_GROUP "JTTY"
+#define JTTY_RX_CONTROL "JTTY_RX"
+#define JTTY_BINS 24
+#define JTTY_LOWEST_HZ 200
+#define JTTY_BIN_HZ 125
+// an empty bin is chosen at a pitch that puts a signal's four tones, 94 Hz
+// wide, in its middle
+#define JTTY_IN_BIN_HZ 16
+#define JTTY_TEXT_ROOM 96
+#define JTTY_HZ_ROOM 12
+// the pitch's column, four figures and a space
+#define JTTY_HZ_COLUMN 5
 #define FT8_DO_CONTROL "FT8_DO"
 #define CW_DO_CONTROL "CW_DO"
 #define CW_TEXT_CONTROL "CW_TEXT"
@@ -799,6 +825,14 @@ static GtkWidget *list;
 static GtkWidget *list_scroller;
 static GtkWidget *messages;
 static GtkWidget *messages_scroller;
+static GtkWidget *bins_scroller;
+static GtkWidget *bin_rows[JTTY_BINS];
+static GtkWidget *bin_hz_labels[JTTY_BINS];
+static GtkWidget *bin_text_labels[JTTY_BINS];
+static char bin_text[JTTY_BINS][JTTY_TEXT_ROOM];
+static int bin_hz[JTTY_BINS];
+// what the status line was last given of the chosen bin
+static char jtty_said[JTTY_TEXT_ROOM];
 static GtkWidget *marked_message;
 static GtkWidget *pages;
 static GtkWidget *settings_list;
@@ -1025,6 +1059,16 @@ static const char *mode_group(void) {
 	return mode;
 }
 
+static int is_jtty(void) {
+	return !strcmp(mode_group(), JTTY_GROUP);
+}
+
+// the modes whose graph is their passband, from nothing to 4 kHz, and
+// where a tap on it chooses a pitch
+static int is_by_pitch(void) {
+	return !strcmp(mode_group(), MESSAGES_GROUP) || is_jtty();
+}
+
 // whether the mode in use has a button on the bottom row that works the
 // control
 static int has_footer_button(const char *control) {
@@ -1052,6 +1096,7 @@ static int is_row_shown(const struct row *r) {
 	// VOIP has no transmitter: its TX and RX are VOIP_TX's
 	if (!strcmp(r->control, "TX"))
 		return strcmp(mode_group(), MESSAGES_GROUP) != 0
+			&& strcmp(mode_group(), JTTY_GROUP) != 0
 			&& strcmp(mode_group(), VOIP_GROUP) != 0;
 	// the microphone's gain is for the modes that are spoken into
 	if (!strcmp(r->control, "MIC"))
@@ -1336,10 +1381,13 @@ static void put_again(GtkWidget *widget, int x, int y, int width, int height);
 
 // in FT8 the list of messages has the left half of where the graph and the
 // waterfall are, and they have the right half, down to the foot of the
-// window as the list is; in the other modes they have it all
+// window as the list is; in JTTY the list of the bins has it all, and they
+// are not shown; in the other modes they have it all
 static void place_graph(void) {
 	static int was_beside_messages = -1;
 	int is_beside_messages = !strcmp(mode_group(), MESSAGES_GROUP);
+
+	gtk_widget_set_visible(spectrum_area, !is_jtty());
 
 	if (is_beside_messages == was_beside_messages)
 		return;
@@ -1350,6 +1398,81 @@ static void place_graph(void) {
 	else
 		put_again(spectrum_area, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
 			GRAPH_HEIGHT + FALL_HEIGHT);
+}
+
+/* JTTY's bins */
+
+static int jtty_bin_of(int hz) {
+	int bin = (hz - JTTY_LOWEST_HZ) / JTTY_BIN_HZ;
+
+	if (bin < 0)
+		bin = 0;
+	if (bin > JTTY_BINS - 1)
+		bin = JTTY_BINS - 1;
+	return bin;
+}
+
+// each row's pitch and text, the chosen one lit, and the chosen one's text
+// along the status line when it, or the choice, has changed
+static void show_bins(void) {
+	char hz[JTTY_HZ_ROOM];
+	char said[JTTY_TEXT_ROOM];
+	int chosen = jtty_bin_of(atoi(value_of(JTTY_RX_CONTROL)));
+	int i;
+
+	for (i = 0; i < JTTY_BINS; i++) {
+		if (bin_text[i][0] != 0 && bin_hz[i] > 0)
+			snprintf(hz, sizeof(hz), "%d", bin_hz[i]);
+		else
+			snprintf(hz, sizeof(hz), "%d", JTTY_LOWEST_HZ + i * JTTY_BIN_HZ);
+		gtk_label_set_text(GTK_LABEL(bin_hz_labels[i]), hz);
+		gtk_label_set_text(GTK_LABEL(bin_text_labels[i]), bin_text[i]);
+		set_class(bin_rows[i], "chosen", i == chosen);
+		set_class(bin_rows[i], "empty", bin_text[i][0] == 0);
+	}
+	if (!is_jtty()) {
+		jtty_said[0] = 0;
+		return;
+	}
+	if (bin_text[chosen][0] != 0)
+		snprintf(said, sizeof(said), "%s", bin_text[chosen]);
+	else
+		snprintf(said, sizeof(said), "JTTY: listening at %s Hz", value_of(JTTY_RX_CONTROL));
+	if (!strcmp(said, jtty_said))
+		return;
+	snprintf(jtty_said, sizeof(jtty_said), "%s", said);
+	set_class(status_label, "qso", 0);
+	gtk_label_set_xalign(GTK_LABEL(status_label), 1);
+	gtk_label_set_ellipsize(GTK_LABEL(status_label), PANGO_ELLIPSIZE_START);
+	gtk_label_set_text(GTK_LABEL(status_label), said);
+}
+
+// JTTY_BIN 10 1507 RAN ALL NIGHT: the bin, the pitch last heard in it,
+// and the newest of its text
+static void take_bin_line(const char *line) {
+	char *after;
+	long bin = strtol(line, &after, 10);
+	long hz;
+
+	if (after == line || bin < 0 || bin >= JTTY_BINS)
+		return;
+	hz = strtol(after, &after, 10);
+	if (*after == ' ')
+		after++;
+	bin_hz[bin] = (int)hz;
+	snprintf(bin_text[bin], sizeof(bin_text[bin]), "%s", after);
+	show_bins();
+}
+
+// on connecting the radio is asked for its bins again
+static void drop_all_bins(void) {
+	int i;
+
+	for (i = 0; i < JTTY_BINS; i++) {
+		bin_text[i][0] = 0;
+		bin_hz[i] = 0;
+	}
+	jtty_said[0] = 0;
 }
 
 static void show_values(void) {
@@ -1374,6 +1497,8 @@ static void show_values(void) {
 	place_graph();
 	gtk_widget_queue_draw(wheel_area);
 	gtk_widget_set_visible(messages_scroller, !strcmp(mode_group(), MESSAGES_GROUP));
+	gtk_widget_set_visible(bins_scroller, is_jtty());
+	show_bins();
 	gtk_widget_queue_draw(spectrum_area);
 }
 
@@ -1922,6 +2047,10 @@ static void handle_line(const char *name, char *value) {
 		take_message_line(value);
 		return;
 	}
+	if (!strcmp(name, "JTTY_BIN")) {
+		take_bin_line(value);
+		return;
+	}
 	if (!strcmp(name, "TIME")) {
 		take_time_line(value);
 		return;
@@ -2163,7 +2292,7 @@ static int is_the_service(const char *its_proof) {
 
 // a line from the service, before the radio is on the line
 static void take_through_line(char *line) {
-	const char *asks = "schema\nspectrum on\nmessages on\ntime";
+	const char *asks = "schema\nspectrum on\nmessages on\ntime\njtty";
 	char text[LINE_MAX_LENGTH];
 	char *rest = strchr(line, ' ');
 
@@ -2239,7 +2368,7 @@ static void on_line(GObject *source, GAsyncResult *result, gpointer unused) {
 static void on_connected(GObject *source, GAsyncResult *result, gpointer unused) {
 	GError *error = NULL;
 	char text[LINE_MAX_LENGTH];
-	const char *asks = "schema\nspectrum on\nmessages on\ntime\n";
+	const char *asks = "schema\nspectrum on\nmessages on\ntime\njtty\n";
 	GSocketConnection *made;
 
 	(void)unused;
@@ -2260,6 +2389,7 @@ static void on_connected(GObject *source, GAsyncResult *result, gpointer unused)
 		g_io_stream_get_input_stream(G_IO_STREAM(connection)));
 	writer = g_io_stream_get_output_stream(G_IO_STREAM(connection));
 	drop_all_messages();
+	drop_all_bins();
 	if (is_remote) {
 		through = TO_BE_CHALLENGED;
 		snprintf(text, sizeof(text), "%s: saying who this is", radio_name);
@@ -3499,9 +3629,10 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 static int hz_of_x(double x, int width);
 
 // in FT8 a tap on the graph or the waterfall puts our pitch where it fell,
-// at the nearest step the radio's control has, within what it allows
-static void take_pitch_tap(double x) {
-	struct known *pitch = find_known(TX_PITCH_CONTROL);
+// and in JTTY the pitch listened to, at the nearest step the radio's
+// control has, within what it allows
+static void take_pitch_tap(double x, const char *control) {
+	struct known *pitch = find_known(control);
 	char value[CONTROL_VALUE_MAX];
 	int hz;
 
@@ -3529,7 +3660,11 @@ static void on_spectrum_tap(GtkGestureMultiPress *gesture, gint presses, gdouble
 	(void)y;
 	(void)unused;
 	if (!strcmp(mode_group(), MESSAGES_GROUP)) {
-		take_pitch_tap(x);
+		take_pitch_tap(x, TX_PITCH_CONTROL);
+		return;
+	}
+	if (is_jtty()) {
+		take_pitch_tap(x, JTTY_RX_CONTROL);
 		return;
 	}
 	if (span == NULL || !span->is_choice)
@@ -3863,6 +3998,12 @@ static void passband(int *low_hz, int *high_hz, int *tuned_hz) {
 		*low_hz = FT8_LOW_HZ;
 		*high_hz = FT8_HIGH_HZ;
 	}
+	// JTTY is heard as FT8 is; the line is the station listened to
+	if (!strcmp(mode, "JTTY")) {
+		*tuned_hz = atoi(value_of(JTTY_RX_CONTROL));
+		*low_hz = FT8_LOW_HZ;
+		*high_hz = FT8_HIGH_HZ;
+	}
 	if (!strcmp(mode, "CW")) {
 		*tuned_hz = pitch;
 		*low_hz = pitch - bw_cw / 2;
@@ -3892,7 +4033,7 @@ static int shown_hz(void) {
 static void shown_range(int *low_hz, int *high_hz) {
 	*low_hz = -shown_hz() / 2;
 	*high_hz = shown_hz() / 2;
-	if (!strcmp(mode_group(), MESSAGES_GROUP) && span_hz / 2 >= FT8_HIGH_HZ) {
+	if (is_by_pitch() && span_hz / 2 >= FT8_HIGH_HZ) {
 		*low_hz = 0;
 		*high_hz = FT8_HIGH_HZ;
 	}
@@ -4258,8 +4399,9 @@ static gboolean on_draw_spectrum(GtkWidget *widget, cairo_t *cr, gpointer unused
 		cairo_set_source_rgb(cr, 0.56, 0.63, 0.69);
 		cairo_set_font_size(cr, px(CORNER_SIZE));
 		cairo_move_to(cr, px(SPAN_LEFT), px(SPAN_BASELINE));
-		// FT8 shows its passband whatever the span, so the span is not named
-		if (strcmp(mode_group(), MESSAGES_GROUP))
+		// FT8 and JTTY show their passband whatever the span, so the span
+		// is not named
+		if (!is_by_pitch())
 			cairo_show_text(cr, value_of("SPAN"));
 	}
 	cairo_translate(cr, 0, graph_height);
@@ -4537,6 +4679,12 @@ static void load_style(void) {
 		".message-row { background-color: #101820; }"
 		".message-row.other-slot { background-color: #1C2834; }"
 		".message-row.marked { background-color: #604800; }"
+		".bin-row { background-color: #101820; }"
+		".bin-row.other-bin { background-color: #1C2834; }"
+		".bin-row.chosen { background-color: #604800; }"
+		".bin { font-family: monospace; font-size: %dpx; color: #FFFFFF; }"
+		".bin.bin-hz { color: #00FFFF; }"
+		".bin-row.empty .bin.bin-hz { color: #4A5A68; }"
 		".key { font-size: %dpx; font-weight: bold; color: #FFFFFF;"
 		" background-image: none; background-color: #101820;"
 		" border: 1px solid #405060; border-radius: 0; box-shadow: none;"
@@ -4551,7 +4699,7 @@ static void load_style(void) {
 		px(TITLE_SIZE), frequency_px(WAITING_SIZE), px(VALUE_SIZE),
 		frequency_px(FREQUENCY_SIZE),
 		px(STATUS_SIZE),
-		px(MESSAGE_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
+		px(MESSAGE_SIZE), px(BIN_SIZE), px(VALUE_SIZE), px(TYPED_SIZE), px(1));
 	gtk_css_provider_load_from_data(css, rules, -1, NULL);
 }
 
@@ -4673,6 +4821,62 @@ static void create_buttons(void) {
 }
 
 // the status line, and under it the graph and the waterfall
+// a tap on a bin's row chooses its station: where it was last heard, or an
+// empty bin's middle
+static void on_bin_tap(GtkGestureMultiPress *gesture, gint presses, gdouble x,
+		gdouble y, gpointer data) {
+	struct known *rx = find_known(JTTY_RX_CONTROL);
+	int bin = GPOINTER_TO_INT(data);
+	char value[CONTROL_VALUE_MAX];
+	int hz = JTTY_LOWEST_HZ + bin * JTTY_BIN_HZ + JTTY_IN_BIN_HZ;
+
+	(void)gesture;
+	(void)presses;
+	(void)x;
+	(void)y;
+	if (bin_text[bin][0] != 0 && bin_hz[bin] > 0)
+		hz = bin_hz[bin];
+	snprintf(value, sizeof(value), "%d", hz);
+	if (rx != NULL)
+		snprintf(rx->value, sizeof(rx->value), "%s", value);
+	send_line(JTTY_RX_CONTROL, value);
+	show_values();
+}
+
+static void create_bins(void) {
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	GtkWidget *line;
+	int i;
+
+	bins_scroller = gtk_scrolled_window_new(NULL, NULL);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(bins_scroller),
+		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(bins_scroller), FALSE);
+	for (i = 0; i < JTTY_BINS; i++) {
+		line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+		bin_hz_labels[i] = gtk_label_new("");
+		bin_text_labels[i] = gtk_label_new("");
+		gtk_label_set_xalign(GTK_LABEL(bin_hz_labels[i]), 0);
+		gtk_label_set_width_chars(GTK_LABEL(bin_hz_labels[i]), JTTY_HZ_COLUMN);
+		gtk_label_set_xalign(GTK_LABEL(bin_text_labels[i]), 1);
+		gtk_label_set_ellipsize(GTK_LABEL(bin_text_labels[i]), PANGO_ELLIPSIZE_START);
+		add_label_class(bin_hz_labels[i], "bin");
+		add_label_class(bin_hz_labels[i], "bin-hz");
+		add_label_class(bin_text_labels[i], "bin");
+		gtk_box_pack_start(GTK_BOX(line), bin_hz_labels[i], FALSE, FALSE, 0);
+		gtk_box_pack_start(GTK_BOX(line), bin_text_labels[i], TRUE, TRUE, 0);
+		bin_rows[i] = gtk_event_box_new();
+		gtk_style_context_add_class(gtk_widget_get_style_context(bin_rows[i]), "bin-row");
+		set_class(bin_rows[i], "other-bin", i % 2);
+		gtk_container_add(GTK_CONTAINER(bin_rows[i]), line);
+		tell_taps(bin_rows[i], G_CALLBACK(on_bin_tap), GINT_TO_POINTER(i));
+		gtk_box_pack_start(GTK_BOX(box), bin_rows[i], FALSE, FALSE, 0);
+	}
+	gtk_container_add(GTK_CONTAINER(bins_scroller), box);
+	gtk_widget_set_no_show_all(bins_scroller, TRUE);
+	gtk_widget_show_all(gtk_bin_get_child(GTK_BIN(bins_scroller)));
+}
+
 static void create_middle(void) {
 	status_label = gtk_label_new("");
 	meter_label = gtk_label_new("");
@@ -4709,6 +4913,11 @@ static void create_middle(void) {
 	gtk_widget_show_all(gtk_bin_get_child(GTK_BIN(messages_scroller)));
 	g_signal_connect(messages, "size-allocate", G_CALLBACK(on_messages_sized), NULL);
 	put(messages_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, MESSAGES_WIDTH,
+		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
+
+	// JTTY's bins, where the graph and the waterfall are in the other modes
+	create_bins();
+	put(bins_scroller, GRAPH_LEFT, MIDDLE_TOP + STATUS_HEIGHT, GRAPH_WIDTH,
 		PANEL_HEIGHT - MIDDLE_TOP - STATUS_HEIGHT);
 }
 
