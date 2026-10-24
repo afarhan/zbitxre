@@ -237,9 +237,20 @@
     });
   });
   BANDS.forEach(function (band, i) {
-    tile("BAND " + band, i + 1, 2, null, function () { set("BAND", band); }).box.className
+    tile("BAND " + band, i + 1, 2, null, function () { pressBand(band); }).box.className
       += " button";
   });
+  // a band's button: to the band, or on the band in use, to the next place
+  // in its stack, as the radio's window and panel do
+  function pressBand(band) {
+    var stack = schema.STACK;
+    if (values.BAND !== band || !stack || values.STACK === undefined) {
+      set("BAND", band);
+      return;
+    }
+    var place = Number(values.STACK) + 1;
+    set("STACK", place > stack.max ? stack.min : place);
+  }
   tile("MODE", 10, 2, "MODE", function () { adjust("MODE"); });
 
   // the first place of the bottom row, beside TX and RX, in the modes that
