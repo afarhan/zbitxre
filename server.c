@@ -162,6 +162,24 @@
 //
 //     logdel 972 VU2
 //
+// A client that sends adif is sent the whole logbook, every entry, the
+// oldest first, as an ADIF file that logging programs read, a line of the
+// file to a line, between a line that says how many entries come and one
+// that says the file has ended; the client puts the lines after ADIF
+// together, each with its line end, and has the file. logbook.c says how
+// an entry is written:
+//
+//     adif
+//     ADIF_BEGIN 2
+//     ADIF zbitxre logbook <ADIF_VER:5>3.1.4 <PROGRAMID:7>zbitxre <EOH>
+//     ADIF <CALL:6>VU2ESE <QSO_DATE:8>20260402 ... <EOR>
+//     ADIF <CALL:5>VU2XZ <QSO_DATE:8>20260408 ... <EOR>
+//     ADIF_END 2
+//
+// ADIF_END says how many entries were sent, which is fewer than ADIF_BEGIN
+// said only if the logbook changed, or could not be read, on the way.
+// It goes as the client's socket takes it, along with everything else.
+//
 // An entry is written with the radio's controls of the group LOGGER, which
 // logger.c describes: CALL, SENT, RECV, EXCH and NR are set as any text is,
 // and "LOGGER SAVE" logs the entry, "LOGGER WIPE" clears them.
@@ -271,6 +289,10 @@
 #define LOG_WORD "log"
 #define BINS_WORD "jtty"
 #define LOG_DELETE_WORD "logdel "
+#define ADIF_WORD "adif"
+#define ADIF_LINE_MAX 512
+#define ADIF_AT_ONCE 6
+#define NOT_EXPORTING (-1)
 #define LOG_ENTRIES_MAX 100
 #define LOG_LINE_MAX (12 * LOGBOOK_FIELD_MAX)
 #define NOT_LISTING (-1)
@@ -290,6 +312,10 @@ struct client {
 	char log_searched_for[LOGBOOK_FIELD_MAX];
 	int log_next;
 	unsigned long log_changes;
+	// the whole logbook, as ADIF: the number of the last entry sent, or
+	// NOT_EXPORTING, and how many have gone
+	int adif_after;
+	int adif_sent;
 	uint8_t changed[CONTROLS_MAX];
 };
 
@@ -623,6 +649,55 @@ static void delete_from_logbook(struct client *c, const char *asked) {
 	list_logbook(c, callsign);
 }
 
+// to each client that asked for the logbook as ADIF, a few of its entries
+// at a time, and the end when they are all gone. They wait, as the spectrum
+// does, until the client has taken all it was sent, so that a long logbook
+// takes its turn with the spectrum and does not stop it
+static void send_adif(void) {
+	char record[ADIF_LINE_MAX];
+	char line[ADIF_LINE_MAX + LABEL_ROOM];
+	struct client *c;
+	int id, sent;
+
+	for (c = clients; c < clients + SERVER_CLIENTS_MAX; c++) {
+		if (c->fd == NOBODY || c->adif_after == NOT_EXPORTING || c->out_count > 0
+				|| unsent_bytes(c) > 0)
+			continue;
+		for (sent = 0; sent < ADIF_AT_ONCE && c->fd != NOBODY
+				&& c->adif_after != NOT_EXPORTING; sent++) {
+			id = logbook_adif_after(c->adif_after, record, sizeof(record));
+			if (id <= 0) {
+				if (id < 0)
+					client_queue_line(c, "WARN log: the logbook could not be read\n");
+				snprintf(line, sizeof(line), "ADIF_END %d\n", c->adif_sent);
+				client_queue_line(c, line);
+				c->adif_after = NOT_EXPORTING;
+				break;
+			}
+			snprintf(line, sizeof(line), "ADIF %s\n", record);
+			client_queue_line(c, line);
+			c->adif_after = id;
+			c->adif_sent++;
+		}
+	}
+}
+
+// the ADIF file is begun: how many entries, and its header
+static void export_logbook(struct client *c) {
+	char line[ADIF_LINE_MAX + LABEL_ROOM];
+	int count = logbook_count();
+
+	if (count < 0) {
+		client_queue_line(c, "WARN log: the radio has no logbook\n");
+		client_queue_line(c, "ADIF_BEGIN 0\nADIF_END 0\n");
+		return;
+	}
+	snprintf(line, sizeof(line), "ADIF_BEGIN %d\nADIF %s\n", count, logbook_adif_header());
+	client_queue_line(c, line);
+	c->adif_after = 0;
+	c->adif_sent = 0;
+}
+
 // to each client that shows the logbook: the list it asked for, as much of
 // it as there is room to queue, and the list again when the logbook has
 // changed since
@@ -635,6 +710,7 @@ void server_send_log(void) {
 
 	if (listener == NOBODY)
 		return;
+	send_adif();
 	for (c = clients; c < clients + SERVER_CLIENTS_MAX; c++) {
 		if (c->fd == NOBODY || !c->shows_logbook)
 			continue;
@@ -719,6 +795,7 @@ static void accept_client(void) {
 	clients[i].wants_messages = 0;
 	clients[i].shows_logbook = 0;
 	clients[i].log_next = NOT_LISTING;
+	clients[i].adif_after = NOT_EXPORTING;
 	memset(clients[i].changed, 0, sizeof(clients[i].changed));
 	send_all_settings(&clients[i]);
 }
@@ -773,6 +850,10 @@ static void handle_line(struct client *c, char *line) {
 	}
 	if (!strncmp(line, LOG_DELETE_WORD, strlen(LOG_DELETE_WORD))) {
 		delete_from_logbook(c, line + strlen(LOG_DELETE_WORD));
+		return;
+	}
+	if (!strcmp(line, ADIF_WORD) || !strcmp(line, ADIF_WORD " ")) {
+		export_logbook(c);
 		return;
 	}
 	if (!strcmp(line, LOG_WORD) || !strncmp(line, LOG_WORD " ", strlen(LOG_WORD " "))) {

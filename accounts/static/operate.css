@@ -146,6 +146,10 @@ html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: h
     border: 1px solid #405060; text-transform: uppercase; min-width: 0; }
 #panel .entry button { font-size: 3.6vh; padding: 0.9vh 2vw; background: #1c2834; color: #fff;
     border: 1px solid #405060; }
+#panel .entry.macros { padding-top: 0; }
+#panel .entry.macros button { flex: 1; padding: 0.9vh 0.5vw; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0; }
+#panel .entry.gone { display: none; }
 
 #start { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 9;
     display: flex; flex-direction: column; align-items: center; justify-content: center;

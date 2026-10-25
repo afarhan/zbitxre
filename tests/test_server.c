@@ -152,6 +152,8 @@
 #define LOG_REQUEST_ROOM 32
 #define QUIET_ROUNDS 2
 #define MANY_ENTRIES 120
+#define ADIF_HEARD_MAX 65536
+#define ADIF_WAIT_US 2000
 #define LISTED_AT_MOST 100
 
 static int checks_failed;
@@ -339,6 +341,68 @@ static void check_the_logbook(int one, int other) {
 		"of a long logbook the newest hundred go, though they do not fit the queue at once");
 	logbook_close();
 	remove(LOGBOOK_PATH);
+}
+
+// the whole logbook as ADIF, collected until no more of it comes; says
+// how many lines of the file came, and keeps all that was heard
+static int hear_the_adif(int fd, char *all, int room) {
+	static char heard[HEARD_MAX];
+	int quiet = 0;
+
+	all[0] = 0;
+	while (quiet < QUIET_ROUNDS) {
+		server_send_log();
+		usleep(ADIF_WAIT_US);
+		hear(fd, heard);
+		if (heard[0] == 0)
+			quiet++;
+		else
+			quiet = 0;
+		if ((int)(strlen(all) + strlen(heard)) < room)
+			strcat(all, heard);
+	}
+	return lines_of(all, "ADIF ");
+}
+
+static void check_the_adif(int one, int other) {
+	static char all[ADIF_HEARD_MAX];
+	static char heard[HEARD_MAX];
+	char callsign[LOGBOOK_FIELD_MAX];
+	int i;
+
+	open_a_fresh_logbook();
+	log_an_entry("G0XYZ", "0440");
+	log_an_entry("VU2XZ", "0445");
+	hear(one, heard);
+	hear(other, heard);
+
+	say(one, "adif\n");
+	expect(hear_the_adif(one, all, sizeof(all)) == 3 && has(all, "ADIF_BEGIN 2\n")
+			&& has(all, "<EOH>\n") && has(all, "\nADIF_END 2\n"),
+		"a client that sends adif is sent the header and each entry, between a begin and an end");
+	expect(strstr(all, "G0XYZ") < strstr(all, "VU2XZ")
+			&& has(all, "ADIF <CALL:5>VU2XZ <QSO_DATE:8>20261008 <TIME_ON:4>0445 "
+				"<FREQ:5>7.015 <BAND:3>40m <MODE:2>CW <RST_SENT:3>599 <RST_RCVD:3>579 "
+				"<STATION_CALLSIGN:6>VU2ESE <EOR>\n"),
+		"the oldest first, an entry to a line");
+	expect(hear_the_adif(other, all, sizeof(all)) == 0, "a client that did not ask is sent none");
+
+	for (i = 0; i < MANY_ENTRIES; i++) {
+		snprintf(callsign, sizeof(callsign), "W%dAAA", i);
+		log_an_entry(callsign, "0500");
+	}
+	hear_the_log(one, heard);
+	say(one, "adif\n");
+	expect(hear_the_adif(one, all, sizeof(all)) == 1 + 2 + MANY_ENTRIES
+			&& has(all, "\nADIF_END 122\n"),
+		"of a long logbook every entry goes, not the newest hundred, though it does not fit at once");
+	logbook_close();
+	remove(LOGBOOK_PATH);
+
+	say(one, "adif\n");
+	hear_the_adif(one, all, sizeof(all));
+	expect(has(all, "ADIF_BEGIN 0\n") && has(all, "ADIF_END 0\n"),
+		"without a logbook the file is begun and ended at once, and the client is told why");
 }
 
 static int is_passband(int low_hz, int high_hz) {
@@ -1182,6 +1246,7 @@ server_send_cw("CQ DE ");
 		"a client that goes is forgotten, and a new one is told of changes");
 
 	check_the_logbook(one, other);
+	check_the_adif(one, other);
 
 	expect(a_stalled_client_is_kept_up_to_date(),
 		"a client that stalls is not dropped, and is sent the last FREQ, not the backlog");

@@ -1357,14 +1357,38 @@ static void show_jtty_keys(int is_shown);
 static void take_jtty_sent(const char *text);
 static void take_cw_sent(const char *text);
 
-// the radio's macros, "CQ/RST/End", in CW, where they can be sent, and
-// nothing in the other modes: the logbook's window has a row of them
-static const char *macros_in_use(void) {
-	struct known *macros = find_known(MACRO_CONTROL);
+// the macros of the mode, "CQ/RST/End", where they can be sent, and what a
+// macro and STOP are sent with: CW's and JTTY's macros, and FT8's CQ and
+// HALT, which have no STOP; nothing in the other modes. The logbook's
+// window has a row of them
+static const char *macros_in_use(const char **macro_word, const char **stop_word) {
+	struct known *macros = NULL;
 
-	if (macros == NULL || strcmp(mode_group(), MACRO_GROUP))
+	*macro_word = MACRO_CONTROL;
+	*stop_word = "CW_DO";
+	if (!strcmp(mode_group(), MACRO_GROUP))
+		macros = find_known(MACRO_CONTROL);
+	if (is_jtty()) {
+		macros = find_known(JTTY_MACRO_CONTROL);
+		*macro_word = JTTY_MACRO_CONTROL;
+		*stop_word = "JTTY_DO";
+	}
+	if (!strcmp(mode_group(), MESSAGES_GROUP) && find_known("FT8_DO") != NULL) {
+		*macro_word = "FT8_DO";
+		*stop_word = NULL;
+		return "CQ/HALT";
+	}
+	if (macros == NULL)
 		return "";
 	return macros->choices;
+}
+
+static void show_log_macros(void) {
+	const char *macro_word;
+	const char *stop_word;
+	const char *macros = macros_in_use(&macro_word, &stop_word);
+
+	logbook_window_set_macros(macros, macro_word, stop_word);
 }
 
 static void show_buttons(void) {
@@ -1378,7 +1402,7 @@ static void show_buttons(void) {
 
 	for (i = 0; i < BANDS; i++)
 		set_class(band_box[i], "in-use", !strcmp(value_of("BAND"), band_names[i]));
-	logbook_window_set_macros(macros_in_use());
+	show_log_macros();
 	// KBD's keyboards are CW's and JTTY's, each its own
 	if (cw_keys != NULL && strcmp(mode_group(), MACRO_GROUP))
 		show_cw_keys(0);
@@ -3795,7 +3819,12 @@ static gboolean on_column_click(GtkWidget *widget, GdkEventButton *event, gpoint
 		return TRUE;
 	}
 	if (clicked == LOG_ROW) {
-		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of, macros_in_use());
+		const char *macro_word;
+		const char *stop_word;
+		const char *macros = macros_in_use(&macro_word, &stop_word);
+
+		logbook_window_open(GTK_WINDOW(main_window), send_line, value_of, macros, macro_word,
+			stop_word);
 		return TRUE;
 	}
 	if (clicked == CW_KBD_ROW && !strcmp(mode_group(), MACRO_GROUP)) {

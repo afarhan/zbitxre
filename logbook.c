@@ -43,11 +43,28 @@
 // began, so that whoever shows the logbook can tell that what it shows is
 // no longer what is there.
 //
+// The whole logbook can be taken away as an ADIF file, the format logging
+// programs, LoTW and QRZ read: logbook_adif_header() is the file's first
+// line, and logbook_adif_after() each entry's record, a line to an entry,
+// the oldest first:
+//
+//     <CALL:5>VU2XZ <QSO_DATE:8>20260408 <TIME_ON:4>0445 <FREQ:5>7.130
+//     <BAND:3>40m <MODE:3>SSB <SUBMODE:3>LSB <RST_SENT:2>59 <RST_RCVD:2>59
+//     <STATION_CALLSIGN:6>VU2ESE <EOR>
+//
+// (on one line). The radio's modes are ADIF's: USB and LSB are SSB, CWR is
+// CW, RADE1 and RADE2 are FreeDV's digital voice, and JTTY, which ADIF
+// does not yet have, is MFSK as FT4 is. An exchange that is a grid, as FT8
+// sends, is GRIDSQUARE (ours MY_GRIDSQUARE); any other is SRX_STRING (ours
+// STX_STRING). logbook_count() says how many entries there are.
+//
 // It needs the SQLite library, as zbitxv2 did.
 //
 // For the thread that owns the controls.
 
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <sqlite3.h>
@@ -227,4 +244,169 @@ int logbook_add(const struct logbook_row *row, const char *callsign_sent) {
 		return -1;
 	changes++;
 	return (int)sqlite3_last_insert_rowid(db);
+}
+
+// how many entries the logbook has, those marked deleted left out; -1 if
+// it is not open or cannot be read
+int logbook_count(void) {
+	sqlite3_stmt *counted = NULL;
+	int count = -1;
+
+	if (db == NULL)
+		return -1;
+	if (sqlite3_prepare_v2(db, "select count(*) from logbook where deleted = 0;", -1,
+			&counted, NULL) != SQLITE_OK
+			&& sqlite3_prepare_v2(db, "select count(*) from logbook;", -1, &counted, NULL)
+			!= SQLITE_OK)
+		return -1;
+	if (sqlite3_step(counted) == SQLITE_ROW)
+		count = sqlite3_column_int(counted, 0);
+	sqlite3_finalize(counted);
+	return count;
+}
+
+const char *logbook_adif_header(void) {
+	return "zbitxre logbook <ADIF_VER:5>3.1.4 <PROGRAMID:7>zbitxre <EOH>";
+}
+
+struct adif_band {
+	int low_khz;
+	int high_khz;
+	const char *name;
+};
+
+static const struct adif_band adif_bands[] = {
+	{ 1800, 2000, "160m" }, { 3500, 4000, "80m" }, { 5060, 5450, "60m" },
+	{ 7000, 7300, "40m" }, { 10100, 10150, "30m" }, { 14000, 14350, "20m" },
+	{ 18068, 18168, "17m" }, { 21000, 21450, "15m" }, { 24890, 24990, "12m" },
+	{ 28000, 29700, "10m" }, { 50000, 54000, "6m" },
+};
+
+struct adif_mode {
+	const char *ours;
+	const char *mode;
+	const char *submode;
+};
+
+static const struct adif_mode adif_modes[] = {
+	{ "USB", "SSB", "USB" }, { "LSB", "SSB", "LSB" }, { "CWR", "CW", "" },
+	{ "RADE1", "DIGITALVOICE", "FREEDV" }, { "RADE2", "DIGITALVOICE", "FREEDV" },
+	{ "FT4", "MFSK", "FT4" }, { "JTTY", "MFSK", "JTTY" },
+};
+
+// a field put on the end of the record, if it has a value and there is room
+static void adif_field(char *record, int room, const char *name, const char *value) {
+	int used = (int)strlen(record);
+
+	if (value[0] == 0 || used >= room)
+		return;
+	snprintf(record + used, room - used, "<%s:%d>%s ", name, (int)strlen(value), value);
+}
+
+// what is left of a text when all but its digits are taken out:
+// 2026-04-08 is 20260408
+static void only_digits(char *digits, int room, const char *text) {
+	int n = 0;
+
+	for (; *text != 0 && n < room - 1; text++)
+		if (isdigit((unsigned char)*text))
+			digits[n++] = *text;
+	digits[n] = 0;
+}
+
+// a Maidenhead grid of four or six characters: MK97, MK97fa
+static int is_grid(const char *text) {
+	int length = (int)strlen(text);
+
+	if (length != 4 && length != 6)
+		return 0;
+	if (toupper((unsigned char)text[0]) < 'A' || toupper((unsigned char)text[0]) > 'R'
+			|| toupper((unsigned char)text[1]) < 'A' || toupper((unsigned char)text[1]) > 'R'
+			|| !isdigit((unsigned char)text[2]) || !isdigit((unsigned char)text[3]))
+		return 0;
+	return length == 4 || (isalpha((unsigned char)text[4]) && isalpha((unsigned char)text[5]));
+}
+
+// the next entry after the one numbered so (0 for the first) as an ADIF
+// record, a line of text without its end. Says the entry's number, 0 if
+// there is none after it, or -1 if the logbook cannot be read
+int logbook_adif_after(int after, char *record, int room) {
+	static const char *const columns =
+		"select id, mode, freq, qso_date, qso_time, callsign_sent, rst_sent, exch_sent, "
+		"callsign_recv, rst_recv, exch_recv, %s from logbook where id > ? %s "
+		"order by id limit 1;";
+	// the files of before zbitxv2 had neither comments nor deleted
+	static const char *const kinds[][2] = {
+		{ "comments", "and deleted = 0" }, { "comments", "" }, { "''", "" },
+	};
+	char statement[STATEMENT_MAX];
+	sqlite3_stmt *found = NULL;
+	char field[12][LOGBOOK_FIELD_MAX * 4];
+	char digits[LOGBOOK_FIELD_MAX];
+	char mhz[LOGBOOK_FIELD_MAX];
+	const char *mode, *submode = "";
+	double khz;
+	int id, i, step;
+
+	if (db == NULL || room < 1)
+		return -1;
+	for (i = 0; found == NULL && i < (int)(sizeof(kinds) / sizeof(kinds[0])); i++) {
+		snprintf(statement, sizeof(statement), columns, kinds[i][0], kinds[i][1]);
+		if (sqlite3_prepare_v2(db, statement, -1, &found, NULL) != SQLITE_OK)
+			found = NULL;
+	}
+	if (found == NULL)
+		return -1;
+	sqlite3_bind_int(found, 1, after);
+	step = sqlite3_step(found);
+	if (step != SQLITE_ROW) {
+		sqlite3_finalize(found);
+		return step == SQLITE_DONE ? 0 : -1;
+	}
+	id = sqlite3_column_int(found, 0);
+	for (i = 1; i < 12; i++) {
+		const unsigned char *text = sqlite3_column_text(found, i);
+
+		char *at;
+
+		snprintf(field[i], sizeof(field[i]), "%s", text != NULL ? (const char *)text : "");
+		// a record is a line: a comment's line ends would end it
+		for (at = field[i]; *at != 0; at++)
+			if (iscntrl((unsigned char)*at))
+				*at = ' ';
+	}
+	sqlite3_finalize(found);
+
+	record[0] = 0;
+	adif_field(record, room, "CALL", field[8]);
+	only_digits(digits, sizeof(digits), field[3]);
+	adif_field(record, room, "QSO_DATE", digits);
+	only_digits(digits, sizeof(digits), field[4]);
+	adif_field(record, room, "TIME_ON", digits);
+	khz = atof(field[2]);
+	mhz[0] = 0;
+	if (khz > 0)
+		snprintf(mhz, sizeof(mhz), "%.6g", khz / 1000.0);
+	adif_field(record, room, "FREQ", mhz);
+	for (i = 0; i < (int)(sizeof(adif_bands) / sizeof(adif_bands[0])); i++)
+		if (khz >= adif_bands[i].low_khz && khz <= adif_bands[i].high_khz)
+			adif_field(record, room, "BAND", adif_bands[i].name);
+	mode = field[1];
+	for (i = 0; i < (int)(sizeof(adif_modes) / sizeof(adif_modes[0])); i++)
+		if (!strcmp(field[1], adif_modes[i].ours)) {
+			mode = adif_modes[i].mode;
+			submode = adif_modes[i].submode;
+		}
+	adif_field(record, room, "MODE", mode);
+	adif_field(record, room, "SUBMODE", submode);
+	adif_field(record, room, "RST_SENT", field[6]);
+	adif_field(record, room, "RST_RCVD", field[9]);
+	adif_field(record, room, is_grid(field[7]) ? "MY_GRIDSQUARE" : "STX_STRING", field[7]);
+	adif_field(record, room, is_grid(field[10]) ? "GRIDSQUARE" : "SRX_STRING", field[10]);
+	adif_field(record, room, "STATION_CALLSIGN", field[5]);
+	adif_field(record, room, "COMMENT", field[11]);
+	if ((int)strlen(record) + 6 > room)
+		return -1;
+	strcat(record, "<EOR>");
+	return id;
 }

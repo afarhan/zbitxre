@@ -38,7 +38,9 @@
 // 2026, they stay as they are when the window is closed and opened again,
 // and are cleared only by WIPE or by SAVE; and in CW the macros' buttons
 // are a row of their own under the fields, to be sent from here, with
-// STOP at its end, which stops the macro being sent. Each field
+// STOP at its end, which stops the macro being sent. In JTTY the row is
+// JTTY's macros and STOP, and in FT8 CQ and HALT, as the author asked on
+// 25 October 2026. Each field
 // is one line high, and shows its name, dim, in place of a value while it
 // is empty.
 //
@@ -62,6 +64,13 @@
 // checks, and says what is missing, or that the entry is logged, and what
 // it says is shown beside the title, a refusal in bold. The entry is logged
 // in the mode and on the frequency the radio is on, at the radio's time.
+//
+// ADIF, beside CLOSE, takes the whole logbook away as an ADIF file, which
+// logging programs, LoTW and QRZ read: every entry, not the hundred the
+// list shows. It asks where to save it, in the operator's home folder to
+// begin with, named for the station and the day, VU2ESE_2026-10-24.adi;
+// asks the radio for it with "adif", which server.c describes; and says
+// beside the title how much has come, and then where it was saved.
 //
 // CLOSE, or Escape, puts the window away, giving the radio what was being
 // typed; what was searched for, and the fields, are there when it is opened
@@ -117,6 +126,11 @@
 #define PAGE_KEYS "keys"
 #define PAGE_ASK "ask"
 #define LIST_WORD "LOG_LIST"
+#define ADIF_BEGIN_WORD "ADIF_BEGIN"
+#define ADIF_WORD "ADIF"
+#define ADIF_END_WORD "ADIF_END"
+#define STATION_CONTROL "MYCALLSIGN"
+#define ADIF_SHOWN_EVERY 25
 #define ENTRY_WORD "LOG"
 #define LOGGER_CONTROL "LOGGER"
 #define ENTRY_FORMAT "%-10s %-5s %6s %-5s %-11s %-12s %-12s"
@@ -141,6 +155,7 @@ static struct field fields[FIELDS] = {
 
 
 static void (*send)(const char *word, const char *rest);
+static const char *(*value_of_control)(const char *control);
 static GtkWidget *window;
 static GtkWidget *title;
 static GtkWidget *said;
@@ -150,6 +165,10 @@ static GtkWidget *list_scroller;
 static GtkWidget *asked_entry;
 static GtkWidget *macro_row;
 static char macro_choices[CHOICES_ROOM];
+// what a macro's button is sent with, MACRO, JTTY_MACRO or FT8_DO, and STOP,
+// CW_DO or JTTY_DO, or NULL where there is no STOP
+static const char *macro_word = "MACRO";
+static const char *stop_word = "CW_DO";
 static GtkWidget *yes_button;
 static GtkWidget *no_button;
 static GtkCssProvider *css;
@@ -166,6 +185,12 @@ static int is_yes_marked;
 static char searched_for[TEXT_ROOM];
 static int editing = NOT_EDITING;
 static char typed[TEXT_ROOM];
+// the ADIF file as it comes, where it is to go, and how many entries the
+// radio said were coming; no file while none is asked for
+static GString *adif_file;
+static char *adif_path;
+static int adif_coming;
+static int adif_got;
 
 static void set_class(GtkWidget *widget, const char *name, int on) {
 	GtkStyleContext *style = gtk_widget_get_style_context(widget);
@@ -482,6 +507,45 @@ static void take_entry_line(const char *value) {
 		fill_list();
 }
 
+// the ADIF file's lines, as they come: put together, and saved at the end
+static void take_adif_line(const char *name, const char *value) {
+	char shown[SHOWN_ROOM];
+	GError *error = NULL;
+
+	if (adif_file == NULL)
+		return;
+	if (!strcmp(name, ADIF_BEGIN_WORD)) {
+		adif_coming = atoi(value);
+		adif_got = 0;
+		g_string_truncate(adif_file, 0);
+		return;
+	}
+	if (!strcmp(name, ADIF_WORD)) {
+		g_string_append(adif_file, value);
+		g_string_append(adif_file, "\r\n");
+		// the first line is the file's header, and every other an entry
+		adif_got++;
+		if (adif_got % ADIF_SHOWN_EVERY == 0) {
+			snprintf(shown, sizeof(shown), "ADIF: %d of %d entries", adif_got - 1,
+				adif_coming);
+			show_said(shown, 0);
+		}
+		return;
+	}
+	if (g_file_set_contents(adif_path, adif_file->str, (gssize)adif_file->len, &error)) {
+		snprintf(shown, sizeof(shown), "%d entries saved to %s", atoi(value), adif_path);
+		show_said(shown, 0);
+	} else {
+		snprintf(shown, sizeof(shown), "the logbook could not be saved: %s", error->message);
+		show_said(shown, 1);
+		g_clear_error(&error);
+	}
+	g_string_free(adif_file, TRUE);
+	adif_file = NULL;
+	g_free(adif_path);
+	adif_path = NULL;
+}
+
 // a line the radio sent, its first word and the rest: the window takes what
 // is the logbook's, the entry's fields, and what the radio has to say
 void logbook_window_took(const char *name, const char *value) {
@@ -496,6 +560,11 @@ void logbook_window_took(const char *name, const char *value) {
 	}
 	if (!strcmp(name, ENTRY_WORD)) {
 		take_entry_line(value);
+		return;
+	}
+	if (!strcmp(name, ADIF_BEGIN_WORD) || !strcmp(name, ADIF_WORD)
+			|| !strcmp(name, ADIF_END_WORD)) {
+		take_adif_line(name, value);
 		return;
 	}
 	if (!strcmp(name, "SAY")) {
@@ -609,7 +678,7 @@ static void on_key_pressed(char key) {
 static void on_stop_pressed(GtkButton *button, gpointer unused) {
 	(void)button;
 	(void)unused;
-	send("CW_DO", "ESC");
+	send(stop_word, "ESC");
 }
 
 // a macro is sent with what is typed given to the radio first, so that the
@@ -617,7 +686,7 @@ static void on_stop_pressed(GtkButton *button, gpointer unused) {
 static void on_macro_pressed(GtkButton *button, gpointer unused) {
 	(void)unused;
 	done_editing();
-	send("MACRO", gtk_button_get_label(button));
+	send(macro_word, gtk_button_get_label(button));
 }
 
 // "?": the logbook is searched for the callsign in CALL, as it is typed if
@@ -666,6 +735,40 @@ static void on_no_pressed(GtkButton *button, gpointer unused) {
 	(void)button;
 	(void)unused;
 	gtk_stack_set_visible_child_name(GTK_STACK(pages), PAGE_LIST);
+}
+
+// where the ADIF file is to go is asked, and then the radio for it
+static void on_adif_pressed(GtkButton *button, gpointer unused) {
+	GtkWidget *chooser;
+	GDateTime *now;
+	gchar *day;
+	char name[SHOWN_ROOM];
+	const char *station = value_of_control(STATION_CONTROL);
+
+	(void)button;
+	(void)unused;
+	done_editing();
+	if (adif_file != NULL)
+		return;
+	now = g_date_time_new_now_utc();
+	day = g_date_time_format(now, "%Y-%m-%d");
+	snprintf(name, sizeof(name), "%s_%s.adi", station[0] != 0 ? station : "zbitx", day);
+	g_free(day);
+	g_date_time_unref(now);
+	chooser = gtk_file_chooser_dialog_new("Save the logbook as ADIF", GTK_WINDOW(window),
+		GTK_FILE_CHOOSER_ACTION_SAVE, "_Cancel", GTK_RESPONSE_CANCEL,
+		"_Save", GTK_RESPONSE_ACCEPT, NULL);
+	gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
+	gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), g_get_home_dir());
+	gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), name);
+	if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+		adif_path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+		adif_file = g_string_new(NULL);
+		adif_coming = 0;
+		show_said("asking the radio for the logbook", 0);
+		send("adif", "");
+	}
+	gtk_widget_destroy(chooser);
 }
 
 static void on_close_pressed(GtkButton *button, gpointer unused) {
@@ -771,6 +874,8 @@ static GtkWidget *create_bar(void) {
 	gtk_box_pack_start(GTK_BOX(bar), said, TRUE, TRUE, px(4));
 	gtk_box_pack_end(GTK_BOX(bar), button_new("CLOSE", "log-button",
 		G_CALLBACK(on_close_pressed), NULL), FALSE, FALSE, 0);
+	gtk_box_pack_end(GTK_BOX(bar), button_new("ADIF", "log-button",
+		G_CALLBACK(on_adif_pressed), NULL), FALSE, FALSE, 0);
 	return bar;
 }
 
@@ -847,14 +952,17 @@ static void drop_a_macro(GtkWidget *button, gpointer unused) {
 
 // the macros' buttons, in CW: made again when the radio's macros change,
 // and the row put away in the other modes, where a macro is refused
-void logbook_window_set_macros(const char *choices) {
+void logbook_window_set_macros(const char *choices, const char *macro, const char *stop) {
 	char copy[CHOICES_ROOM];
 	char *saved = NULL;
 	char *one;
 	int count = 0;
 
-	if (window == NULL || !strcmp(choices, macro_choices))
+	if (window == NULL || (!strcmp(choices, macro_choices) && macro == macro_word
+			&& stop == stop_word))
 		return;
+	macro_word = macro;
+	stop_word = stop;
 	snprintf(macro_choices, sizeof(macro_choices), "%s", choices);
 	gtk_container_foreach(GTK_CONTAINER(macro_row), drop_a_macro, NULL);
 	snprintf(copy, sizeof(copy), "%s", choices);
@@ -866,7 +974,7 @@ void logbook_window_set_macros(const char *choices) {
 		macro_button_add(one, G_CALLBACK(on_macro_pressed));
 		count++;
 	}
-	if (count > 0)
+	if (count > 0 && stop_word != NULL)
 		macro_button_add("STOP", G_CALLBACK(on_stop_pressed));
 	gtk_widget_show_all(macro_row);
 	gtk_widget_set_visible(macro_row, count > 0);
@@ -940,10 +1048,12 @@ int logbook_window_is_open(void) {
 // what was typed here, and opening the window had emptied the fields
 void logbook_window_open(GtkWindow *main_window,
 		void (*send_line)(const char *word, const char *rest),
-		const char *(*value_of)(const char *control), const char *macros) {
+		const char *(*value_of)(const char *control), const char *macros,
+		const char *macro, const char *stop) {
 	int i;
 
 	send = send_line;
+	value_of_control = value_of;
 	if (window == NULL) {
 		create_window(main_window);
 		for (i = 0; i < FIELDS; i++)
@@ -951,7 +1061,7 @@ void logbook_window_open(GtkWindow *main_window,
 	}
 	editing = NOT_EDITING;
 	gtk_widget_show_all(window);
-	logbook_window_set_macros(macros);
+	logbook_window_set_macros(macros, macro, stop);
 	gtk_widget_set_visible(macro_row, macro_choices[0] != 0);
 	gtk_stack_set_visible_child_name(GTK_STACK(pages), PAGE_LIST);
 	show_fields();

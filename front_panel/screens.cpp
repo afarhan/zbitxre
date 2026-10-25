@@ -93,7 +93,9 @@
 // its name, dim, while it is empty. The CW macros fill their callsign,
 // reports and exchange from these fields, so in CW the macros' buttons are
 // a row under them, to be sent from here, as the author asked on 18
-// October 2026 of the window and the panel alike; the fields stay as they
+// October 2026 of the window and the panel alike; in JTTY the row is
+// JTTY's macros, and in FT8 CQ and HALT, as he asked on 25 October 2026.
+// The fields stay as they
 // are when the screen is left and opened again, and only WIPE and SAVE
 // clear them. A touch on a field brings a keyboard up over the list, at the
 // author's asking, and the field is typed into there on its row, with its
@@ -288,7 +290,7 @@ static const struct roller_place roller_places[ROLLERS] = {
 //the log's columns, left to right, their headings and their widths, which
 //add up to the screen's
 #define LOG_COLUMNS 7
-//entries in view: one fewer in CW, where the macros' row takes the room
+//entries in view: one fewer where the macros' row takes the room
 #define LOG_ROWS_IN_VIEW 8
 #define LOG_ROWS_IN_VIEW_IN_CW 7
 #define LOG_TABLE_ROWS (LOG_ROWS_IN_VIEW + 1)
@@ -308,7 +310,7 @@ static const struct roller_place roller_places[ROLLERS] = {
 #define LOG_FIELDS_HEIGHT 28
 #define LOG_FIELD_MAX 12
 #define LOG_PROMPT_COLOUR 0x406070
-//the macros' row, in CW, under the fields
+//the macros' row, in CW, JTTY and FT8, under the fields
 #define LOG_MACROS_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
 //as high as a key of the keyboard under it, the author's asking: the
 //keyboard's four rows and the macros' share what is under the fields
@@ -357,7 +359,7 @@ static char log_searched_for[LOG_SEARCH_MAX + 1];
 static char log_said[LOG_SAID_MAX + 1];
 #define NOT_EDITING (-1)
 static int log_editing = NOT_EDITING;
-//how far down the list and the keys begin: under the macros' row in CW
+//how far down the list and the keys begin: under the macros' row if any
 static int log_keys_top;
 static bool log_is_save_waiting;
 //the macros' buttons, and STOP after them
@@ -368,6 +370,11 @@ static int log_rows_in_view = LOG_ROWS_IN_VIEW;
 //a macro touched waits, as SAVE does, until the field just typed has gone
 //to the radio, so that it sends what was typed
 static char log_macro_waiting[CONTROL_TEXT_MAX];
+//the radio's action a macro is sent with, and the one STOP is: MACRO and
+//CW_DO in CW, JTTY_MACRO and JTTY_DO in JTTY; in FT8 the buttons are CQ and
+//HALT, FT8_DO's, and there is no STOP
+static const char *log_macro_action = "MACRO";
+static const char *log_stop_action = "CW_DO";
 
 //the logbook's keyboard, a row to a line: no more keys than are needed
 static const char *const log_keys[] = {
@@ -1082,11 +1089,12 @@ static void on_log_key(lv_event_t *e){
 }
 
 //STOP, at the end of the macros' row: the macro being sent is stopped,
-//the radio's CW_DO ESC, which the author asked for on 18 October 2026
+//the radio's CW_DO ESC, which the author asked for on 18 October 2026, or
+//in JTTY JTTY_DO ESC
 static void on_log_stop_touched(lv_event_t *e){
 	(void)e;
 	log_macro_waiting[0] = 0;
-	send_action("CW_DO", "ESC");
+	send_action(log_stop_action, "ESC");
 }
 
 //a macro is sent once what is being typed has gone to the radio
@@ -1473,12 +1481,15 @@ static void keys_take_off(lv_obj_t *mom){
 	keys_put_away();
 }
 
-//the macros' buttons, made afresh when the screen is opened, in CW only,
-//where a macro can be sent; the list and the keyboard move down under them
+//the macros' buttons, made afresh when the screen is opened, in the modes
+//where a macro can be sent: CW's and JTTY's macros, each with STOP after
+//them, and FT8's CQ and HALT, as the main screen has them; the list and the
+//keyboard move down under them
 static void log_macros_make(){
-	struct panel_control *macro = controls_find("MACRO");
+	struct panel_control *macro = NULL;
 	struct panel_control one;
 	char mode[CONTROL_TEXT_MAX];
+	bool has_stop = true;
 	int top = LOG_TABLE_TOP;
 	int width;
 	int x = LOG_GAP;
@@ -1488,8 +1499,23 @@ static void log_macros_make(){
 		lv_obj_delete(log_macro_buttons[i]);
 	log_macros_shown = 0;
 	text_of("MODE", mode, sizeof(mode));
+	if (!strcmp(mode, "CW") || !strcmp(mode, "CWR")){
+		macro = controls_find("MACRO");
+		log_macro_action = "MACRO";
+		log_stop_action = "CW_DO";
+	} else if (!strcmp(mode, "JTTY")){
+		macro = controls_find("JTTY_MACRO");
+		log_macro_action = "JTTY_MACRO";
+		log_stop_action = "JTTY_DO";
+	} else if (!strcmp(mode, "FT8") && controls_find("FT8_DO") != NULL){
+		log_macro_action = "FT8_DO";
+		has_stop = false;
+		snprintf(log_macro_labels[0], sizeof(log_macro_labels[0]), "CQ");
+		snprintf(log_macro_labels[1], sizeof(log_macro_labels[1]), "HALT");
+		log_macros_shown = 2;
+	}
 	//the labels, but for the places left empty
-	if (macro != NULL && (!strcmp(mode, "CW") || !strcmp(mode, "CWR"))){
+	if (macro != NULL){
 		for (i = 0; i < controls_choices(macro) && log_macros_shown < LOG_MACROS_MAX; i++){
 			one = *macro;
 			one.value = i;
@@ -1503,7 +1529,7 @@ static void log_macros_make(){
 	if (log_macros_shown > 0){
 		top = LOG_TABLE_TOP_IN_CW;
 		log_rows_in_view = LOG_ROWS_IN_VIEW_IN_CW;
-		width = (SCREEN_WIDTH - LOG_GAP) / (log_macros_shown + 1) - LOG_GAP;
+		width = (SCREEN_WIDTH - LOG_GAP) / (log_macros_shown + (has_stop ? 1 : 0)) - LOG_GAP;
 		for (i = 0; i < log_macros_shown; i++){
 			log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
 				LOG_MACROS_HEIGHT);
@@ -1513,14 +1539,16 @@ static void log_macros_make(){
 				LV_EVENT_CLICKED, (void *)(intptr_t)i);
 			x += width + LOG_GAP;
 		}
-		log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
-			LOG_MACROS_HEIGHT);
-		lv_obj_align(text_create(log_macro_buttons[i], "STOP", &lv_font_montserrat_12,
-			COLOUR_VALUE), LV_ALIGN_CENTER, 0, 0);
-		lv_obj_add_event_cb(log_macro_buttons[i], on_log_stop_touched, LV_EVENT_CLICKED,
-			NULL);
-		//STOP is deleted with the macros the next time
-		log_macros_shown++;
+		if (has_stop){
+			log_macro_buttons[i] = box_create(log_screen, x, LOG_MACROS_TOP, width,
+				LOG_MACROS_HEIGHT);
+			lv_obj_align(text_create(log_macro_buttons[i], "STOP", &lv_font_montserrat_12,
+				COLOUR_VALUE), LV_ALIGN_CENTER, 0, 0);
+			lv_obj_add_event_cb(log_macro_buttons[i], on_log_stop_touched,
+				LV_EVENT_CLICKED, NULL);
+			//STOP is deleted with the macros the next time
+			log_macros_shown++;
+		}
 	}
 	lv_table_set_row_count(log_table, log_rows_in_view + 1);
 	lv_obj_set_y(log_table, top);
@@ -2695,7 +2723,7 @@ void screens_slice(){
 	}
 	cw_send_waiting();
 	if (log_macro_waiting[0] != 0 && !i2c_link_is_sending_text()){
-		send_action("MACRO", log_macro_waiting);
+		send_action(log_macro_action, log_macro_waiting);
 		log_macro_waiting[0] = 0;
 	}
 }

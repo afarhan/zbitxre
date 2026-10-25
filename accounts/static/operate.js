@@ -381,6 +381,13 @@
     // the ones cut, to be seen only when as many more had come in after
     if (name === "CW") { cwRead = (cwRead + value).slice(-80); say(cwRead, "cw"); return; }
     if (name === "JTTY_BIN") { takeBin(value); return; }
+    // a radio whose software is older than ADIF's does not know the word
+    if (name === "ERROR" && adif && value.indexOf("adif ") === 0) {
+      adif = null;
+      if (adifButton) { adifButton.textContent = "DOWNLOAD"; }
+      say("the radio's software is too old to send the logbook: SET, then UPDATE", "warning");
+      return;
+    }
     if (name === "SAY" || name === "ERROR") { say(value); return; }
     if (name === "WARN") { say(value, "warning"); return; }
     if (name === "QSO") { say(value, value ? "qso" : ""); return; }
@@ -389,6 +396,10 @@
       values[name] = value;
       if (value) { say("VoIP: " + value, "voip"); }
       else if (status.className === "voip") { say(""); }
+      return;
+    }
+    if (name === "ADIF_BEGIN" || name === "ADIF" || name === "ADIF_END") {
+      takeAdif(name, value);
       return;
     }
     if (name === "LOG_LIST") { logBegins(); return; }
@@ -613,6 +624,7 @@
     showBins();
 
     showList();
+    showLogMacros();
     drawMeter();
   }
 
@@ -1678,16 +1690,25 @@
     });
   }
 
-  var logBody = null;
+  // The logbook: the entry being written, CALL, SENT, RECV, EXCH and NR,
+  // the radio's controls; what is typed into CALL searches the logbook as
+  // it is typed, as the radio's window and panel do. Under the fields, the
+  // mode's macros, as on the main screen's footer, with STOP after them;
+  // in FT8, CQ and HALT. DOWNLOAD, at the top, saves the whole logbook as
+  // an ADIF file.
+  var logBody = null, logMacros = null, logMacrosShown = "";
   function openLog() {
-    var search = document.createElement("input");
-    search.type = "text"; search.placeholder = "callsign"; search.value = logQuery;
-    search.autocapitalize = "characters"; search.autocomplete = "off";
-    search.addEventListener("input", function () {
-      logQuery = search.value.trim().toUpperCase();
-      send("log " + logQuery);
+    adifButton = document.createElement("button");
+    adifButton.className = "leave";
+    adifButton.textContent = adif ? "asking" : "DOWNLOAD";
+    adifButton.title = "the whole logbook, as an ADIF file";
+    adifButton.addEventListener("click", function () {
+      if (adif) { return; }
+      adif = { lines: [], coming: 0 };
+      adifButton.textContent = "asking";
+      send("adif");
     });
-    var inside = openPanel("Logbook", search);
+    var inside = openPanel("Logbook", adifButton);
     var entry = make("div", "entry", null, panel);
     panel.insertBefore(entry, inside);
     ["CALL", "SENT", "RECV", "EXCH", "NR"].forEach(function (name) {
@@ -1695,6 +1716,12 @@
       var label = make("label", "", name, entry), box = document.createElement("input");
       box.type = "text"; box.value = values[name] || ""; box.autocapitalize = "characters";
       box.autocomplete = "off";
+      if (name === "CALL") {
+        box.addEventListener("input", function () {
+          logQuery = box.value.trim().toUpperCase();
+          send("log " + logQuery);
+        });
+      }
       box.addEventListener("change", function () {
         values[name] = box.value.trim().toUpperCase();
         send(name + " " + values[name]);
@@ -1703,12 +1730,18 @@
     });
     make("button", "", "SAVE", entry).addEventListener("click", function () {
       send("LOGGER SAVE");
+      logQuery = "";
       setTimeout(openLog, 400);
     });
     make("button", "", "WIPE", entry).addEventListener("click", function () {
       send("LOGGER WIPE");
+      logQuery = "";
       setTimeout(openLog, 400);
     });
+    logMacros = make("div", "entry macros", null, panel);
+    panel.insertBefore(logMacros, inside);
+    logMacrosShown = "";
+    showLogMacros();
     var table = make("table", "", null, inside);
     var head = make("tr", "", null, table);
     ["Date", "UTC", "kHz", "Mode", "Station", "Sent", "Received", ""].forEach(function (name) {
@@ -1716,6 +1749,59 @@
     });
     logBody = table;
     send("log " + logQuery);
+  }
+
+  // the mode's macros under the logbook's fields, made again only when the
+  // mode or its macros have changed
+  function showLogMacros() {
+    if (!logMacros || panel.className !== "shown" || !panel.contains(logMacros)) { return; }
+    var group = modeGroup(), labels = [], stop = "";
+    if (group === "CW" && schema.MACRO) { labels = schema.MACRO.choices; stop = "CW_DO ESC"; }
+    if (group === "JTTY" && schema.JTTY_MACRO) {
+      labels = schema.JTTY_MACRO.choices; stop = "JTTY_DO ESC";
+    }
+    if (group === "FT8") { labels = ["CQ", "HALT"]; }
+    // a macro labelled "-" is a place left empty in the macros' file
+    labels = labels.filter(function (label) { return label && label !== "-"; });
+    var shown = group + " " + labels.join("/");
+    if (shown === logMacrosShown) { return; }
+    logMacrosShown = shown;
+    logMacros.textContent = "";
+    logMacros.className = "entry macros" + (labels.length ? "" : " gone");
+    labels.forEach(function (label) {
+      make("button", "", label, logMacros).addEventListener("click", function () {
+        if (group === "FT8") { send("FT8_DO " + label); }
+        else { send((group === "JTTY" ? "JTTY_MACRO " : "MACRO ") + label); }
+      });
+    });
+    if (stop) {
+      make("button", "", "STOP", logMacros).addEventListener("click", function () { send(stop); });
+    }
+  }
+
+  // the whole logbook, as an ADIF file, comes a line at a time after
+  // ADIF_BEGIN, which says how many entries, and is saved at ADIF_END
+  var adif = null, adifButton = null;
+  function takeAdif(name, value) {
+    if (!adif) { return; }
+    if (name === "ADIF_BEGIN") { adif.coming = Number(value) || 0; adif.lines = []; return; }
+    if (name === "ADIF") {
+      adif.lines.push(value);
+      // the first line is the file's header
+      if (adifButton) { adifButton.textContent = (adif.lines.length - 1) + " of " + adif.coming; }
+      return;
+    }
+    var file = new Blob([adif.lines.join("\r\n") + "\r\n"], { type: "text/plain" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = (NAME || "zbitx").replace(/[^A-Za-z0-9_-]+/g, "_") + "_"
+      + new Date().toISOString().slice(0, 10) + ".adi";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(link.href); }, 10000);
+    adif = null;
+    if (adifButton) { adifButton.textContent = "DOWNLOAD"; }
   }
 
   function logBegins() {

@@ -27,3 +27,6 @@ int logbook_delete(int id);
 int logbook_add(const struct logbook_row *row, const char *callsign_sent);
 void logbook_line(const struct logbook_row *row, char *line, int room);
 unsigned long logbook_changes(void);
+int logbook_count(void);
+const char *logbook_adif_header(void);
+int logbook_adif_after(int after, char *record, int room);

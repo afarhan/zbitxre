@@ -16,6 +16,7 @@
 #define LOGBOOK_PATH "build/test_logbook.db"
 #define OLD_LOGBOOK_PATH "build/test_logbook_old.db"
 #define ROWS 8
+#define ADIF_RECORD_MAX 512
 
 static int checks_failed;
 
@@ -42,6 +43,7 @@ static void make_a_logbook(const char *path, const char *statements) {
 
 int main(void) {
 	struct logbook_row rows[ROWS];
+	char record[ADIF_RECORD_MAX];
 	int count;
 
 	expect(logbook_find("", rows, ROWS) < 0, "with no logbook open there is nothing to read");
@@ -106,6 +108,44 @@ int main(void) {
 			"and it is the newest, and not marked deleted");
 	}
 
+	// the whole logbook as ADIF, the oldest first, the deleted left out
+	logbook_close();
+	make_a_logbook(LOGBOOK_PATH,
+		"CREATE TABLE logbook (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, mode TEXT, "
+		"freq TEXT, qso_date TEXT, qso_time TEXT, callsign_sent TEXT, rst_sent TEXT, "
+		"exch_sent TEXT DEFAULT \"\", callsign_recv TEXT, rst_recv TEXT, "
+		"exch_recv TEXT DEFAULT \"\", tx_id TEXT DEFAULT \"\", comments TEXT DEFAULT \"\", "
+		"deleted default 0);"
+		"INSERT INTO logbook (mode, freq, qso_date, qso_time, callsign_sent, rst_sent, "
+		"exch_sent, callsign_recv, rst_recv, exch_recv) VALUES "
+		"('FT8', '7074', '2023-04-04', '1154', 'VU2ESE', '-15', 'MK97', 'YG9DFZ', '-21', 'OI33'),"
+		"('CW', '7030', '2023-04-05', '0101', 'VU2ESE', '599', '', 'DELETED', '599', ''),"
+		"('LSB', '7130', '2026-04-08', '0445', 'VU2ESE', '59', '', 'VU2XZ', '59', ''),"
+		"('CW', '14010', '2026-10-24', '0530', 'VU2ESE', '599', '001', 'W1AW', '579', 'CT');"
+		"UPDATE logbook SET deleted = 1 WHERE callsign_recv = 'DELETED';"
+		"UPDATE logbook SET comments = 'old' || char(10) || 'friend' WHERE id = 4;");
+	expect(logbook_open(LOGBOOK_PATH) == 0 && logbook_count() == 3,
+		"the logbook counts its entries, the deleted left out");
+	expect(strstr(logbook_adif_header(), "<EOH>") != NULL, "the ADIF file has a header");
+	expect(logbook_adif_after(0, record, sizeof(record)) == 1
+		&& !strcmp(record, "<CALL:6>YG9DFZ <QSO_DATE:8>20230404 <TIME_ON:4>1154 "
+			"<FREQ:5>7.074 <BAND:3>40m <MODE:3>FT8 <RST_SENT:3>-15 <RST_RCVD:3>-21 "
+			"<MY_GRIDSQUARE:4>MK97 <GRIDSQUARE:4>OI33 <STATION_CALLSIGN:6>VU2ESE <EOR>"),
+		"an FT8 entry is a record, the grids as grids");
+	expect(logbook_adif_after(1, record, sizeof(record)) == 3
+		&& !strcmp(record, "<CALL:5>VU2XZ <QSO_DATE:8>20260408 <TIME_ON:4>0445 "
+			"<FREQ:4>7.13 <BAND:3>40m <MODE:3>SSB <SUBMODE:3>LSB <RST_SENT:2>59 "
+			"<RST_RCVD:2>59 <STATION_CALLSIGN:6>VU2ESE <EOR>"),
+		"the next is after the deleted one, LSB as ADIF has it, empty fields left out");
+	expect(logbook_adif_after(3, record, sizeof(record)) == 4
+		&& !strcmp(record, "<CALL:4>W1AW <QSO_DATE:8>20261024 <TIME_ON:4>0530 "
+			"<FREQ:5>14.01 <BAND:3>20m <MODE:2>CW <RST_SENT:3>599 <RST_RCVD:3>579 "
+			"<STX_STRING:3>001 <SRX_STRING:2>CT <STATION_CALLSIGN:6>VU2ESE "
+			"<COMMENT:10>old friend <EOR>"),
+		"a contest exchange is a string, and a comment's line end does not end the line");
+	expect(logbook_adif_after(4, record, sizeof(record)) == 0, "after the last there is none");
+	logbook_close();
+
 	make_a_logbook(OLD_LOGBOOK_PATH,
 		"CREATE TABLE logbook (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, mode TEXT, "
 		"freq TEXT, qso_date TEXT, qso_time TEXT, callsign_sent TEXT, rst_sent TEXT, "
@@ -116,6 +156,9 @@ int main(void) {
 	expect(logbook_open(OLD_LOGBOOK_PATH) == 0 && logbook_find("", rows, ROWS) == 1
 		&& strcmp(rows[0].callsign_recv, "W1AW") == 0,
 		"a logbook from before the deleted column is read too");
+	expect(logbook_adif_after(0, record, sizeof(record)) == 1
+		&& strstr(record, "<CALL:4>W1AW ") != NULL,
+		"and taken away as ADIF, though it has no comments column");
 	logbook_close();
 
 	if (checks_failed > 0) {
