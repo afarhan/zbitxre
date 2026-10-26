@@ -1017,9 +1017,18 @@ static int cw_wants_tx(void) {
 	return atomic_load(&is_wanting_tx);
 }
 
+// The keyer and everything it remembers begin afresh each time CW is put
+// to use. The key's reports are let go too: the kernel keeps them for as
+// long as no mode reads them, and in the voice modes the PTT is the ring's
+// pin, so a PTT pressed in RADE was played to the keyer when CW was chosen
+// again, and the author heard a dot sent
 static void cw_reset(void) {
+	struct key_event dropped;
+
 	cw_keyer_reset();
 	cw_text_reset();
+	while (key_take_event(&dropped))
+		;
 	event_count = 0;
 	is_keyer_running = 0;
 	is_dot_closed = 0;

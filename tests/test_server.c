@@ -134,6 +134,9 @@
 #define DOT_AT_20_WPM 5760
 #define ENVELOPE_FALL 478
 #define SETTLING_BLOCKS 8
+// the PTT held for half a second, and the blocks that takes and more
+#define PTT_HELD_US 500000
+#define PTT_BLOCKS 64
 #define SIDETONE_BLOCKS 24
 
 #define STALLED_CHANGES 3000
@@ -468,6 +471,9 @@ static int side_heard(void) {
 	return 0;
 }
 
+// where find_the_sidetone() copies the speaker's samples, when it is set
+static int32_t *speaker_kept;
+
 // the receiver is run in silence for some blocks, and where the speaker
 // was not silent is found: the sample it began at and how many samples it
 // lasted, both 0 if it stayed silent
@@ -490,6 +496,8 @@ static void find_the_sidetone(int blocks, int *first, int *length) {
 	*length = 0;
 	for (b = 0; b < blocks; b++) {
 		hw_stand_in_block(&block);
+		if (speaker_kept != NULL)
+			memcpy(speaker_kept + b * BLOCK_FRAMES, to_speaker, sizeof(to_speaker));
 		for (i = 0; i < BLOCK_FRAMES; i++) {
 			if (to_speaker[i] == 0)
 				continue;
@@ -721,6 +729,45 @@ static void check_cw_squeeze(int one, int first_paddle, int second_paddle,
 	read_the_marks(transmitter, SQUEEZE_BLOCKS * BLOCK_FRAMES, sent, sizeof(sent));
 	printf("          a squeeze is heard as %s and sent as %s\n", heard, sent);
 	expect(strcmp(heard, marks) == 0 && strcmp(sent, marks) == 0, what);
+	say(one, "MODE USB\n");
+}
+
+// the PTT pressed and let go in a voice mode is the key jack's ring closed
+// and opened, which the CW modem does not read until CW is chosen again;
+// it must then key nothing. The author found a dot sent so, after RADE
+static void check_cw_after_the_ptt(int one) {
+	static int32_t speaker[SQUEEZE_BLOCKS * BLOCK_FRAMES];
+	char heard[MARKS_MAX];
+	int first;
+	int length;
+
+	char why[WHY_MAX];
+
+	say(one, "MODE CW\n");
+	say(one, "CW_INPUT IAMBIC\n");
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	hw_stand_in_key(KEY_TIP, 1, TAP_AT_US);
+	hw_stand_in_key(KEY_TIP, 0, TAP_AT_US + TAP_US);
+	find_the_sidetone(SIDETONE_BLOCKS, &first, &length);
+	say(one, "MODE RADE2\n");
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	hw_stand_in_key(KEY_RING, 1, TAP_AT_US);
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	control_set("TX", "ON", ORIGIN_NONE, why, sizeof(why));
+	find_the_sidetone(PTT_BLOCKS, &first, &length);
+	hw_stand_in_key(KEY_RING, 0, 0);
+	control_set("TX", "OFF", ORIGIN_NONE, why, sizeof(why));
+	find_the_sidetone(SETTLING_BLOCKS, &first, &length);
+	say(one, "MODE CW\n");
+	say(one, "CW_INPUT IAMBIC\n");
+	say(one, "WPM 20\n");
+	speaker_kept = speaker;
+	find_the_sidetone(SQUEEZE_BLOCKS, &first, &length);
+	speaker_kept = NULL;
+	read_the_marks(speaker, SQUEEZE_BLOCKS * BLOCK_FRAMES, heard, sizeof(heard));
+	printf("          back in CW after the PTT, the keyer keys \"%s\"\n", heard);
+	expect(length == 0 && !modem_find("CW")->wants_tx(),
+		"the PTT pressed and let go in RADE2 keys nothing when CW is chosen again");
 	say(one, "MODE USB\n");
 }
 
@@ -1165,6 +1212,7 @@ int main(void) {
 	check_transmitting(one, other);
 	check_cw_transmitting(one);
 	check_cw_macro(one);
+	check_cw_after_the_ptt(one);
 	check_cw_squeeze(one, KEY_TIP, KEY_RING, SQUEEZE_LATER_US, SQUEEZE_MARKS,
 		"both paddles held take turns, heard and sent, through the modem");
 	check_cw_squeeze(one, KEY_RING, KEY_TIP, DOT_JOINS_US, DASH_FIRST_MARKS,
