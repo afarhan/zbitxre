@@ -79,7 +79,11 @@
 // synth_gfsk() at the sound card's rate, JTTY's tones gliding as FT8's do.
 // It makes no more than one frame ahead, so that what is typed live is
 // never long behind. The first frame of an over has TX_LEAD_S of silence
-// before it, for the radio to have gone over to transmit. Each frame rises
+// before it, for the radio to have gone over to transmit, and the last has
+// TX_TAIL_S after it: what has been played out is still in the transmit
+// filter and the sound card's queue, and the zbitx takes its transmitter
+// off the moment TX goes OFF. Without it the author found the last word of
+// an over, sent from the zbitx, never read. Each frame rises
 // and falls at its ends, and a receiver reads each frame on its own, by
 // its own synchronising tones. The audio thread plays at FT8's level,
 // heard in the speaker at JTTY_SIDETONE's. As each frame is made its text
@@ -199,6 +203,8 @@
 #define SAMPLES_A_SYMBOL (JTTY_SPS * DECIMATION)
 #define TX_LEAD_S 0.25
 #define TX_LEAD_SAMPLES ((int)(TX_LEAD_S * SOUND_CARD_RATE))
+#define TX_TAIL_S 0.1
+#define TX_TAIL_SAMPLES ((int)(TX_TAIL_S * SOUND_CARD_RATE))
 #define SLOTS 2
 #define SLOT_ROOM (TX_LEAD_SAMPLES + JTTY_SYMBOLS * SAMPLES_A_SYMBOL)
 #define FRAMES_QUEUED_MOST (PENDING_MOST * JTTY_MAX_FRAMES)
@@ -271,6 +277,8 @@ static atomic_int slot_state[SLOTS];
 static unsigned long slots_filled;
 static atomic_ulong slots_played;
 static long slot_pos;
+// the samples of the tail still to go after the last frame played out
+static atomic_int tail_left;
 // for the thread that owns the controls: the frames waiting, what is being
 // typed live, and the characters of it sent, for the clients
 static uint64_t queued[FRAMES_QUEUED_MOST];
@@ -653,7 +661,7 @@ static void fill_a_slot(void) {
 
 static int jtty_wants_tx(void) {
 	fill_a_slot();
-	return is_sending() || queued_count > 0 || is_live;
+	return is_sending() || queued_count > 0 || is_live || atomic_load(&tail_left) > 0;
 }
 
 // the next buffer in turn, if it is ready, is begun
@@ -670,24 +678,33 @@ static void tx_jtty(const int32_t *mic, double *samples) {
 	double peak = SIDETONE_PEAK * atomic_load(&sidetone_level) / SIDETONE_HIGHEST;
 	int slot;
 	int is_playing = begin_a_slot();
+	int tail = atomic_load(&tail_left);
 	int i;
 
 	(void)mic;
 	for (i = 0; i < MAX_BINS/2; i++) {
 		samples[i] = 0;
 		sidetone_output[i] = 0;
-		if (!is_playing)
+		if (!is_playing) {
+			if (tail > 0)
+				tail--;
 			continue;
+		}
 		slot = (int)(atomic_load(&slots_played) % SLOTS);
 		samples[i] = slot_wave[slot][slot_pos] / TX_DIVISOR;
 		sidetone_output[i] = (int32_t)(slot_wave[slot][slot_pos] * peak);
 		slot_pos++;
 		if (slot_pos < slot_samples[slot])
 			continue;
+		// the tail is begun before the buffer is let go, so that
+		// wants_tx() never finds neither
+		tail = TX_TAIL_SAMPLES;
+		atomic_store(&tail_left, tail);
 		atomic_store(&slot_state[slot], SLOT_EMPTY);
 		atomic_fetch_add(&slots_played, 1);
 		is_playing = begin_a_slot();
 	}
+	atomic_store(&tail_left, tail);
 	speaker_play(sidetone_output, MAX_BINS/2);
 }
 

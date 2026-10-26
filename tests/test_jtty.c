@@ -72,6 +72,9 @@
 #define QUIET_AFTER_S 3
 #define FRAME_S ((double)JTTY_FRAME_SAMPLES / JTTY_SAMPLE_RATE)
 #define LEAD_MOST_S 0.5
+// what is still in the transmit filter and the sound card's queue when the
+// last sample is given them, which the radio must stay in transmit for
+#define TAIL_LEAST_S 0.05
 #define RECEIVED_PEAK 2.0e6
 // noise in the 48 kHz the receiver is given, four times the signal's
 // strength: some 2 dB under it in the 2500 Hz JTTY is measured in
@@ -258,6 +261,10 @@ static void test_sending_and_reading(void) {
 		lasted_s, FRAME_S);
 	expect(lasted_s > FRAME_S * 0.95
 		&& fabs(lasted_s / FRAME_S - floor(lasted_s / FRAME_S + 0.5)) < 0.02, said);
+	snprintf(said, sizeof(said), "the radio stays in transmit %.3f s after the last of it",
+		(double)(transmitted_blocks * BLOCK - 1 - last_sent) / SAMPLE_RATE);
+	expect((double)(transmitted_blocks * BLOCK - 1 - last_sent) / SAMPLE_RATE >= TAIL_LEAST_S,
+		said);
 	expect(!modem->wants_tx(), "and when it has gone the modem wants to send no more");
 	jtty_poll_bins(told, keep_bin);
 	snprintf(said, sizeof(said), "it is in its bin, %d, in small letters: \"%.*s\"", bin,
