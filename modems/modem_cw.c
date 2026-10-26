@@ -182,8 +182,8 @@
 // To lose no time in starting the changeover, wants_tx() also looks at the
 // contacts themselves: a contact that is closed is something to send,
 // before the keyer has come to it. The transmitted signal is a tone at the pitch, shaped by the
-// same envelope, a third of full scale as in zbitxv2, which the core sends
-// as one sideband; the oscillator is set off by the pitch, so the signal
+// same envelope, a twenty-fourth of full scale as in zbitxv2, which the
+// core sends as one sideband; the oscillator is set off by the pitch, so the signal
 // is on the frequency shown.
 //
 // The modem goes on wanting to transmit until CW_DELAY has passed since
@@ -313,8 +313,11 @@
 #define TR_MARGIN_MS 3
 #define TX_PIPELINE_MS 7
 #define US_PER_MS 1000
-// zbitxv2 sends the keyed tone at a third of full scale
-#define TX_TONE_DIVISOR 3.0
+// zbitxv2 sends the keyed tone at a twenty-fourth of full scale: its
+// cw_tx_get_sample() gives an eighth, and its tx_process() takes a third
+// of that. Only the third was carried over at first, and CW went out
+// eight times too strong, overdriving the sbitx and the zbitx alike
+#define TX_TONE_DIVISOR 24.0
 
 static int32_t baseband_output[MAX_BINS/2];
 

@@ -65,7 +65,7 @@
 // that slot until the message has been sent. tx() gives the transmitter
 // silence until half a second into the slot, where WSJT-X and every other
 // station begin, and then the message, 12.64 seconds of it, at zbitxv2's
-// level, a seventh of full scale. A message armed after its slot began is
+// level, a twenty-first of full scale. A message armed after its slot began is
 // joined where it would by then have been, not begun afresh, so that what
 // is sent of it is in step with the slot; one armed more than five seconds
 // in is not sent at all, as too little of it is left for a receiver to
@@ -357,8 +357,11 @@
 // ft8_qso.c gives a slot up at 4.5 s and says why; this is a little after,
 // for a message armed just before then
 #define TX_LATEST_START_S 5.0
-// zbitxv2's level for FT8: a seventh of full scale
-#define TX_DIVISOR 7.0
+// zbitxv2's level for FT8: a twenty-first of full scale. Its modem_ft8.c
+// gives a seventh, and its tx_process() takes a third of that; only the
+// seventh was carried over at first, and FT8 went out three times too
+// strong
+#define TX_DIVISOR 21.0
 // the speaker's peak with the sidetone at its loudest, as CW's
 #define SIDETONE_PEAK 150000000.0
 #define SIDETONE_HIGHEST 100

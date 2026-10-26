@@ -211,8 +211,8 @@
 #define SENT_ROOM 256
 #define MACRO_FILE "jtty"
 #define MACRO_CHOICES_MAX 200
-// FT8's level: a seventh of full scale
-#define TX_DIVISOR 7.0
+// FT8's level: a twenty-first of full scale, as modem_ft8.c says
+#define TX_DIVISOR 21.0
 // the speaker's peak with the sidetone at its loudest, as CW's
 #define SIDETONE_PEAK 150000000.0
 #define SIDETONE_HIGHEST 100
