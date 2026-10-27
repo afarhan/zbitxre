@@ -698,7 +698,7 @@ class AccountsTest(unittest.TestCase):
 
     # the globe
 
-    def test_the_globe_shows_the_radios_on_line_and_only_their_callsign_and_square(self):
+    def test_the_globe_shows_the_radios_on_line_and_only_their_name_and_square(self):
         browser = self.make_account()
         self.add_radio(browser, "home")
         self.add_radio(browser, "attic", "bbbb-cccc-dddd")
@@ -711,10 +711,11 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(status, 200)
         home = self.service.radio_called("vu2ese-home")
         self.assertEqual(json.loads(text), [{"radio": home["id"], "callsign": "VU2ESE",
+                                             "name": "VU2ESE-home",
                                              "grid": "MK97", "lat": 17.5, "lon": 79.0,
                                              "streaming": True, "listening": 0,
                                              "listeners": []}])
-        for hidden in ("home", "fj", "abcd", home["cookie"]):
+        for hidden in ("attic", "car", "fj", "abcd", home["cookie"]):
             self.assertNotIn(hidden, text)
 
     def test_the_stations_list_has_those_on_line_first_and_then_the_rest(self):
@@ -735,14 +736,15 @@ class AccountsTest(unittest.TestCase):
         self.assertIn("<h2>On line (2)</h2>", text)
         self.assertIn("<h2>Not on line (1)</h2>", text)
         home = self.service.radio_called("vu2ese-home")
-        self.assertIn('data-radio="%d" data-callsign="VU2ESE">Listen to VU2ESE</button>'
+        self.assertIn('data-radio="%d" data-callsign="VU2ESE-home">Listen to VU2ESE-home</button>'
                       % home["id"], text)
-        self.assertRegex(text, r"VU3AAA</th><td>not set</td><td>Not streaming")
+        self.assertRegex(text, r"VU3AAA-shack</th><td>not set</td><td>Not streaming")
+        self.assertIn("VU2ESE-attic</th><td>JN58", text)
         self.assertIn("JN58</td><td>1970-01-02 00:00 UTC", text)
         self.assertLess(text.index("VU3AAA"), text.index("JN58"))
         self.assertIn('aria-live="polite"', text)
         self.assertIn("/static/stations.js?v=", text)
-        for hidden in ("home", "attic", "fj", "td", "abcd", home["cookie"]):
+        for hidden in ("fj", "td", "abcd", home["cookie"]):
             self.assertNotIn(">" + hidden, text)
             self.assertNotIn(hidden + "<", text)
         _, map_page = Browser(self.port).get("/map")

@@ -641,7 +641,7 @@ MAP_SCRIPT = """
     }
     for (j = 0; j < spots.length; j++) {
       spot = spots[j];
-      spot.on.sort(function (a, b) { return a.callsign < b.callsign ? -1 : 1; });
+      spot.on.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
       for (k = 0; k < spot.on.length; k++) {
         spot.on[k].at = { x: spot.x, y: spot.y + (k - (spot.on.length - 1) / 2) * ROW, seen: true };
       }
@@ -668,7 +668,7 @@ MAP_SCRIPT = """
       pen.fillStyle = !isOpen ? "#8a949e" : isChosen ? "#ffd23c" : "#50ff8c"; pen.fill();
       pen.fillStyle = isOpen ? "#ffffff" : "#8a949e";
       // how many are listening to it is beside its callsign, when any are
-      pen.fillText(radios[i].callsign + (radios[i].listening ? "  " + heads(radios[i].listening) : ""),
+      pen.fillText(radios[i].name + (radios[i].listening ? "  " + heads(radios[i].listening) : ""),
         at.x + 12, at.y);
     }
   }
@@ -793,7 +793,7 @@ MAP_SCRIPT = """
   function heads(listening) { return listening + " listening"; }
 
   function showWho() {
-    who.textContent = chosen.callsign + "  " + chosen.grid
+    who.textContent = chosen.name + "  " + chosen.grid
       + (chosen.listening ? "  \u00b7  " + heads(chosen.listening) : "");
   }
 
@@ -835,7 +835,7 @@ MAP_SCRIPT = """
         heardList.appendChild(line);
       }
       while (heardList.childNodes.length > 300) { heardList.removeChild(heardList.firstChild); }
-      heardTitle.textContent = "FT8 copied by " + chosen.callsign;
+      heardTitle.textContent = "FT8 copied by " + chosen.name;
       // the list is a strip down the right that can be put away to a tab
       // at the edge and brought back; on a narrow screen, a telephone's,
       // it begins put away, since open it leaves little of the globe
@@ -1438,6 +1438,13 @@ def radio_id(callsign, suffix):
     return "%s-%s" % (callsign.lower(), suffix)
 
 
+def shown_name(callsign, suffix):
+    """a radio as the globe and the list of stations name it, its callsign
+    and then its own name, as an owner may have more than one: VU2XZ-home
+    and VU2XZ-mqth (the author's word, 2026-10-25)"""
+    return "%s-%s" % (callsign.upper(), suffix)
+
+
 def tidy_callsign(typed):
     """a callsign as it is kept, or '' if it is not one: letters and figures,
     at least one of each, with no stroke and no suffix"""
@@ -1887,20 +1894,23 @@ class Service:
 
     def on_the_map(self):
         """the radios on line that have a grid, for anyone to see and hear:
-        each one's number, its owner's callsign, its four-character square,
+        each one's number, its owner's callsign and its name with it,
+        VU2XZ-home, its four-character square,
         whether its owner lets it be listened to, how many are listening to
         it and the squares they are in, as far as their addresses say, and
         no more"""
         found = []
         with self.store.open() as db:
             for row in db.execute(
-                    "select radios.id, accounts.callsign, radios.grid, radios.listeners, "
+                    "select radios.id, accounts.callsign, radios.suffix, radios.grid, "
+                    "radios.listeners, "
                     "radios.listener_places, radios.streaming from radios "
                     "join accounts on accounts.id = radios.account where radios.online = 1 "
                     "and accounts.status = 'active' order by accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 if square is not None:
                     found.append({"radio": row["id"], "callsign": row["callsign"],
+                                  "name": shown_name(row["callsign"], row["suffix"]),
                                   "grid": square["grid"], "lat": square["lat"],
                                   "lon": square["lon"], "streaming": bool(row["streaming"]),
                                   "listening": row["listeners"],
@@ -1913,13 +1923,15 @@ class Service:
         found = []
         with self.store.open() as db:
             for row in db.execute(
-                    "select radios.id, accounts.callsign, radios.grid, radios.online, "
+                    "select radios.id, accounts.callsign, radios.suffix, radios.grid, "
+                    "radios.online, "
                     "radios.streaming, radios.last_seen from radios "
                     "join accounts on accounts.id = radios.account "
                     "where accounts.status = 'active' "
                     "order by radios.online desc, accounts.callsign, radios.id"):
                 square = square_of(row["grid"])
                 found.append({"radio": row["id"], "callsign": row["callsign"],
+                              "name": shown_name(row["callsign"], row["suffix"]),
                               "grid": square["grid"] if square else "",
                               "online": bool(row["online"]),
                               "streaming": bool(row["streaming"]),
@@ -2580,7 +2592,7 @@ class Handler(BaseHTTPRequestHandler):
         rest = [radio for radio in found if not radio["online"]]
         rows = ""
         for radio in online:
-            callsign = html.escape(radio["callsign"])
+            callsign = html.escape(radio["name"])
             listen = "Not streaming"
             if radio["streaming"]:
                 listen = ("<button type=\"button\" class=\"listen\" data-radio=\"%d\" "
@@ -2590,7 +2602,7 @@ class Handler(BaseHTTPRequestHandler):
                      % (callsign, radio["grid"] or "not set", listen))
         on_table = "<p>None just now.</p>"
         if rows:
-            on_table = ("<table><tr><th scope=\"col\">Callsign</th>"
+            on_table = ("<table><tr><th scope=\"col\">Radio</th>"
                         "<th scope=\"col\">Grid square</th><th scope=\"col\">Listen</th>"
                         "</tr>%s</table>" % rows)
         rows = ""
@@ -2599,10 +2611,10 @@ class Handler(BaseHTTPRequestHandler):
             if radio["last_seen"]:
                 last = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(radio["last_seen"]))
             rows += ("<tr><th scope=\"row\">%s</th><td>%s</td><td>%s</td></tr>"
-                     % (html.escape(radio["callsign"]), radio["grid"] or "not set", last))
+                     % (html.escape(radio["name"]), radio["grid"] or "not set", last))
         off_table = "<p>None.</p>"
         if rows:
-            off_table = ("<table><tr><th scope=\"col\">Callsign</th>"
+            off_table = ("<table><tr><th scope=\"col\">Radio</th>"
                          "<th scope=\"col\">Grid square</th>"
                          "<th scope=\"col\">Last on line</th></tr>%s</table>" % rows)
         body = ("<h1>Stations</h1>"
