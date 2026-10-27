@@ -385,7 +385,7 @@
     if (name === "ERROR" && adif && value.indexOf("adif ") === 0) {
       adif = null;
       if (adifButton) { adifButton.textContent = "DOWNLOAD"; }
-      say("the radio's software is too old to send the logbook: SET, then UPDATE", "warning");
+      say("the radio's software is too old to send the logbook: update it at the radio, SET then UPDATE", "warning");
       return;
     }
     if (name === "SAY" || name === "ERROR") { say(value); return; }
@@ -1642,61 +1642,6 @@
           }
         });
       }
-    });
-    updateRow(inside);
-  }
-
-  // UPDATE, the last of the settings: whether my.sbitx.net has a newer
-  // page than this one, and a tap to load it. The author asked for it on
-  // 2026-10-16, for the page installed as an application: such a page
-  // fetches the newest each time it is opened, but one left open keeps
-  // what it opened with. It is not reloaded by itself, since a reloaded
-  // page waits for Start, a touch, before it may play sound, and one left
-  // listening would fall silent. Nor while the radio sends.
-  function marksOf(addresses) {
-    return addresses.map(function (address) {
-      return address.replace(/^.*\/static\//, "");
-    }).sort().join(" ");
-  }
-  var OWN_MARKS = marksOf(Array.prototype.map.call(
-    document.querySelectorAll("script[src*='/static/'], link[rel=stylesheet][href*='/static/']"),
-    function (tag) { return tag.getAttribute("src") || tag.getAttribute("href"); }));
-
-  // then(true) if my.sbitx.net has a newer page, then(false) if not, and
-  // then(null) if it could not be asked
-  function askIfNewer(then) {
-    var request = new XMLHttpRequest();
-    request.onload = function () {
-      then(request.status === 200 ? marksOf(JSON.parse(request.responseText)) !== OWN_MARKS
-        : null);
-    };
-    request.onerror = function () { then(null); };
-    request.open("GET", "/operate.json");
-    request.send();
-  }
-
-  // and once a day the page asks by itself, and when there is a newer one
-  // says so on the status line, as the author asked, for UPDATE to load it
-  var DAY_MS = 24 * 60 * 60 * 1000;
-  setInterval(function () {
-    askIfNewer(function (isNewer) {
-      if (isNewer) { say("a new version of this page is ready: SET, then UPDATE"); }
-    });
-  }, DAY_MS);
-
-  function updateRow(inside) {
-    var row = make("div", "row", null, inside), isNewer = false;
-    make("div", "title", "UPDATE", row);
-    var value = make("div", "value", "checking", row);
-    askIfNewer(function (newer) {
-      isNewer = newer === true;
-      value.textContent = newer === null ? "cannot check"
-        : isNewer ? "new version: tap to load" : "up to date";
-    });
-    row.addEventListener("click", function () {
-      if (!isNewer) { return; }
-      if (isSending() || isVoipSending()) { value.textContent = "after TX"; return; }
-      location.reload();
     });
   }
 
