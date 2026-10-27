@@ -596,17 +596,29 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(late.read(), "CONNECTED vu2ese-home")
         late.close()
 
-    def test_a_second_client_is_told_the_radio_is_in_use(self):
+    def is_let_go(self, client):
+        """whether the service closes a client's connection, what the radio
+        had sent it before then read past"""
+        client.socket.settimeout(3)
+        try:
+            while client.read():
+                pass
+        except socket.timeout:
+            return False
+        return True
+
+    def test_a_second_client_takes_the_radio_from_the_first(self):
         radio = self.switch_on_and_add()
         first = Client(self.port, "vu2ese-home")
         self.assertEqual(first.read(), "CONNECTED vu2ese-home")
         second = Client(self.port, "vu2ese-home")
-        self.assertEqual(second.read(),
-                         "ERROR connect that radio is being worked by another client")
+        self.assertEqual(second.read(), "CONNECTED vu2ese-home")
+        self.assertTrue(self.is_let_go(first), "the first client was not let go")
+        self.assertEqual(self.remote.sessions.get(radio["id"]), 1)
         second.close()
         first.close()
         self.wait_for(lambda: self.remote.sessions.get(radio["id"]) == 0,
-                      "the first client did not leave")
+                      "the second client did not leave")
         third = Client(self.port, "vu2ese-home")
         self.assertEqual(third.read(), "CONNECTED vu2ese-home")
         third.close()
@@ -929,19 +941,46 @@ class RemoteTest(unittest.TestCase):
         time.sleep(0.5)
         self.assertNotIn(".", self.radio.controls)
 
-        # one client at a time, the window's kind and the browser's alike
-        other = Client(self.port, "vu2ese-home")
-        self.assertEqual(other.read(),
-                         "ERROR connect that radio is being worked by another client")
-        other.close()
-        second = self.owners_page(self.account, radio["id"])
-        self.assertEqual(second.lines(1), ["! busy"])
-
         page.say("TX ON")
         self.wait_for(lambda: self.radio.controls.get("TX") == "ON", "TX ON did not arrive")
         page.close()
         self.wait_for(lambda: self.radio.controls.get("TX") == "OFF",
                       "the radio was left transmitting when the page went")
+
+    def test_the_newest_browser_or_window_takes_the_radio(self):
+        radio = self.switch_on_and_add()
+        home = self.owners_page(self.account, radio["id"])
+        self.assertEqual(home.lines(1)[0], "! connected vu2ese-home")
+        home.say("TX ON")
+        self.wait_for(lambda: self.radio.controls.get("TX") == "ON", "TX ON did not arrive")
+
+        # the phone, later, takes it from the laptop left on at home, which
+        # is told and stops sending
+        phone = self.owners_page(self.account, radio["id"])
+        self.assertEqual(phone.lines(1)[0], "! connected vu2ese-home")
+        self.assertIn("! taken", home.lines())
+        self.assertEqual(self.radio.controls.get("TX"), "OFF",
+                         "the radio was left transmitting when the laptop was let go")
+        phone.say("FREQ 14074000")
+        self.wait_for(lambda: self.radio.controls["FREQ"] == "14074000",
+                      "what the phone set did not reach the radio")
+
+        # the window takes it from the phone, one at a time all the same
+        window = Client(self.port, "vu2ese-home")
+        self.assertEqual(window.read(), "CONNECTED vu2ese-home")
+        self.assertIn("! taken", phone.lines())
+        self.assertEqual(self.remote.sessions.get(radio["id"]), 1)
+
+        # and a browser from the window
+        again = self.owners_page(self.account, radio["id"])
+        self.assertEqual(again.lines(1)[0], "! connected vu2ese-home")
+        self.assertTrue(self.is_let_go(window), "the window was not let go")
+        again.close()
+        window.close()
+        phone.close()
+        home.close()
+        self.wait_for(lambda: self.remote.sessions.get(radio["id"]) == 0,
+                      "the radio was left with a session open")
 
     def test_what_the_owner_says_reaches_the_radio_to_be_transmitted(self):
         radio = self.switch_on_and_add()

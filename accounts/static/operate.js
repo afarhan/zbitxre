@@ -431,6 +431,16 @@
       clearBins();
       say("connected to " + words[1] + " through my.sbitx.net");
       send("schema\nspectrum on\nmessages on\ntime\njtty");
+    } else if (words[0] === "taken") {
+      // another browser or the window has taken the radio, the newest
+      // having it; this page stops, sound and all, and does not try again,
+      // or the two would take it from each other in turn
+      isConnected = false;
+      if (retry) { clearTimeout(retry); retry = null; }
+      if (work) { work.onclose = null; work.close(); }
+      if (sound) { sound.onclose = null; sound.close(); }
+      say(NAME + " is now worked from another browser or window; reload this page to take it back",
+          "warning");
     } else if (words[0] === "busy") {
       say(NAME + " is being worked by another client; trying again");
     } else if (words[0] === "closed") {

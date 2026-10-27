@@ -84,9 +84,13 @@ and the reason.
 
 ONE CLIENT WORKS A RADIO, AND MANY MAY LISTEN
 
-The author's rule. A radio has one client at a time through here: a second
-that asks for it while the first is on is told the radio is in use. Its
-sound is another matter and may go to as many as want it.
+The author's rule. A radio has one client at a time through here, a
+browser or the window: the newest to come takes it, and the one that had it
+is let go. A page let go is told "! taken" and does not try again, or the
+two would take it from each other in turn. Before 2026-10-25 the newcomer
+was turned away instead; the author, his laptop at home left on the radio,
+could not work it from his phone. Its sound is another matter and may go
+to as many as want it.
 
 THE RADIO'S SOUND
 
@@ -316,6 +320,7 @@ LOG_WAIT_S = 5
 LINE_LONGEST = 512
 SESSIONS_A_RADIO = 4
 CLIENTS_A_RADIO = 1
+TAKE_OVER_WAIT_S = 5
 STREAM_ID_BYTES = 8
 RTP_BYTES = 172
 RTP_HEADER_BYTES = 12
@@ -387,6 +392,7 @@ class Remote:
         self.store = self.service.store
         self.lines = {}      # a radio's id -> the writer of its daemon's kept connection
         self.sessions = {}   # a radio's id -> how many sessions it has open
+        self.holders = {}    # a radio's id -> the event that lets go the one working it
         self.awaited = {}    # a session's token -> (the radio's id, the future it fulfils)
         self.wrong = {}      # an address -> when it gave wrong proofs
         self.listeners = {}  # a radio's id -> the browsers' writers listening to it
@@ -878,14 +884,18 @@ class Remote:
             refusal = "offline"
         elif "remote" not in self.allowed.get(radio["id"], ALLOWED_OF_OLD):
             refusal = "closed"
-        elif self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
+        elif (not await self.take_over(radio["id"])
+              or self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO):
             refusal = "busy"
         streams = None
+        let_go = asyncio.Event()
         if not refusal:
             self.sessions[radio["id"]] = self.sessions.get(radio["id"], 0) + 1
+            self.holders[radio["id"]] = let_go
             streams = await self.open_session(radio["id"])
             if streams is None:
                 self.sessions[radio["id"]] -= 1
+                self.let_go_of(radio["id"], let_go)
                 refusal = "offline"
         if refusal:
             writer.write(self.text_message("! " + refusal))
@@ -920,7 +930,8 @@ class Remote:
                     await radio_writer.drain()
 
         ways = [asyncio.ensure_future(from_the_radio()), asyncio.ensure_future(from_the_page()),
-                asyncio.ensure_future(self.until_revoked(is_still_owner))]
+                asyncio.ensure_future(self.until_revoked(is_still_owner)),
+                asyncio.ensure_future(let_go.wait())]
         try:
             await asyncio.wait(ways, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -932,8 +943,36 @@ class Remote:
             except (ConnectionError, asyncio.TimeoutError):
                 pass
             radio_writer.close()
+            if let_go.is_set():
+                try:
+                    writer.write(self.text_message("! taken"))
+                    await asyncio.wait_for(writer.drain(), 2)
+                except (ConnectionError, asyncio.TimeoutError):
+                    pass
             self.sessions[radio["id"]] -= 1
+            self.let_go_of(radio["id"], let_go)
             self.say("the owner's browser has left %s" % name)
+
+    async def take_over(self, radio):
+        """whoever works the radio now, a browser or the window, is let go,
+        for the newest to come to have it; False if it has not gone within
+        TAKE_OVER_WAIT_S"""
+        holder = self.holders.get(radio)
+        if holder is None:
+            return True
+        holder.set()
+        self.say("radio %d is taken by a newer client" % radio)
+        waited = 0.0
+        while radio in self.holders:
+            if waited >= TAKE_OVER_WAIT_S:
+                return False
+            await asyncio.sleep(0.05)
+            waited += 0.05
+        return True
+
+    def let_go_of(self, radio, holder):
+        if self.holders.get(radio) is holder:
+            del self.holders[radio]
 
     def set_allowed(self, radio, allowed):
         """what a radio's owner allows of it from afar, as its daemon says:
@@ -1122,11 +1161,15 @@ class Remote:
         if "remote" not in self.allowed.get(radio["id"], ALLOWED_OF_OLD):
             writer.write(b"ERROR connect remote operation is switched off at that radio\n")
             return
-        if self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO:
+        if (not await self.take_over(radio["id"])
+                or self.sessions.get(radio["id"], 0) >= CLIENTS_A_RADIO):
             writer.write(b"ERROR connect that radio is being worked by another client\n")
             return
+        let_go = asyncio.Event()
+        self.holders[radio["id"]] = let_go
         streams = await self.open_session(radio["id"])
         if streams is None:
+            self.let_go_of(radio["id"], let_go)
             writer.write(b"ERROR connect the radio did not answer\n")
             return
         radio_reader, radio_writer = streams
@@ -1143,7 +1186,8 @@ class Remote:
             return now is not None and now[0] == radio["client_key"]
         ways = [asyncio.ensure_future(self.pass_on(reader, radio_writer)),
                 asyncio.ensure_future(self.pass_on(radio_reader, writer)),
-                asyncio.ensure_future(self.until_revoked(has_the_password))]
+                asyncio.ensure_future(self.until_revoked(has_the_password)),
+                asyncio.ensure_future(let_go.wait())]
         try:
             await asyncio.wait(ways, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -1151,6 +1195,7 @@ class Remote:
                 way.cancel()
             radio_writer.close()
             self.sessions[radio["id"]] -= 1
+            self.let_go_of(radio["id"], let_go)
             self.say("a client has left %s" % name)
 
     async def until_revoked(self, is_still_good, then=lambda: None):
