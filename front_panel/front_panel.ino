@@ -19,8 +19,10 @@
 //   controls.cpp      the controls the radio has described, and the panel's
 //                     own
 //   screens.cpp       the settings, and the screen a line of text is typed on
-//   block.cpp         what the panel remembers: access points and the touch
-//                     screen's calibration, in the last 4K of the flash
+//   block.cpp         what the panel remembers: access points, the touch
+//                     screen's calibration and the theme, in the last 4K of
+//                     the flash
+//   theme.cpp         the panel's colours, dark or light
 //   ili9488.cpp       the display's driver, from ltp1_text_ui, where it was
 //                     fully debugged
 //   touch.cpp         the touch screen, which shares the display's SPI port

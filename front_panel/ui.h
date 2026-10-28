@@ -69,11 +69,14 @@ struct ap {
 	char key[32];
 };
 
+// theme, after what the panels had, is the panel's colours, which
+// theme.cpp says how to read
 struct saved {
 	uint32_t magic;
 	uint64_t my_id;
 	uint16_t calibration_data[10];
 	struct ap ap_list[MAX_APS];	
+	uint32_t theme;
 };
 
 // the main screen

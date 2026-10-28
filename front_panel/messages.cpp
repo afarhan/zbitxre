@@ -73,6 +73,7 @@
 #include "link.h"
 #include "waterfall.h"
 #include "ui.h"
+#include "theme.h"
 
 #define MESSAGES_MAX 60
 #define TEXT_ROOM 26
@@ -95,16 +96,17 @@
 #define NO_LINE (-1L)
 #define MARK_KEPT_FOR_MS 30000
 
-#define COLOUR_BOX 0x101820
-#define COLOUR_OTHER_SLOT 0x1C2834
-#define COLOUR_MARKED_ROW 0x604800
-#define COLOUR_VALUE 0xFFFFFF
-#define COLOUR_CALLING 0x60E060
-#define COLOUR_SENT 0xFF6060
+//the colours are the theme's, theme.cpp
+#define COLOUR_BOX (theme->box)
+#define COLOUR_OTHER_SLOT (theme->other_row)
+#define COLOUR_MARKED_ROW (theme->taken_up)
+#define COLOUR_VALUE (theme->value)
+#define COLOUR_CALLING (theme->calling)
+#define COLOUR_SENT (theme->sent)
 #define SENT "TX"
 #define ANSWER_ROOM 48
-#define COLOUR_SELECTED 0xFFC000
-#define COLOUR_BAR 0x90A0B0
+#define COLOUR_SELECTED (theme->focus)
+#define COLOUR_BAR (theme->bar)
 #define SELECTED_WIDTH 2
 #define CELL_PAD 3
 #define BAR_WIDTH 4

@@ -177,6 +177,7 @@
 #include "controls.h"
 #include "waterfall.h"
 #include "ui.h"
+#include "theme.h"
 
 #define ROW_HEIGHT 48
 #define TILE_WIDTH 48
@@ -212,17 +213,18 @@
 #define BORDER_WITH_FOCUS 2
 #define BORDER_WITHOUT 1
 
-#define COLOUR_SCREEN 0x000000
-#define COLOUR_BOX 0x101820
-#define COLOUR_TAKEN_UP 0x604800
-#define COLOUR_SWITCHED_ON 0xB02020
+//the colours are the theme's, theme.cpp
+#define COLOUR_SCREEN (theme->screen)
+#define COLOUR_BOX (theme->box)
+#define COLOUR_TAKEN_UP (theme->taken_up)
+#define COLOUR_SWITCHED_ON (theme->switched_on)
 //the owner speaking over VoIP, which keys no transmitter: blue and not
 //red, the author's ruling, so that it is never taken for the air
-#define COLOUR_VOIP_ON 0x2050C0
-#define COLOUR_TITLE 0x00FFFF
-#define COLOUR_VALUE 0xFFFFFF
-#define COLOUR_WITH_FOCUS 0xFFC000
-#define COLOUR_WITHOUT 0x405060
+#define COLOUR_VOIP_ON (theme->voip_on)
+#define COLOUR_TITLE (theme->title)
+#define COLOUR_VALUE (theme->value)
+#define COLOUR_WITH_FOCUS (theme->focus)
+#define COLOUR_WITHOUT (theme->edge)
 
 #define OPERATOR_WINS_FOR_MS 1000
 #define HZ_PER_MHZ 1000000
@@ -285,11 +287,17 @@ struct place {
 //name if none is; or, where a choice is named, a
 //button with a label of its own, that puts the control at that choice when
 //it is touched, and is filled with its colour while the control is there
+enum footer_fill {
+	FILL_BOX,
+	FILL_SWITCHED_ON,
+	FILL_VOIP_ON,
+};
+
 struct footer_tile {
 	const char *control;
 	const char *choice;
 	const char *label;
-	uint32_t fill_in_force;
+	enum footer_fill fill_in_force;
 };
 
 //what a mode has on the bottom row
@@ -324,26 +332,26 @@ static const char *const column_names[COLUMN_BUTTONS] = { "LOG", "SET" };
 
 static const struct footer footers[] = {
 	{"VOICE", {
-		{"MIC", NULL, NULL, COLOUR_BOX},
-		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
-		{"TX", "OFF", "RX", COLOUR_BOX},
+		{"MIC", NULL, NULL, FILL_BOX},
+		{"TX", "ON", "TX", FILL_SWITCHED_ON},
+		{"TX", "OFF", "RX", FILL_BOX},
 	}},
 	{"2TONE", {
-		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
-		{"TX", "OFF", "RX", COLOUR_BOX},
+		{"TX", "ON", "TX", FILL_SWITCHED_ON},
+		{"TX", "OFF", "RX", FILL_BOX},
 	}},
 	//RADE1 and RADE2 are spoken into as the voice modes are
 	{"RADE", {
-		{"MIC", NULL, NULL, COLOUR_BOX},
-		{"TX", "ON", "TX", COLOUR_SWITCHED_ON},
-		{"TX", "OFF", "RX", COLOUR_BOX},
+		{"MIC", NULL, NULL, FILL_BOX},
+		{"TX", "ON", "TX", FILL_SWITCHED_ON},
+		{"TX", "OFF", "RX", FILL_BOX},
 	}},
 	//in VOIP, TX and RX are VOIP_TX: the owner's speech goes to
 	//my.sbitx.net, and the transmitter is not keyed
 	{"VOIP", {
-		{"MIC", NULL, NULL, COLOUR_BOX},
-		{"VOIP_TX", "ON", "TX", COLOUR_VOIP_ON},
-		{"VOIP_TX", "OFF", "RX", COLOUR_BOX},
+		{"MIC", NULL, NULL, FILL_BOX},
+		{"VOIP_TX", "ON", "TX", FILL_VOIP_ON},
+		{"VOIP_TX", "OFF", "RX", FILL_BOX},
 	}},
 };
 #define FOOTERS ((int)(sizeof(footers) / sizeof(footers[0])))
@@ -915,6 +923,16 @@ static void show_macros(){
 	}
 }
 
+//the footers are tables made before the theme is chosen, so they name a
+//fill and the theme gives its colour
+static uint32_t footer_colour(enum footer_fill fill){
+	if (fill == FILL_SWITCHED_ON)
+		return COLOUR_SWITCHED_ON;
+	if (fill == FILL_VOIP_ON)
+		return COLOUR_VOIP_ON;
+	return COLOUR_BOX;
+}
+
 //the bottom row's buttons of the mode in use: each has the bright edge and
 //its own colour while its control is at its choice, so that TX is red while
 //the radio transmits and RX is marked while it receives
@@ -935,7 +953,7 @@ static void show_footer_buttons(){
 			&& controls_is(tile->control, tile->choice);
 		fill = COLOUR_BOX;
 		if (is_in_force)
-			fill = tile->fill_in_force;
+			fill = footer_colour(tile->fill_in_force);
 		label_show(footer_button[i].value, tile->label);
 		show_look(&footer_button[i], is_in_force, fill);
 		set_hidden(footer_button[i].box, false);
@@ -1469,7 +1487,7 @@ static void screen_create(){
 	lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT + TITLE_LEFT, STATUS_TOP);
 
 	//the power and the SWR as the radio transmits, over the status line's
-	//right end, on black so that what is under it does not show through
+	//right end, on the screen's colour so that what is under it does not show through
 	meter_label = text_create(main_screen, &lv_font_montserrat_12, COLOUR_WITH_FOCUS);
 	lv_obj_set_size(meter_label, METER_WIDTH, STATUS_HEIGHT);
 	lv_label_set_long_mode(meter_label, LV_LABEL_LONG_CLIP);

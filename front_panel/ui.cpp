@@ -7,6 +7,7 @@
 #include "waterfall.h"
 #include <EEPROM.h>
 #include "ui.h"
+#include "theme.h"
 
 bool core1_separate_stack = true;
 extern volatile lv_obj_t *coverflow_screen;
@@ -180,6 +181,7 @@ void ui_init(){
 	attachInterrupt(ENC_B, on_enc, CHANGE);
 
   block_read();
+  theme_choose();
   ili_init();
   ili_set_drive(DISPLAY_DRIVE_MA, false);
   touch_init();

@@ -10,7 +10,8 @@
 // The top of the space shows the newest line as a graph, with a line down
 // the middle for the tuned frequency. Below it is the waterfall: every line
 // that came, the newest at the top, the strength shown as a colour from
-// blue through green and yellow to red.
+// blue through green and yellow to red; in the light theme, from white
+// through blue and purple to red.
 //
 // WHAT IS KEPT
 //
@@ -75,6 +76,7 @@
 #include <Arduino.h>
 #include "ili9488.h"
 #include "waterfall.h"
+#include "theme.h"
 
 #define LEFT WATERFALL_LEFT
 #define WIDTH WATERFALL_WIDTH
@@ -96,15 +98,18 @@
 #define RED_MAX 31
 #define GREEN_MAX 63
 #define BLUE_MAX 31
+#define RED_HALF 16
+#define GREEN_HALF 32
 #define RED_SHIFT 11
 #define GREEN_SHIFT 5
 
-#define BLACK 0x0000
-#define GRAPH_LINE 0xFFE0
-#define GRAPH_UNDER 0x0167
-#define TUNED_LINE 0x7BEF
-#define PASSBAND_FILL 0x18C6
-#define PITCH_LINE 0xC000
+//the colours are the theme's, theme.cpp
+#define GRAPH_BACK (theme->graph_back)
+#define GRAPH_LINE (theme->graph_line)
+#define GRAPH_UNDER (theme->graph_under)
+#define TUNED_LINE (theme->tuned_line)
+#define PASSBAND_FILL (theme->passband_fill)
+#define PITCH_LINE (theme->pitch_line)
 #define PITCH_DOTS_EVERY 4
 
 #define NOTHING_TO_PAINT (-1)
@@ -138,7 +143,7 @@ static uint16_t rgb(int red, int green, int blue){
 }
 
 //blue rises, then green rises, then blue falls, then red rises, then green falls
-static uint16_t heat_map(int shade){
+static uint16_t heat_map_dark(int shade){
 	int band = shade / SHADES_A_BAND;
 	int step = shade % SHADES_A_BAND;
 
@@ -153,6 +158,31 @@ static uint16_t heat_map(int shade){
 	if (band == 4)
 		return rgb(RED_MAX, GREEN_MAX - step * 2, 0);
 	return rgb(RED_MAX, 0, 0);
+}
+
+//on white: red and green fall to a pale blue, then to blue, red rises to
+//purple, blue falls to red, and red darkens
+static uint16_t heat_map_light(int shade){
+	int band = shade / SHADES_A_BAND;
+	int step = shade % SHADES_A_BAND;
+
+	if (band == 0)
+		return rgb(RED_MAX - step / 2, GREEN_MAX - step, BLUE_MAX);
+	if (band == 1)
+		return rgb(RED_HALF - step / 2, GREEN_HALF - step, BLUE_MAX);
+	if (band == 2)
+		return rgb(step, 0, BLUE_MAX);
+	if (band == 3)
+		return rgb(RED_MAX, 0, BLUE_MAX - step);
+	if (band == 4)
+		return rgb(RED_MAX - step / 2, 0, 0);
+	return rgb(RED_HALF, 0, 0);
+}
+
+static uint16_t heat_map(int shade){
+	if (theme->kind == THEME_LIGHT)
+		return heat_map_light(shade);
+	return heat_map_dark(shade);
 }
 
 void waterfall_init(void){
@@ -224,7 +254,7 @@ static uint16_t graph_pixel(int point, int up){
 		return GRAPH_UNDER;
 	if (point >= passband_low && point <= passband_high)
 		return PASSBAND_FILL;
-	return BLACK;
+	return GRAPH_BACK;
 }
 
 static void make_a_row(int row){
@@ -349,7 +379,7 @@ void waterfall_set_rows(int fall_rows){
 		fall_rows = FALL_ROWS;
 	rows = GRAPH_ROWS + fall_rows;
 	if (rows < rows_to_paint)
-		ili_fill_rect(LEFT, GRAPH_TOP + rows, WIDTH, rows_to_paint - rows, BLACK);
+		ili_fill_rect(LEFT, GRAPH_TOP + rows, WIDTH, rows_to_paint - rows, GRAPH_BACK);
 	rows_to_paint = rows;
 	next_row = NOTHING_TO_PAINT;
 	waterfall_redraw();

@@ -41,6 +41,11 @@
 //               FT8 is worked, ft8_qso.c on the radio says. A touch, or a
 //               click of the knob, goes to the next.
 //   FT8 Reply   RR73 or RRR, the radio's FT8_REPLY, the same way.
+//   Theme       Dark or Light, the panel's colours: white and cyan on black,
+//               or black on white. It asks first, since the panel restarts
+//               to change them, which takes a second or two; theme.cpp says
+//               why. It is the panel's own, kept in its flash, and the
+//               radio knows nothing of it.
 //
 // There are more rows than the screen has room for under its title, so
 // they are in a list that scrolls, by a finger, or by the knob, which
@@ -147,6 +152,7 @@
 #include "controls.h"
 #include "waterfall.h"
 #include "ui.h"
+#include "theme.h"
 
 #define BAR_HEIGHT 48
 #define ROW_HEIGHT 48
@@ -166,14 +172,15 @@
 #define EDGE_WITH_MARK 2
 #define EDGE_WITHOUT 1
 
-#define COLOUR_SCREEN 0x000000
-#define COLOUR_BOX 0x101820
-#define COLOUR_TITLE 0x90A0B0
-#define COLOUR_VALUE 0xFFFFFF
-#define COLOUR_DIM 0x506070
-#define COLOUR_EDGE 0x405060
-#define COLOUR_MARK 0xFFC000
-#define COLOUR_MARKED_ROW 0x604800
+//the colours are the theme's, theme.cpp
+#define COLOUR_SCREEN (theme->screen)
+#define COLOUR_BOX (theme->box)
+#define COLOUR_TITLE (theme->subtitle)
+#define COLOUR_VALUE (theme->value)
+#define COLOUR_DIM (theme->dim)
+#define COLOUR_EDGE (theme->edge)
+#define COLOUR_MARK (theme->focus)
+#define COLOUR_MARKED_ROW (theme->taken_up)
 
 #define WIFI_STATUS_LEFT (TITLE_LEFT + 64)
 #define WIFI_SHOWN_MAX 48
@@ -221,6 +228,7 @@ static void date_open();
 static void wifi_open();
 static void next_choice_open();
 static void update_open();
+static void theme_open();
 static void settings_show_values();
 
 #ifndef PANEL_FIRMWARE
@@ -236,6 +244,8 @@ static struct setting settings[] = {
 	{"Connections", NULL, NULL, connections_open, true, NULL, NULL},
 	{"FT8 Operations", "FT8_OPS", NULL, next_choice_open, false, NULL, NULL},
 	{"FT8 Reply", "FT8_REPLY", NULL, next_choice_open, false, NULL, NULL},
+	//the panel's own, shown by its name, set when the screen is made
+	{"Theme", NULL, NULL, theme_open, false, NULL, NULL},
 	{"Update", "UPDATE", NULL, update_open, true, NULL, NULL},
 	{"Panel firmware", NULL, PANEL_FIRMWARE, nothing_open, false, NULL, NULL},
 	{"BOOTSEL", NULL, "-", bootsel_open, true, NULL, NULL},
@@ -309,7 +319,7 @@ static const struct roller_place roller_places[ROLLERS] = {
 #define LOG_GAP 4
 #define LOG_FIELDS_HEIGHT 28
 #define LOG_FIELD_MAX 12
-#define LOG_PROMPT_COLOUR 0x406070
+#define LOG_PROMPT_COLOUR (theme->prompt)
 //the macros' row, in CW, JTTY and FT8, under the fields
 #define LOG_MACROS_TOP (BAR_HEIGHT + LOG_FIELDS_HEIGHT + 2 * LOG_GAP)
 //as high as a key of the keyboard under it, the author's asking: the
@@ -872,6 +882,35 @@ static void bootsel_go(){
 	rp2040.rebootToBootloader();
 }
 
+// THEME, touched: the box says the panel restarts, and a yes keeps the
+// other theme in the flash and restarts, which puts the panel back on the
+// main screen in the new colours
+static void theme_go(){
+	struct setting *s = setting_called("Theme");
+
+	theme_keep(theme_other());
+	s->fixed = "RESTARTING";
+	settings_show();
+	lv_timer_handler();
+	delay(200);
+	rp2040.reboot();
+}
+
+static void theme_open(){
+	if (theme_other() == THEME_LIGHT)
+		confirm_ask("Change to the light theme?",
+			"Black on white. The panel restarts to change its colours, and "
+			"is back on the main screen in a second or two; the radio goes on "
+			"as it is.",
+			"LIGHT", theme_go);
+	else
+		confirm_ask("Change to the dark theme?",
+			"White on black. The panel restarts to change its colours, and "
+			"is back on the main screen in a second or two; the radio goes on "
+			"as it is.",
+			"DARK", theme_go);
+}
+
 static void bootsel_open(){
 	confirm_ask("Make the panel a USB drive?",
 		"For new firmware by the USB cable. The panel goes blank until a "
@@ -915,6 +954,7 @@ static void settings_create(){
 	uint32_t colour;
 	int i;
 
+	setting_called("Theme")->fixed = theme->name;
 	settings_screen = screen_create();
 	label = text_create(settings_screen, "SETTINGS", &lv_font_montserrat_16, COLOUR_VALUE);
 	lv_obj_align(label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, (BAR_HEIGHT - 16) / 2);
@@ -2604,7 +2644,7 @@ void screens_update_status(const char *text){
 		lv_label_set_text(update_outcome_label, is_done ? "UPDATE SUCCEEDED"
 			: is_cancelled ? "UPDATE CANCELLED" : "UPDATE FAILED");
 		lv_obj_set_style_text_color(update_outcome_label,
-			lv_color_hex(is_done ? 0x00E060 : is_cancelled ? 0xFFC000 : 0xFF4040), 0);
+			lv_color_hex(is_done ? theme->succeeded : is_cancelled ? theme->cancelled : theme->failed), 0);
 	}
 	if (is_done){
 		update_has_succeeded = true;

@@ -44,6 +44,7 @@
 #include "waterfall.h"
 #include "controls.h"
 #include "ui.h"
+#include "theme.h"
 
 #define BINS 24
 #define BIN_LOWEST_HZ 200
@@ -63,14 +64,15 @@
 #define RX_CONTROL "JTTY_RX"
 #define NO_BIN (-1)
 
-#define COLOUR_BOX 0x101820
-#define COLOUR_OTHER_ROW 0x1C2834
-#define COLOUR_CHOSEN_ROW 0x604800
-#define COLOUR_VALUE 0xFFFFFF
-#define COLOUR_HZ 0x00FFFF
-#define COLOUR_EMPTY_HZ 0x4A5A68
-#define COLOUR_SELECTED 0xFFC000
-#define COLOUR_BAR 0x90A0B0
+//the colours are the theme's, theme.cpp
+#define COLOUR_BOX (theme->box)
+#define COLOUR_OTHER_ROW (theme->other_row)
+#define COLOUR_CHOSEN_ROW (theme->taken_up)
+#define COLOUR_VALUE (theme->value)
+#define COLOUR_HZ (theme->hz)
+#define COLOUR_EMPTY_HZ (theme->empty_hz)
+#define COLOUR_SELECTED (theme->focus)
+#define COLOUR_BAR (theme->bar)
 #define SELECTED_WIDTH 2
 #define CELL_PAD 3
 #define BAR_WIDTH 4
