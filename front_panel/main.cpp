@@ -225,6 +225,10 @@
 #define COLOUR_VALUE (theme->value)
 #define COLOUR_WITH_FOCUS (theme->focus)
 #define COLOUR_WITHOUT (theme->edge)
+//the graph and the waterfall are black in both themes, and the span in
+//their corner is shown as it always was, cyan on black
+#define COLOUR_SPECTRUM_BACK 0x000000
+#define COLOUR_SPAN 0x00FFFF
 
 #define OPERATOR_WINS_FOR_MS 1000
 #define HZ_PER_MHZ 1000000
@@ -1467,7 +1471,11 @@ static void screen_create(){
 	lv_obj_set_size(spectrum_area, WATERFALL_WIDTH, WATERFALL_HEIGHT);
 	lv_obj_align(spectrum_area, LV_ALIGN_TOP_LEFT, WATERFALL_LEFT, WATERFALL_TOP);
 	lv_obj_add_event_cb(spectrum_area, on_spectrum_touched, LV_EVENT_CLICKED, NULL);
-	span_label = text_create(spectrum_area, &lv_font_montserrat_12, COLOUR_TITLE);
+	//black, as the screen under it is in the dark theme, so that whatever
+	//LVGL paints there, the span's corner above all, is black in both
+	lv_obj_set_style_bg_color(spectrum_area, lv_color_hex(COLOUR_SPECTRUM_BACK), 0);
+	lv_obj_set_style_bg_opa(spectrum_area, LV_OPA_COVER, 0);
+	span_label = text_create(spectrum_area, &lv_font_montserrat_12, COLOUR_SPAN);
 	lv_obj_align(span_label, LV_ALIGN_TOP_LEFT, TITLE_LEFT, TITLE_TOP);
 
 	//FT8's messages, in the same place, shown only in FT8

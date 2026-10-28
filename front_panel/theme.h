@@ -12,9 +12,7 @@ enum theme_kind {
 	THEME_LIGHT,
 };
 
-//the colours LVGL paints with are 0xRRGGBB; the graph's, which
-//waterfall.cpp paints itself, are as the display takes them, 5 bits of
-//red, 6 of green, 5 of blue
+//the colours, as LVGL takes them, 0xRRGGBB
 struct theme {
 	enum theme_kind kind;
 	const char *name;
@@ -39,12 +37,6 @@ struct theme {
 	uint32_t succeeded;
 	uint32_t cancelled;
 	uint32_t failed;
-	uint16_t graph_back;
-	uint16_t graph_line;
-	uint16_t graph_under;
-	uint16_t tuned_line;
-	uint16_t passband_fill;
-	uint16_t pitch_line;
 };
 
 extern const struct theme *theme;

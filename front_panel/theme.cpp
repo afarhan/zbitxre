@@ -11,11 +11,11 @@
 // and VoIP its blue in both, a little lighter on white so that the black
 // letters on them can be read.
 //
-// Every colour the panel paints is here; the files that paint name them
-// through the theme in use, theme->box and the rest. The graph and the
-// waterfall are painted by waterfall.cpp itself, and their colours are as
-// the display takes them; the waterfall's shades are worked out there,
-// from dark to bright on black and from white to dark on white.
+// Every colour LVGL paints is here; the files that paint name them through
+// the theme in use, theme->box and the rest. The graph and the waterfall
+// are not themed: they stay as they were, yellow on black, in both, the
+// author's asking, and so does the corner of theirs where the span is
+// shown; waterfall.cpp and main.cpp keep their colours.
 //
 // The theme is kept in the panel's own flash, with the touch screen's
 // calibration (block.cpp), and not on the radio, since it is the panel's
@@ -59,12 +59,6 @@ static const struct theme dark = {
 	.succeeded = 0x00E060,
 	.cancelled = 0xFFC000,
 	.failed = 0xFF4040,
-	.graph_back = 0x0000,
-	.graph_line = 0xFFE0,
-	.graph_under = 0x0167,
-	.tuned_line = 0x7BEF,
-	.passband_fill = 0x18C6,
-	.pitch_line = 0xC000,
 };
 
 static const struct theme light = {
@@ -91,12 +85,6 @@ static const struct theme light = {
 	.succeeded = 0x008A30,
 	.cancelled = 0xC06000,
 	.failed = 0xD00000,
-	.graph_back = 0xFFFF,
-	.graph_line = 0x0010,
-	.graph_under = 0xC69F,
-	.tuned_line = 0x7BEF,
-	.passband_fill = 0xE75D,
-	.pitch_line = 0xC000,
 };
 
 const struct theme *theme = &dark;
