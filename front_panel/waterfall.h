@@ -26,6 +26,7 @@
 
 void waterfall_init(void);
 void waterfall_update(const uint8_t *points);
+void waterfall_modulation(const uint8_t *points);
 void waterfall_slice(void);
 void waterfall_redraw(void);
 void waterfall_set_painting(bool on);

@@ -104,6 +104,12 @@ extern "C" {
 // says what is in a line
 #define LINK_JTTY_BINS 19
 #define LINK_JTTY_LINE_MAX 89
+// the envelope of what is being sent, sent in the spectrum's place while
+// the radio transmits: LINK_SPECTRUM_POINTS bytes, the earliest first, each
+// how far the signal swings from zero, 255 for the top of zbitxv2's window
+// and for anything over it. It is the line the window and the web page are
+// sent, and the panel draws it as they do
+#define LINK_MODULATION 20
 
 struct link_wifi_point {
 	int8_t signal_dbm;

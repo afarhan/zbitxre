@@ -124,7 +124,12 @@
 // same spectrum at the full resolution of the bins, 534 points, one to a
 // bin. server.c says how. While the radio transmits it sends them instead the
 // envelope of what is being sent, which the core keeps, as zbitxv2's window
-// drew it in the spectrum's place.
+// drew it in the spectrum's place. The panel is sent the same envelope
+// then, ten times a second, in 144 points, each the greatest of the points
+// it stands for, and draws it as the window does: the author asked on 28
+// October 2026 for the window and the panel to show the same in transmit,
+// where the panel had shown nothing. The panel's spectrum stops meanwhile,
+// and so does its waterfall.
 //
 // Some words are the program's own. "report" prints how the sound card and
 // the link have been doing, and the largest sample sent to the transmitter
@@ -332,6 +337,8 @@
 #define MODULATION_POINTS (MOD_MAX / 2)
 #define MODULATION_FULL_SCALE 50
 #define MODULATION_HIGHEST 255
+// the panel is sent the envelope as often as the clients are
+#define MODULATION_EVERY_MS 100
 
 // what is measured: 3 kHz either side of the tuned frequency, which is bin
 // 1536 of the spectrum, a bin being 46.875 Hz
@@ -356,6 +363,7 @@ static uint8_t spectrum_line[LINK_SPECTRUM_POINTS];
 static long next_client_spectrum_ms;
 static uint8_t client_spectrum_line[SPECTRUM_BINS];
 static uint8_t client_modulation_line[MODULATION_POINTS];
+static uint8_t panel_modulation_line[LINK_SPECTRUM_POINTS];
 
 static double measured_power[MEASURED_BINS];
 static int measured_times;
@@ -961,19 +969,11 @@ static void spectrum_line_fill(void) {
 	}
 }
 
-static void spectrum_send(long now) {
-	if (!is_sending_spectrum || now < next_spectrum_ms)
-		return;
-	next_spectrum_ms = now + SPECTRUM_EVERY_MS;
-	spectrum_line_fill();
-	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
-}
-
-// the envelope of what is being sent, for the clients to draw where the
-// spectrum was: of each half millisecond's least and greatest, the one
-// further from zero, with 255 for the top of zbitxv2's picture and for
-// anything over it
-static void client_modulation_send(void) {
+// the envelope of what is being sent, for the clients and the panel to
+// draw where the spectrum was: of each half millisecond's least and
+// greatest, the one further from zero, with 255 for the top of zbitxv2's
+// picture and for anything over it
+static void modulation_line_fill(void) {
 	int point;
 	int least;
 	int greatest;
@@ -992,6 +992,46 @@ static void client_modulation_send(void) {
 			level = MODULATION_HIGHEST;
 		client_modulation_line[point] = (uint8_t)level;
 	}
+}
+
+// the panel's line has fewer points: each is the greatest of those it
+// stands for, so that no peak is lost
+static void panel_modulation_fill(void) {
+	int first;
+	int after_last;
+	int greatest;
+	int point;
+	int i;
+
+	modulation_line_fill();
+	for (point = 0; point < LINK_SPECTRUM_POINTS; point++) {
+		first = (point * MODULATION_POINTS) / LINK_SPECTRUM_POINTS;
+		after_last = ((point + 1) * MODULATION_POINTS) / LINK_SPECTRUM_POINTS;
+		greatest = 0;
+		for (i = first; i < after_last; i++)
+			if (client_modulation_line[i] > greatest)
+				greatest = client_modulation_line[i];
+		panel_modulation_line[point] = (uint8_t)greatest;
+	}
+}
+
+static void spectrum_send(long now) {
+	if (!is_sending_spectrum || now < next_spectrum_ms)
+		return;
+	if (!strcmp(control_get("TX"), "ON")) {
+		next_spectrum_ms = now + MODULATION_EVERY_MS;
+		panel_modulation_fill();
+		panel_set_bytes(LINK_MODULATION, panel_modulation_line,
+			sizeof(panel_modulation_line));
+		return;
+	}
+	next_spectrum_ms = now + SPECTRUM_EVERY_MS;
+	spectrum_line_fill();
+	panel_set_bytes(LINK_SPECTRUM, spectrum_line, sizeof(spectrum_line));
+}
+
+static void client_modulation_send(void) {
+	modulation_line_fill();
 	server_send_modulation(client_modulation_line, MODULATION_POINTS);
 }
 

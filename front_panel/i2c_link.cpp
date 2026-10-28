@@ -155,6 +155,8 @@ static void stage_wifi_points(const uint8_t *bytes, int count){
 static void on_took_bytes(int control, const uint8_t *bytes, int count){
 	if (control == LINK_SPECTRUM && count == WATERFALL_POINTS)
 		waterfall_update(bytes);
+	if (control == LINK_MODULATION && count == WATERFALL_POINTS)
+		waterfall_modulation(bytes);
 	if (control == LINK_DESCRIBE)
 		controls_stage(bytes, count);
 	//a text longer than the panel keeps is cut to fit, never dropped: the

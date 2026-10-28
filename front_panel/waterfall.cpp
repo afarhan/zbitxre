@@ -67,6 +67,19 @@
 // of the line, with waterfall_set_passband(); the graph is painted afresh
 // when they move.
 //
+// WHILE THE RADIO TRANSMITS
+//
+// The radio sends, in the spectrum's place, the envelope of what is being
+// sent, as it sends it to the window and the web page, and the graph shows
+// it as the window does (draw_modulation() in clients/gtk/zbitx_gui.c): a
+// yellow bar at each point, as far above the middle as below it, 255 for
+// half the graph's height, over a dark blue with a grey line across the
+// middle. It lets the operator see a voice, or 2TONE, flattening at the top
+// when it is driven too hard. Only the graph is painted for it; the
+// waterfall stands still until the spectrum comes again, as the window's
+// does. The author asked for the window and the panel to show the same,
+// on 28 October 2026, after the panel had shown nothing in transmit.
+//
 // waterfall_set_painting(false) stops the painting and leaves everything
 // else going, so that what the painting puts in the receiver can be told by
 // ear from what the link puts there. waterfall_set_rows() paints the graph
@@ -109,18 +122,32 @@
 
 #define NOTHING_TO_PAINT (-1)
 
+//the window's colours for the envelope
+#define MODULATION_TOP 255
+#define MODULATION_BACK rgb(0, 3, 3)
+#define MODULATION_MIDDLE rgb(6, 16, 9)
+#define MODULATION_LINE rgb(31, 57, 0)
+#define MODULATION_MIDDLE_ROW (GRAPH_ROWS / 2)
+
 static uint8_t fall[FALL_ROWS][WATERFALL_POINTS];
 static uint8_t newest[WATERFALL_POINTS];
 static uint8_t waiting[WATERFALL_POINTS];
 static uint8_t height_of[WATERFALL_POINTS];
+static uint8_t modulation_waiting[WATERFALL_POINTS];
+static uint8_t reach_of[WATERFALL_POINTS];
 static uint16_t colour_of[COLOURS];
 static uint16_t row_pixels[WIDTH];
 
 static int newest_row;
 static int next_row = NOTHING_TO_PAINT;
 static bool is_waiting = false;
+static bool is_modulation_waiting = false;
+static bool is_modulation_shown = false;
 static bool is_painting = true;
 static int rows_to_paint = ALL_ROWS;
+//the rows this painting goes down to: all of them, or the graph alone for
+//the envelope
+static int paint_until = ALL_ROWS;
 static int passband_low = WATERFALL_NO_POINT;
 static int passband_high = WATERFALL_NO_POINT;
 static int pitch_at = WATERFALL_NO_POINT;
@@ -128,6 +155,7 @@ static bool copy_to_serial = false;
 
 static unsigned long lines_taken;
 static unsigned long lines_replaced;
+static unsigned long envelopes_taken;
 static unsigned long repaints;
 static unsigned long last_repaint_ms;
 static unsigned long longest_slice_us;
@@ -175,6 +203,30 @@ void waterfall_update(const uint8_t *points){
 	interrupts();
 }
 
+void waterfall_modulation(const uint8_t *points){
+	noInterrupts();
+	memcpy(modulation_waiting, points, WATERFALL_POINTS);
+	is_modulation_waiting = true;
+	interrupts();
+}
+
+static void take_the_waiting_modulation(void){
+	int i;
+
+	noInterrupts();
+	for (i = 0; i < WATERFALL_POINTS; i++)
+		reach_of[i] = (uint8_t)((modulation_waiting[i] * MODULATION_MIDDLE_ROW)
+			/ MODULATION_TOP);
+	is_modulation_waiting = false;
+	interrupts();
+
+	is_modulation_shown = true;
+	envelopes_taken = envelopes_taken + 1;
+	next_row = 0;
+	paint_until = GRAPH_ROWS;
+	repaint_began_ms = millis();
+}
+
 static void take_the_waiting_line(void){
 	int i;
 	int height;
@@ -196,8 +248,20 @@ static void take_the_waiting_line(void){
 		height_of[i] = (uint8_t)height;
 	}
 	lines_taken = lines_taken + 1;
+	is_modulation_shown = false;
 	next_row = 0;
+	paint_until = rows_to_paint;
 	repaint_began_ms = millis();
+}
+
+static uint16_t modulation_pixel(int point, int up){
+	int from_the_middle = abs(up - MODULATION_MIDDLE_ROW);
+
+	if (from_the_middle <= reach_of[point])
+		return MODULATION_LINE;
+	if (from_the_middle == 0)
+		return MODULATION_MIDDLE;
+	return MODULATION_BACK;
 }
 
 static uint16_t graph_pixel(int point, int up){
@@ -237,7 +301,10 @@ static void make_a_row(int row){
 	for (i = 0; i < WATERFALL_POINTS; i++){
 		if (row < GRAPH_ROWS){
 			up = GRAPH_ROWS - 1 - row;
-			pixel = graph_pixel(i, up);
+			if (is_modulation_shown)
+				pixel = modulation_pixel(i, up);
+			else
+				pixel = graph_pixel(i, up);
 		}
 		else {
 			points = fall[(newest_row + row - GRAPH_ROWS) % FALL_ROWS];
@@ -290,10 +357,12 @@ void waterfall_slice(void){
 
 	if (next_row == NOTHING_TO_PAINT && is_waiting)
 		take_the_waiting_line();
+	if (next_row == NOTHING_TO_PAINT && is_modulation_waiting)
+		take_the_waiting_modulation();
 	if (next_row == NOTHING_TO_PAINT || !is_painting)
 		return;
 
-	count = rows_to_paint - next_row;
+	count = paint_until - next_row;
 	if (count > ROWS_A_SLICE)
 		count = ROWS_A_SLICE;
 	began_us = micros();
@@ -303,7 +372,7 @@ void waterfall_slice(void){
 		longest_slice_us = took_us;
 
 	next_row = next_row + count;
-	if (next_row < rows_to_paint)
+	if (next_row < paint_until)
 		return;
 	next_row = NOTHING_TO_PAINT;
 	repaints = repaints + 1;
@@ -311,6 +380,7 @@ void waterfall_slice(void){
 }
 
 void waterfall_redraw(void){
+	paint_until = rows_to_paint;
 	if (next_row == NOTHING_TO_PAINT)
 		next_row = 0;
 }
@@ -351,6 +421,7 @@ void waterfall_set_rows(int fall_rows){
 	if (rows < rows_to_paint)
 		ili_fill_rect(LEFT, GRAPH_TOP + rows, WIDTH, rows_to_paint - rows, BLACK);
 	rows_to_paint = rows;
+	paint_until = rows;
 	next_row = NOTHING_TO_PAINT;
 	waterfall_redraw();
 }
@@ -364,6 +435,7 @@ void waterfall_to_serial(void){
 void waterfall_report(void){
 	Serial.printf("waterfall: lines %lu, replaced before painting %lu, "
 		"repaints %lu\n", lines_taken, lines_replaced, repaints);
+	Serial.printf("waterfall: envelopes %lu\n", envelopes_taken);
 	Serial.printf("waterfall: the last repaint took %lu ms, "
 		"the longest slice %lu us\n", last_repaint_ms, longest_slice_us);
 	if (!is_painting)
