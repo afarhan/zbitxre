@@ -188,7 +188,14 @@ fi
 # 4. zbitxre, fetched and built
 if [ -d "$DEST/.git" ]; then
 	say "bringing $DEST up to date"
-	git -C "$DEST" pull --ff-only --quiet || stop "$DEST has changes of its own; 'git status' there says what."
+	# a copy filled by a push and not cloned has no origin; until 29
+	# October 2026 the pull then failed, and was said to be the copy's
+	# own changes
+	if ! git -C "$DEST" remote get-url origin > /dev/null 2>&1; then
+		git -C "$DEST" remote add origin "$REPO"
+	fi
+	git -C "$DEST" pull --ff-only --quiet origin main \
+		|| stop "$DEST could not be brought up to date: it has changes of its own ('git status' there says) or $REPO could not be reached."
 else
 	say "fetching zbitxre into $DEST"
 	git clone --quiet "$REPO" "$DEST" || stop "zbitxre could not be fetched from $REPO."

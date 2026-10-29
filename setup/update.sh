@@ -131,6 +131,13 @@ else
 	if ! setup/set_clock.sh > /dev/null; then
 		failed "the clock is wrong and could not be set"
 	fi
+	# a copy filled by a push and not cloned has no origin, and the pull
+	# failed with "'origin' does not appear to be a git repository", as on
+	# the zbitx at 192.168.1.89 on 29 October 2026: it is given GitHub's
+	if ! git remote get-url origin > /dev/null 2>&1; then
+		git remote add origin https://github.com/afarhan/zbitxre.git
+		say "no origin; GitHub's is now its origin"
+	fi
 	before=$(git rev-parse --short HEAD)
 	say "at $before; asking GitHub for news"
 	if ! git pull --ff-only --quiet origin main; then
