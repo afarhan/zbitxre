@@ -1455,14 +1455,25 @@ static void put_again(GtkWidget *widget, int x, int y, int width, int height);
 // in FT8 the list of messages has the left half of where the graph and the
 // waterfall are, and they have the right half, down to the foot of the
 // window as the list is; in JTTY the list of the bins has it all, and they
-// are not shown; in the other modes they have it all
+// are not shown; in the other modes they have it all.
+//
+// They are placed only while they are shown. GTK does not give a hidden
+// widget the new size it is asked for, and shows it again at the old one:
+// from FT8 through JTTY to 2TONE, on 29 October 2026, the waterfall came back
+// half as wide and down to the foot of the window, as in FT8, and covered
+// 2TONE's RX, leaving no way to stop transmitting from the window
 static void place_graph(void) {
 	static int was_beside_messages = -1;
+	static int was_shown = -1;
 	int is_beside_messages = !strcmp(mode_group(), MESSAGES_GROUP);
+	int is_shown = !is_jtty();
 
-	gtk_widget_set_visible(spectrum_area, !is_jtty());
+	gtk_widget_set_visible(spectrum_area, is_shown);
 
-	if (is_beside_messages == was_beside_messages)
+	if (is_beside_messages == was_beside_messages && is_shown == was_shown)
+		return;
+	was_shown = is_shown;
+	if (!is_shown)
 		return;
 	was_beside_messages = is_beside_messages;
 	if (is_beside_messages)
