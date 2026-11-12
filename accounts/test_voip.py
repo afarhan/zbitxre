@@ -165,17 +165,36 @@ class VoipTest(unittest.TestCase):
             self.now += 0.1 if at % 5 == 4 else 0.0
         self.assertEqual(len(self.to(b)), 500)
 
-    def test_the_first_to_speak_holds_the_channel_and_the_other_is_told_busy(self):
+    def both(self, a, b, packets):
+        for _ in range(packets):
+            self.take(a, a.packet(voip.KIND_SPEECH, 7074000, b"\x55" * voip.SOUND_BYTES))
+            self.take(b, b.packet(voip.KIND_SPEECH, 7074000, b"\x55" * voip.SOUND_BYTES))
+            self.now += STEP
+
+    def test_one_who_speaks_while_another_speaks_breaks_in(self):
         a = self.radio(1, "VU2ESE")
         b = self.radio(2, "VU3XYZ")
         self.speak(a, packets=5)
-        self.speak(b, packets=5)
-        self.assertEqual(len(self.to(b)), 5)
-        self.assertEqual(self.to(a), [])
-        self.assertIn("VOIP BUSY VU2ESE", self.told_to(b))
-        self.assertEqual(self.told_to(b).count("VOIP BUSY VU2ESE"), 1)
+        # a speaks on; b begins: b takes the channel, and a, speaking on,
+        # is told busy and does not take it back
+        self.both(a, b, packets=10)
+        self.assertEqual(len(self.to(b)), 6)
+        self.assertEqual(len(self.to(a)), 10)
+        self.assertIn("VOIP BUSY VU3XYZ", self.told_to(a))
+        self.assertEqual(self.told_to(a).count("VOIP BUSY VU3XYZ"), 1)
+        self.assertIn("VU2ESE spoke on 7074 kHz", self.said[0])
 
-    def test_when_the_over_ends_another_may_answer_and_the_speaker_waits(self):
+    def test_the_one_broken_in_on_may_break_in_again_by_beginning_again(self):
+        a = self.radio(1, "VU2ESE")
+        b = self.radio(2, "VU3XYZ")
+        self.speak(a, packets=5)
+        self.both(a, b, packets=5)
+        self.now += voip.OVER_GAP_S + 0.1    # a lets go, b speaks on
+        self.speak(b, packets=1)
+        self.both(b, a, packets=5)
+        self.assertEqual(len(self.to(b)), 6 + 5)
+
+    def test_when_the_over_ends_another_may_answer(self):
         a = self.radio(1, "VU2ESE")
         b = self.radio(2, "VU3XYZ")
         self.speak(a, packets=5)
@@ -183,23 +202,33 @@ class VoipTest(unittest.TestCase):
         self.assertEqual(len(self.said), 1)
         self.assertIn("VU2ESE spoke on 7074 kHz", self.said[0])
         self.assertIn("heard by 1", self.said[0])
-        self.speak(a, packets=2)
-        self.assertEqual(self.to(b), self.to(b)[:5])
-        self.assertIn("VOIP BUSY wait", self.told_to(a))
-        self.wait(2)
         self.speak(b, packets=3)
         self.assertEqual(len(self.to(a)), 3)
+        self.wait(1.5)
+        self.speak(a, packets=2)
+        self.assertEqual(len(self.to(b)), 7)
 
-    def test_an_over_is_cut_at_a_minute(self):
+    def test_a_ptt_pressed_again_at_once_goes_on_with_the_same_over(self):
         a = self.radio(1, "VU2ESE")
         b = self.radio(2, "VU3XYZ")
-        self.speak(a, packets=int(70 / STEP))
-        self.assertLessEqual(len(self.to(b)), int(60 / STEP) + 1)
-        self.assertGreater(len(self.to(b)), int(59 / STEP))
-        self.assertIn("VOIP BUSY one minute", self.told_to(a))
-        # the channel is free for another, though a holds PTT still
-        self.speak(b, packets=2)
-        self.assertEqual(len(self.to(a)), 2)
+        self.speak(a, packets=5)
+        self.wait(1.5)
+        self.speak(a, packets=2)
+        self.assertEqual(len(self.to(b)), 7)
+        self.assertNotIn("VOIP BUSY wait", self.told_to(a))
+
+    def test_a_long_over_with_breaks_is_never_refused(self):
+        a = self.radio(1, "VU2ESE")
+        b = self.radio(2, "VU3XYZ")
+        sent = 0
+        for _ in range(4):
+            self.speak(a, packets=int(25 / STEP))
+            sent += int(25 / STEP)
+            self.tuned(b, 7074000)
+            self.wait(0.5)
+            self.tuned(b, 7074000)
+        self.assertEqual(len(self.to(b)), sent)
+        self.assertNotIn("VOIP BUSY", " ".join(self.told_to(a)))
 
     def test_a_full_channel_takes_no_more(self):
         for number in range(1, voip.CHANNEL_MOST + 1):

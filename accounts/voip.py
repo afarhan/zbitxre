@@ -31,9 +31,16 @@ to throttle and also authenticate the device/user". So, as he agreed on
   - A radio may send PACKETS_A_SECOND, the rate of twenty milliseconds of
     speech, with BURST over it for the internet's unevenness; more is
     dropped.
-  - A channel has one speaker at a time, for ONE_OVER_S at most, and the
-    same radio may not take it again for AGAIN_AFTER_S after its over, so
-    that another can answer. A channel holds CHANNEL_MOST radios.
+  - A channel has one speaker at a time. A radio that begins to speak
+    while another speaks breaks in and takes the channel, the author's
+    wish of 11 November 2026: "when i speak while someone else is already
+    speaking, it should switch to tx". The one broken in on is told BUSY
+    with the other's callsign, and takes it back by beginning again. There
+    is no other gate: no wait after an over and no limit to one, the
+    author's wish of 13 November 2026, "this busy/gating at the repeater
+    is more of a pain than a feature, turn it off: when a user starts to
+    transmit, let that user continue even after a break". A channel holds
+    CHANNEL_MOST radios.
   - All channels together are sent no more than the service's ceiling, a
     setting, voip_packets_a_second; an over that would take the service
     past it is refused.
@@ -89,8 +96,6 @@ KIND_SPEECH = 3
 CODEC_MULAW = 0
 PACKETS_A_SECOND = 50
 BURST = 25
-ONE_OVER_S = 60
-AGAIN_AFTER_S = 3
 # a gap this long in a radio's speech ends its over
 OVER_GAP_S = 1.0
 CHANNEL_MOST = 50
@@ -141,12 +146,10 @@ class Stream:
         self.sent = 0
         self.tokens = BURST
         self.tokens_at = None
-        # this radio's run of speech: when its PTT went down, its last
-        # packet, whether it was cut at a minute, and its last over's end
+        # this radio's run of speech: when its PTT went down, and its last
+        # packet
         self.run_began = None
         self.last_speech = None
-        self.is_cut = False
-        self.over_ended = None
         self.busy_told_at = None
 
 
@@ -281,7 +284,6 @@ class Voip:
             floor = None
         if stream.last_speech is None or now - stream.last_speech > OVER_GAP_S:
             stream.run_began = now
-            stream.is_cut = False
         stream.last_speech = now
         if floor is None:
             refusal = self.refusal(stream, channel, now)
@@ -290,13 +292,13 @@ class Voip:
                 return
             floor = self.floors[channel] = Floor(stream, now)
         elif floor.stream is not stream:
-            self.drop(stream, floor.stream.callsign, now)
-            return
-        elif now - floor.began >= ONE_OVER_S:
-            stream.is_cut = True
+            # one who began speaking after the speaker did breaks in; the
+            # speaker, speaking on, has not begun again and cannot
+            if stream.run_began <= floor.began:
+                self.drop(stream, floor.stream.callsign, now)
+                return
             self.end_over(channel, now)
-            self.drop(stream, "one minute", now)
-            return
+            floor = self.floors[channel] = Floor(stream, now)
         gap = now - floor.last_at
         floor.last_at = now
         floor.packets += 1
@@ -315,10 +317,6 @@ class Voip:
 
     def refusal(self, stream, channel, now):
         """why a radio may not take a free channel, or '' if it may"""
-        if stream.is_cut:
-            return "one minute"
-        if stream.over_ended is not None and now - stream.over_ended < AGAIN_AFTER_S:
-            return "wait"
         sending = sum(len(self.channels.get(each, ())) - 1 for each in self.floors)
         if (sending + len(self.channels[channel]) - 1) * PACKETS_A_SECOND > self.ceiling:
             return "service full"
@@ -344,7 +342,6 @@ class Voip:
         floor = self.floors.pop(channel, None)
         if floor is None:
             return
-        floor.stream.over_ended = ended
         self.usage["overs"] += 1
         seconds = ended - floor.began
         self.say("voip: %s spoke on %d kHz for %d s, heard by %d; %d packets of %d, "
